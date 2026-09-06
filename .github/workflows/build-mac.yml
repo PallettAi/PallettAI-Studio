@@ -1,0 +1,119 @@
+name: Build and publish PallettAI Studio for macOS
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+# The Studio source can live in its own repository. Releases are published to
+# the public website repository so pallettai.org/downloads has stable links.
+env:
+  RELEASE_REPOSITORY: PallettAi/pallettai-website
+
+permissions:
+  contents: read
+
+jobs:
+  mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          test "$tag_version" = "$package_version" || {
+            echo "Tag $tag_version does not match package.json version $package_version"
+            exit 1
+          }
+
+      - name: Require signing credentials for tagged releases
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required Actions secret: $name"
+              exit 1
+            fi
+          done
+
+      - name: Build, sign & notarize (arm64 + x64)
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run dist:mac -- --publish never
+
+      - name: Verify build outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          test -f "dist/PallettAI-Studio-${version}-mac-arm64.dmg"
+          test -f "dist/PallettAI-Studio-${version}-mac-x64.dmg"
+          test -f "dist/PallettAI-Studio-${version}-mac-arm64.zip"
+          test -f "dist/PallettAI-Studio-${version}-mac-x64.zip"
+          test -f dist/latest-mac.yml
+          for asset in \
+            "PallettAI-Studio-${version}-mac-arm64.zip" \
+            "PallettAI-Studio-${version}-mac-x64.zip" \
+            "PallettAI-Studio-${version}-mac-arm64.dmg" \
+            "PallettAI-Studio-${version}-mac-x64.dmg"; do
+            grep -Fq "url: $asset" dist/latest-mac.yml || {
+              echo "latest-mac.yml does not reference built asset $asset"
+              exit 1
+            }
+          done
+          echo "Built PallettAI Studio ${version} for arm64 and x64; updater manifest matches artifacts"
+
+      - name: Create stable download aliases
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          cp "dist/PallettAI-Studio-${version}-mac-arm64.dmg" dist/PallettAI-Studio-mac-arm64.dmg
+          cp "dist/PallettAI-Studio-${version}-mac-x64.dmg" dist/PallettAI-Studio-mac-x64.dmg
+
+      - name: Attach assets to the website release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ env.RELEASE_REPOSITORY }}
+          token: ${{ secrets.RELEASE_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/*.dmg
+            dist/*.zip
+            dist/latest-mac.yml
+
+      - name: Upload unsigned/manual artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: PallettAI-Studio-mac
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error

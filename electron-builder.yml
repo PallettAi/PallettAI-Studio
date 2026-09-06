@@ -1,0 +1,83 @@
+# PallettAI Studio — desktop packaging
+# Distribution model: direct download from pallettai.org / GitHub Releases
+# (Developer ID signing + notarization — NOT the Mac App Store).
+appId: ai.pallettai.studio
+productName: PallettAI Studio
+copyright: Made by PallettAI
+
+directories:
+  buildResources: build
+  output: dist
+
+# Only ship what the studio needs at runtime.
+files:
+  - index.html
+  - app.js
+  - styles.css
+  - main.js
+  - preload.js
+  - data/**
+  - modules/**
+  - '!**/*.map'
+  - '!**/*.md'
+
+asar: true
+npmRebuild: false
+
+mac:
+  category: public.app-category.graphics-design
+  artifactName: PallettAI-Studio-${version}-mac-${arch}.${ext}
+  icon: build/icon.png
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  # Notarization is driven by env vars at build time:
+  #   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID
+  # Signing identity is auto-discovered from the keychain, or supplied via
+  #   CSC_LINK (base64 p12) + CSC_KEY_PASSWORD.
+  notarize: true
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+
+# Windows (NSIS installer) — signed via CSC_LINK + CSC_KEY_PASSWORD at build
+# time. electron-updater reads latest.yml on Windows (latest-mac.yml on macOS).
+win:
+  artifactName: PallettAI-Studio-${version}-win-${arch}.${ext}
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  artifactName: PallettAI-Studio-${version}-setup.${ext}
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: PallettAI Studio
+  deleteAppDataOnUninstall: false
+
+dmg:
+  title: PallettAI Studio ${version}
+  icon: build/icon.png
+  contents:
+    - x: 130
+      y: 200
+    - x: 410
+      y: 200
+      type: link
+      path: /Applications
+
+# Auto-update (electron-updater) reads latest-mac.yml from the same GitHub
+# release. Override owner/repo in package.json "repository" if it changes.
+publish:
+  - provider: github
+    owner: PallettAi
+    repo: pallettai-website

@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PallettAI — Redeem a referral code</title>
+<meta name="description" content="Redeem your PallettAI Studio Pro referral code.">
+<style>
+  :root{
+    --bg:#0b0d1a; --surface:#141731; --surface2:#1c2042; --border:rgba(255,255,255,.09);
+    --text:#eef0ff; --muted:#9aa3c4; --primary:#7c5cff; --accent:#22d3ee;
+    --ok:#34d399; --err:#f87171; --warn:#fbbf24;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:radial-gradient(1200px 600px at 20% -10%,rgba(124,92,255,.22),transparent 60%),radial-gradient(1000px 500px at 90% 10%,rgba(34,211,238,.14),transparent 55%),var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:0 20px}
+  .wrap{width:100%;max-width:560px;padding:56px 0 24px}
+  .logo{display:flex;align-items:center;gap:12px;justify-content:center;margin-bottom:34px}
+  .logo-badge{width:44px;height:44px;border-radius:13px;background:linear-gradient(135deg,#7c5cff,#22d3ee);display:grid;place-items:center;font-size:1.3rem;color:#fff;font-weight:800;box-shadow:0 8px 24px rgba(124,92,255,.35)}
+  .logo b{font-size:1.25rem;letter-spacing:-.01em}
+  .logo small{display:block;color:var(--muted);font-size:.68rem;letter-spacing:.22em;text-transform:uppercase}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:22px;padding:30px;box-shadow:0 24px 60px rgba(0,0,0,.35)}
+  h1{font-size:1.5rem;letter-spacing:-.02em;text-align:center}
+  .sub{color:var(--muted);font-size:.9rem;line-height:1.55;text-align:center;margin:10px 0 22px}
+  .code-badge{display:block;width:fit-content;margin:0 auto 6px;font-family:ui-monospace,Consolas,monospace;font-weight:800;letter-spacing:.1em;color:var(--accent);background:rgba(34,211,238,.1);border:1px dashed rgba(34,211,238,.4);padding:8px 16px;border-radius:10px;font-size:1rem}
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:.8rem;font-weight:600;color:var(--muted);margin-bottom:6px}
+  .field input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:11px;padding:12px 14px;color:var(--text);font-size:.95rem;outline:none;transition:.15s}
+  .field input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(124,92,255,.22)}
+  .btn{width:100%;border:0;border-radius:12px;padding:13px;font-size:.95rem;font-weight:700;cursor:pointer;background:linear-gradient(135deg,#7c5cff,#5b3fd6);color:#fff;transition:.15s}
+  .btn:hover{filter:brightness(1.1)}
+  .btn:disabled{opacity:.55;cursor:wait}
+  .btn.ghost{background:var(--surface2);border:1px solid var(--border);color:var(--text);margin-top:10px;font-weight:600}
+  .status{margin-top:14px;font-size:.85rem;color:var(--muted);text-align:center;line-height:1.5}
+  .outcome{margin-top:16px;border-radius:14px;padding:16px;font-size:.92rem;line-height:1.5;display:none}
+  .outcome.show{display:block}
+  .outcome.ok{background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.35)}
+  .outcome.warn{background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.35)}
+  .outcome.err{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.35)}
+  .outcome b{display:block;margin-bottom:4px}
+  .fine{font-size:.75rem;color:var(--muted);text-align:center;margin-top:14px;line-height:1.6}
+  .fine code{color:var(--accent)}
+  footer{margin-top:auto;padding:26px 0 22px;text-align:center;color:var(--muted);font-size:.8rem}
+  footer a{color:var(--accent);text-decoration:none}
+  footer .made{display:block;margin-top:6px;font-weight:600;color:var(--text)}
+  .signed-line{display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:16px;flex-wrap:wrap}
+  .pill{background:rgba(34,211,238,.12);border:1px solid rgba(34,211,238,.4);color:var(--accent);font-size:.75rem;font-weight:700;padding:4px 12px;border-radius:999px;letter-spacing:.04em}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">
+    <div class="logo-badge">◆</div>
+    <div><b>PallettAI</b><small>STUDIO</small></div>
+  </div>
+
+  <div class="card">
+    <span class="code-badge" id="codeBadge">REF-XXXXXX</span>
+    <h1>Claim 30 days of Pro, free</h1>
+    <p class="sub">A friend gave you a PallettAI Studio referral code. Redeem it below — you get <b>30 free days of Pro</b>, and they earn 7 days too. Sign in (or create an account) and the reward is granted instantly and stamped on the registry.</p>
+
+    <div id="authArea"></div>
+    <div id="outcomeBox" class="outcome"></div>
+    <p class="status" id="status"></p>
+  </div>
+
+  <p class="fine">Codes are verified server-side by the PallettAI registry — one stable code per account, stamped trace log, rewards that follow you across devices.<br>After redeeming, open <code>PallettAI Studio</code> and sign in with the same account to sync.</p>
+</div>
+
+<footer>
+  <a href="https://pallettai.org">pallettai.org</a>
+  <span class="made">Made by PallettAI ◆</span>
+</footer>
+
+<script>
+// ============================================================
+// PallettAI referral redemption — pallettai.org/ref/CODE
+// Talks directly to the studio's Supabase registry (same project
+// as the desktop app). If you deploy to your own Supabase project,
+// update these two constants.
+// ============================================================
+var SUPABASE_URL = 'https://fjahxichioccknszuxhb.supabase.co';
+var SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZqYWh4aWNoaW9jY2tuc3p1eGhiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg1MDk0MjUsImV4cCI6MjEwNDA4NTQyNX0.n1NMO7W5StuAAIxIZh2ZnMuM6qJqytKQaOUIav4aDm4';
+var SES_KEY = 'pallettai.ref.session.v1';
+
+var $ = function (id) { return document.getElementById(id); };
+var code = (function () {
+  var raw = '';
+  var m = location.pathname.match(/\/ref\/([A-Za-z0-9-]+)/);
+  if (m) raw = m[1];
+  var q = new URLSearchParams(location.search).get('code');
+  if (!raw && q) raw = q;
+  raw = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return raw ? (raw.indexOf('REF-') === 0 ? raw : 'REF-' + raw.slice(-6)) : '';
+})();
+
+function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function sess() { try { return JSON.parse(localStorage.getItem(SES_KEY) || 'null'); } catch (e) { return null; } }
+function setSess(s) { if (s) localStorage.setItem(SES_KEY, JSON.stringify(s)); else localStorage.removeItem(SES_KEY); }
+
+function authHeaders() {
+  var h = { 'Content-Type': 'application/json', apikey: SUPABASE_ANON };
+  var s = sess();
+  if (s && s.accessToken) h.Authorization = 'Bearer ' + s.accessToken;
+  return h;
+}
+async function post(endpoint, body, extra) {
+  var res = await fetch(SUPABASE_URL + '/auth/v1/' + endpoint, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
+  var j = await res.json().catch(function () { return {}; });
+  if (!res.ok) { var e = new Error(j.msg || j.error_description || j.message || 'Request failed'); e.code = j.error_code || j.code; throw e; }
+  return j;
+}
+function adopt(t) {
+  setSess({ accessToken: t.access_token, refreshToken: t.refresh_token, expiresAt: Date.now() + (t.expires_in || 3600) * 1000, email: (t.user && t.user.email) || '', uid: (t.user && t.user.id) || '' });
+}
+async function restoreSession() {
+  var s = sess();
+  if (!s || !s.accessToken) return false;
+  if (s.expiresAt && Date.now() < s.expiresAt - 60000) return true;
+  if (!s.refreshToken) { setSess(null); return false; }
+  try { adopt(await post('token?grant_type=refresh_token', { refresh_token: s.refreshToken })); return true; }
+  catch (e) { setSess(null); return false; }
+}
+async function redeem() {
+  var s = sess();
+  try {
+    var res = await fetch(SUPABASE_URL + '/rest/v1/rpc/redeem_code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON, Authorization: 'Bearer ' + s.accessToken },
+      body: JSON.stringify({ p_code: code })
+    });
+    if (!res.ok) { var j = await res.json().catch(function () { return {}; }); throw new Error(j.message || 'Registry request failed'); }
+    return res.json();
+  } catch (e) { return { _error: e.message }; }
+}
+
+function showOutcome(kind, title, msg) {
+  var b = $('outcomeBox');
+  b.className = 'outcome show ' + kind;
+  b.innerHTML = '<b>' + esc(title) + '</b>' + esc(msg);
+}
+function setStatus(t) { $('status').textContent = t || ''; }
+
+function renderAuth() {
+  var s = sess();
+  var area = $('authArea');
+  if (s && s.accessToken) {
+    area.innerHTML =
+      '<div class="signed-line"><span class="pill">☁ registry · verified</span><b>' + esc(s.email) + '</b></div>' +
+      '<button class="btn" id="redeemBtn">🎁 Redeem ' + esc(code) + ' with this account</button>' +
+      '<button class="btn ghost" id="switchBtn">Use a different account</button>';
+    $('redeemBtn').onclick = redeemClicked;
+    $('switchBtn').onclick = function () { setSess(null); renderAuth(); setStatus('Signed out on this page.'); };
+  } else {
+    var mode = window.__mode || 'signin';
+    area.innerHTML =
+      '<div class="field"><label>Email</label><input id="email" type="email" placeholder="you@example.com" autocomplete="email"></div>' +
+      '<div class="field"><label>Password</label><input id="pass" type="password" placeholder="min 6 characters" autocomplete="' + (mode === 'signup' ? 'new-password' : 'current-password') + '"></div>' +
+      '<button class="btn" id="authBtn">' + (mode === 'signup' ? 'Create account & redeem' : 'Sign in & redeem') + '</button>' +
+      '<button class="btn ghost" id="toggleBtn">' + (mode === 'signup' ? 'I already have an account' : 'Create a new account') + '</button>';
+    $('authBtn').onclick = authClicked;
+    $('toggleBtn').onclick = function () { window.__mode = mode === 'signup' ? 'signin' : 'signup'; renderAuth(); };
+  }
+}
+
+async function authClicked() {
+  var email = $('email').value.trim();
+  var pass = $('pass').value;
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return setStatus('Enter a valid email address.');
+  if (pass.length < 6) return setStatus('Password must be at least 6 characters.');
+  var btn = $('authBtn'); btn.disabled = true; btn.textContent = 'Working…';
+  try {
+    var mode = window.__mode || 'signin';
+    var j = await post(mode === 'signup' ? 'signup' : 'token?grant_type=password', { email: email, password: pass });
+    if (!j.access_token) {
+      setStatus('Check your inbox — a confirmation link was sent to ' + email + '. Click it, then come back and sign in.');
+      btn.disabled = false; btn.textContent = mode === 'signup' ? 'Create account & redeem' : 'Sign in & redeem';
+      return;
+    }
+    adopt(j);
+    renderAuth();
+    setStatus('Signed in as ' + ((j.user && j.user.email) || email) + ' — redeeming…');
+    redeemClicked();
+  } catch (e) {
+    btn.disabled = false; btn.textContent = window.__mode === 'signup' ? 'Create account & redeem' : 'Sign in & redeem';
+    setStatus((e && e.message) || 'Sign-in failed — try again.');
+  }
+}
+
+async function redeemClicked() {
+  var btn = $('redeemBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Verifying…'; }
+  var r = await redeem();
+  if (r._error) { setStatus('Could not reach the registry: ' + r._error); if (btn) { btn.disabled = false; btn.textContent = '🎁 Try again'; } return; }
+  if (r.outcome === 'verified') {
+    showOutcome('ok', '🎉 Referral verified — 30 days of Pro granted!',
+      'Your account now has Pro free until ' + new Date(r.trialExpiresAt).toLocaleDateString([], { year: 'numeric', month: 'long', day: 'numeric' }) + '. Your friend also earned 7 days. Open PallettAI Studio, sign in with this account, and everything is unlocked.');
+  } else if (r.outcome === 'already-used') {
+    showOutcome('warn', 'Already redeemed', 'This account has already used this code — codes work once per account. Your Pro trial is still active if it hasn’t expired.');
+  } else if (r.outcome === 'self-redeemed') {
+    showOutcome('err', 'That’s your own code', 'This is the referral code of the account you’re signed in with. Share it with a friend instead — you earn 7 days every time they redeem it.');
+  } else if (r.outcome === 'not-found') {
+    showOutcome('err', 'Code not found', '“' + esc(code) + '” isn’t in the registry. Double-check the link — it should look like pallettai.org/ref/AB12CD.');
+  } else {
+    showOutcome('err', 'Could not verify', 'The registry returned an unexpected response. Try again in a moment.');
+  }
+  setStatus('');
+}
+
+(function init() {
+  if (!code) {
+    document.title = 'PallettAI — Referral';
+    $('codeBadge').textContent = '—';
+    showOutcome('warn', 'No code in the link', 'This page needs a code: visit pallettai.org/ref/XXXXXX from the invite link in PallettAI Studio → Settings → Referral program.');
+    return;
+  }
+  $('codeBadge').textContent = code;
+  restoreSession().then(function () { renderAuth(); }).catch(function () { renderAuth(); });
+})();
+</script>
+</body>
+</html>

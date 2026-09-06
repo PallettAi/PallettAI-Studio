@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PallettAI Studio — Design & build websites</title>
+<!--
+  Content-Security-Policy for the studio shell.
+
+  Threat model notes:
+  - The Designer preview renders exported sites in an about:srcdoc iframe,
+    which INHERITS this policy. Exported pages legitimately ship inline
+    scripts/styles (single-file HTML, no build step), so script-src must
+    keep 'unsafe-inline' or every preview goes silent.
+  - Remote <script> is still denied except the three analytics/chat hosts a
+    generated site itself may embed; eval/Function-constructor usage is
+    denied (verified: the codebase uses none).
+  - img/connect/https and frame-src https: are intentionally broad because
+    this is a design tool: users insert arbitrary remote images, study
+    arbitrary sites, configure arbitrary Supabase projects / form endpoints,
+    and embed arbitrary booking/video pages. object-src 'none' plus the
+    script restrictions are where the real hardening lives.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://plausible.io https://www.googletagmanager.com https://embed.tawk.to; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; media-src 'self' data: blob: https:; connect-src 'self' https:; frame-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self' https:">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'><defs><linearGradient id='g' x1='0' y1='1' x2='1' y2='0'><stop stop-color='%23a06bff'/><stop offset='1' stop-color='%23e0c7ff'/></linearGradient></defs><path d='M14 40c5-14 9-14 14 0s9 14 14 0 9-14 14 0' stroke='url(%23g)' stroke-width='4' stroke-linecap='round'/><path d='M20 52V13h14c10 0 16 6 16 15s-6 15-16 15h-7' stroke='%23ffffff' stroke-width='5.5' stroke-linejoin='round'/><circle cx='14' cy='52' r='2.5' fill='%23a06bff'/><circle cx='56' cy='52' r='2.5' fill='%23e0c7ff'/></svg>">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ============ Sidebar ============ -->
+  <aside class="sidebar">
+    <div class="brand-block">
+      <div class="brand-name" aria-label="PallettAi Studio"><span class="bw-pallett">Pallett</span><span class="bw-ai">Ai</span></div>
+      <div class="brand-sub">Studio</div>
+    </div>
+
+    <nav class="side-nav" id="sideNav">
+      <button class="nav-item active" data-view="dashboard"><span class="nav-ico">🏠</span>Dashboard</button>
+      <button class="nav-item" data-view="designer"><span class="nav-ico">🎨</span>Designer</button>
+      <button class="nav-item" data-view="ai"><span class="nav-ico">✦</span>AI Studio</button>
+      <button class="nav-item" data-view="suites"><span class="nav-ico">🧩</span>Upgrade Suites</button>
+      <button class="nav-item" data-view="database"><span class="nav-ico">🗄️</span>Database</button>
+      <button class="nav-item" data-view="settings"><span class="nav-ico">⚙️</span>Settings</button>
+    </nav>
+
+    <div class="plan-box" id="planBox">
+      <button class="plan-pill" id="planPill" title="Manage plan">…</button>
+      <button class="btn primary small" id="btnUpgrade">✦ Upgrade</button>
+    </div>
+
+    <div class="side-foot">
+      <div class="made-by">Made by <strong>PallettAI</strong></div>
+      <a class="site-link" href="https://pallettai.org" target="_blank" rel="noopener">pallettai.org ↗</a>
+    </div>
+  </aside>
+
+  <!-- ============ Main ============ -->
+  <main class="main">
+
+    <header class="topbar">
+      <div class="topbar-left">
+        <h1 id="viewTitle">Dashboard</h1>
+        <span class="project-chip" id="projectChip" hidden></span>
+        <span class="save-state" id="saveState"></span>
+      </div>
+      <div class="topbar-actions" id="topbarActions"></div>
+    </header>
+
+    <!-- Dashboard -->
+    <section class="view active" id="view-dashboard">
+      <div class="dash-hero">
+        <h2>Design stunning, fully functional websites for your clients.</h2>
+        <p>Pick a template, craft it in the Designer, upgrade it with Suites, and export a live site — all powered by the PallettAI database.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn primary" id="btnNewProject">＋ New project</button>
+          <button class="btn ghost" id="btnAiGo">✦ Generate with AI</button>
+          <button class="btn ghost" id="btnTour" title="A 2-minute guided tour of the studio">🧭 Quick tour</button>
+        </div>
+      </div>
+      <div class="core-tools" id="coreTools"></div>
+      <div class="dash-stats" id="dashStats"></div>
+      <div id="streakRoot"></div>
+      <h3 class="view-h">Templates</h3>
+      <div class="tpl-grid" id="tplGrid"></div>
+      <h3 class="view-h">Your projects</h3>
+      <div class="projects-grid" id="projectsGrid"></div>
+      <div class="dash-insight" id="dashInsight"></div>
+    </section>
+
+    <!-- Designer -->
+    <section class="view" id="view-designer">
+      <div class="designer" id="designerRoot"></div>
+    </section>
+
+    <!-- AI Studio -->
+    <section class="view" id="view-ai">
+      <div class="ai-intro">
+        <h2>✦ AI Studio <span class="pill" id="aiCreditPill"></span></h2>
+        <p>Describe the site you want in plain English — <strong>“a modern bakery in Paris”</strong> — and the studio designs it: name, palette, fonts, copy and a full section layout. Then generate AI images to match.</p>
+      </div>
+      <div class="ai-wrap" id="aiRoot"></div>
+    </section>
+
+    <!-- Suites -->
+    <section class="view" id="view-suites">
+      <div class="suites-intro">
+        <h2>Upgrade suites</h2>
+        <p>Suites are feature packs you can install <strong>after</strong> a site is built — adding blog, shop, animations, SEO and more without touching the design.</p>
+      </div>
+      <div class="suites-grid" id="suitesGrid"></div>
+    </section>
+
+    <!-- Database -->
+    <section class="view" id="view-database">
+      <div class="db-intro">
+        <h2>Database</h2>
+        <p>Browse the local PallettAI library — templates, sections, palettes, fonts — and pull live content from free online databases.</p>
+      </div>
+      <h3 class="view-h">Online sources <span class="pill" id="onlineStatus"></span></h3>
+      <div class="online-grid" id="onlineGrid"></div>
+      <h3 class="view-h">Local library</h3>
+      <div class="db-tabs" id="dbTabs">
+        <button class="db-tab active" data-tab="sections">Sections</button>
+        <button class="db-tab" data-tab="palettes">Palettes</button>
+        <button class="db-tab" data-tab="fonts">Fonts</button>
+        <button class="db-tab" data-tab="icons">Icons</button>
+        <button class="db-tab" data-tab="animations">Animations</button>
+        <button class="db-tab" data-tab="integrations">Integrations</button>
+        <button class="db-tab" data-tab="layouts">Layouts</button>
+      </div>
+      <div class="db-search"><input type="search" id="dbSearch" placeholder="Search the library…"></div>
+      <div class="db-list" id="dbList"></div>
+    </section>
+
+    <!-- Settings -->
+    <section class="view" id="view-settings">
+      <div class="settings-wrap" id="settingsRoot"></div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ============ AI Copilot chat ============ -->
+<div class="chat-panel" id="chatPanel" hidden>
+  <div class="chat-head">
+    <div class="chat-title"><span class="chat-spark">✦</span><div><b>Copilot</b><div class="chat-sub">edit “<span id="chatProj"></span>” in plain English</div></div></div>
+    <button class="icon-btn" id="chatClose" title="Close chat">✕</button>
+  </div>
+  <div class="chat-list" id="chatList"></div>
+  <div class="chat-chips" id="chatChips"></div>
+  <div class="chat-input">
+    <input id="chatInput" placeholder="Try: make it glassmorphism · make the hero punchier · rounder corners · add a pricing section…" autocomplete="off" spellcheck="false">
+    <button class="btn primary small" id="chatSend" title="Send">➤</button>
+  </div>
+</div>
+
+<div class="toast" id="appToast"></div>
+<div class="modal-backdrop" id="modalBackdrop" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><h3 id="modalTitle"></h3><button class="icon-btn" id="modalClose">✕</button></div>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<script src="data/db.js"></script>
+<script src="data/online.js"></script>
+<script src="data/plans.js"></script>
+<script src="modules/supabase.js"></script>
+<script src="modules/ai.js"></script>
+<script src="modules/builder.js"></script>
+<script src="modules/zip.js"></script>
+<script src="modules/gpuimage.js"></script>
+<script src="modules/store.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

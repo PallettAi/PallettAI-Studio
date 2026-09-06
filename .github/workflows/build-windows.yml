@@ -1,0 +1,102 @@
+name: Build and publish PallettAI Studio for Windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+# The Studio source can live in its own repository. Releases are published to
+# the public website repository so pallettai.org/downloads has stable links.
+env:
+  RELEASE_REPOSITORY: PallettAi/pallettai-website
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          test "$tag_version" = "$package_version" || {
+            echo "Tag $tag_version does not match package.json version $package_version"
+            exit 1
+          }
+
+      - name: Require signing credentials for tagged releases
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in CSC_LINK CSC_KEY_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required Actions secret: $name"
+              exit 1
+            fi
+          done
+
+      - name: Build & sign Windows installer (NSIS x64)
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: npm run dist:win -- --publish never
+
+      - name: Verify build outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          test -f "dist/PallettAI-Studio-${version}-setup.exe"
+          test -f dist/latest.yml
+          grep -Fq "url: PallettAI-Studio-${version}-setup.exe" dist/latest.yml || {
+            echo "latest.yml does not reference built asset PallettAI-Studio-${version}-setup.exe"
+            exit 1
+          }
+          echo "Built PallettAI Studio ${version} for Windows; updater manifest matches the artifact"
+
+      - name: Create stable download alias
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          cp "dist/PallettAI-Studio-${version}-setup.exe" dist/PallettAI-Studio-setup.exe
+
+      - name: Attach assets to the website release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ env.RELEASE_REPOSITORY }}
+          token: ${{ secrets.RELEASE_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/*.exe
+            dist/latest.yml
+
+      - name: Upload unsigned/manual artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: PallettAI-Studio-windows
+          path: |
+            dist/*.exe
+            dist/latest.yml
+          if-no-files-found: error

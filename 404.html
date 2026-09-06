@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PallettAI — Page not found</title>
+<!--
+  GitHub Pages cannot rewrite URLs, so it serves this file for ANY unknown
+  path. That gives us two jobs:
+
+  1. pallettai.org/ref/CODE  → hand the code to ref.html (?code= form)
+  2. pallettai.org/auth/...  → Supabase emails confirmation/reset links
+     that point at the Site URL. This script completes the flow right here:
+     confirm the email, or set a new password — no app needed.
+
+  When merging into an existing branded 404.html:
+    * paste this whole <script> block into the <head>, and
+    * paste the <div id="auth-ui"> container into the <body>.
+-->
+<script>
+  (function () {
+    var SUPABASE_URL = 'https://fjahxichioccknszuxhb.supabase.co';
+    var ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZqYWh4aWNoaW9jY2tuc3p1eGhiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg1MDk0MjUsImV4cCI6MjEwNDA4NTQyNX0.n1NMO7W5StuAAIxIZh2ZnMuM6qJqytKQaOUIav4aDm4';
+
+    // ---- 1. referral invite links: /ref/CODE -------------------------------
+    var m = location.pathname.match(/\/ref\/([A-Za-z0-9-]+)/);
+    if (m) {
+      var base = location.pathname.split('/ref/')[0].replace(/\/+$/, '');
+      var code = m[1].toUpperCase().replace(/[^A-Z0-9]/g, '');
+      location.replace(base + '/ref.html?code=' + code);
+      return;
+    }
+
+    // ---- 2. Supabase auth links: /auth/confirm?... -------------------------
+    function handleAuth() {
+      if (!/^\/auth\//.test(location.pathname)) return;
+      var box = document.getElementById('page-404');
+      var ui = document.getElementById('auth-ui');
+      if (box) box.style.display = 'none';
+      if (ui) ui.style.display = 'block';
+      else return;
+
+      var statusEl = document.getElementById('auth-status');
+      var okBtn = document.getElementById('auth-ok-btn');
+      var formBox = document.getElementById('auth-form-box');
+      function status(msg, ok) {
+        statusEl.textContent = msg;
+        statusEl.style.color = ok ? '#7ce38b' : '#ff8f8f';
+        if (okBtn) okBtn.style.display = ok ? 'inline-block' : 'none';
+      }
+
+      var p = new URLSearchParams(location.search);
+      var tokenHash = p.get('token_hash');
+      var type = p.get('type') || 'email';
+      var token = p.get('token');
+
+      if (!tokenHash && !token) { status('This link is missing its verification code.', false); return; }
+
+      status('Verifying…', false);
+      (async function () {
+        try {
+          var body = tokenHash
+            ? { type: type, token_hash: tokenHash }
+            : { type: type, token: token };
+          var r = await fetch(SUPABASE_URL + '/auth/v1/verify', {
+            method: 'POST',
+            headers: { 'apikey': ANON_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          var j = await r.json();
+          if (!r.ok || !j || j.error) throw new Error('verify failed');
+
+          if (type === 'recovery') {
+            // verification returned a session → let them pick a new password
+            sessionStorage.setItem('pallettai.reset.token', j.access_token);
+            status('Verify your email then set a new password:', false);
+            formBox.style.display = 'block';
+            return;
+          }
+          status('✓ All set — your email is confirmed. You can now sign in.', true);
+          okBtn.href = '/ref.html';
+          okBtn.textContent = 'Continue to sign in';
+        } catch (e) {
+          status('This link is invalid or has expired. Close this tab and request a fresh one (resend the confirmation email, or use “forgot password” in the app).', false);
+        }
+      })();
+
+      var pwBtn = document.getElementById('auth-pw-btn');
+      var pwMsg = document.getElementById('auth-pw-msg');
+      if (pwBtn) pwBtn.addEventListener('click', async function () {
+        var pw = document.getElementById('auth-pw').value;
+        var pw2 = document.getElementById('auth-pw2').value;
+        pwMsg.textContent = '';
+        if (pw.length < 8) { pwMsg.textContent = 'Password must be at least 8 characters.'; return; }
+        if (pw !== pw2) { pwMsg.textContent = 'Passwords do not match.'; return; }
+        var tok = sessionStorage.getItem('pallettai.reset.token');
+        if (!tok) { pwMsg.textContent = 'Session expired — close this tab and request the reset link again.'; return; }
+        pwBtn.disabled = true;
+        try {
+          var r = await fetch(SUPABASE_URL + '/auth/v1/user', {
+            method: 'PUT',
+            headers: { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: pw })
+          });
+          var j = await r.json();
+          if (!r.ok || j.error) throw new Error(j.msg || 'update failed');
+          sessionStorage.removeItem('pallettai.reset.token');
+          formBox.style.display = 'none';
+          status('✓ Password updated. You can now sign in on the PallettAI Studio app.', true);
+          okBtn.href = '/ref.html';
+          okBtn.textContent = 'Go to sign in';
+        } catch (e) {
+          pwMsg.textContent = e.message || 'Something went wrong — please try again.';
+        } finally {
+          pwBtn.disabled = false;
+        }
+      });
+    }
+
+    // the script lives in <head>, so wait for the body to exist before
+    // touching the DOM (the /ref/ redirect above runs immediately instead)
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', handleAuth);
+    } else {
+      handleAuth();
+    }
+  })();
+</script>
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+         background: #0c0e14; color: #e8eaf0; font-family: system-ui, sans-serif; text-align: center; }
+  .box { padding: 40px; }
+  h1 { font-size: 72px; margin: 0; background: linear-gradient(135deg, #7c6cff, #4fd1c5);
+       -webkit-background-clip: text; background-clip: text; color: transparent; }
+  p { color: #9aa1b5; }
+  a { color: #7c6cff; }
+  #auth-ui { display: none; max-width: 420px; margin: 0 auto; }
+  #auth-status { font-size: 17px; line-height: 1.5; min-height: 1.4em; }
+  #auth-ok-btn { display: none; margin-top: 18px; padding: 11px 22px; border-radius: 10px; border: none;
+                 background: linear-gradient(135deg, #7c6cff, #4fd1c5); color: #0c0e14; font-weight: 700;
+                 text-decoration: none; font-size: 15px; cursor: pointer; }
+  #auth-form-box { display: none; margin-top: 18px; }
+  #auth-form-box input { width: 100%; box-sizing: border-box; padding: 11px 13px; margin: 6px 0;
+                         border-radius: 10px; border: 1px solid #2a2f42; background: #131722; color: #e8eaf0;
+                         font-size: 15px; }
+  #auth-pw-btn { margin-top: 10px; padding: 11px 22px; border-radius: 10px; border: none;
+                 background: linear-gradient(135deg, #7c6cff, #4fd1c5); color: #0c0e14; font-weight: 700;
+                 font-size: 15px; cursor: pointer; }
+  #auth-pw-msg { color: #ff8f8f; font-size: 14px; min-height: 1.2em; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <div class="box" id="page-404">
+    <h1>404</h1>
+    <p>This page doesn't exist — but if you came from a PallettAI invite link, you're being sent to the right place.</p>
+    <p><a href="/">← Back to PallettAI</a></p>
+  </div>
+
+  <!-- Auth-flow UI: shown only when handling /auth/... links from Supabase emails -->
+  <div id="auth-ui">
+    <h2 style="margin-top:0; background:linear-gradient(135deg,#7c6cff,#4fd1c5); -webkit-background-clip:text; background-clip:text; color:transparent;">PallettAI Studio</h2>
+    <p id="auth-status">Verifying…</p>
+    <a id="auth-ok-btn" href="/ref.html">Continue to sign in</a>
+    <div id="auth-form-box">
+      <input id="auth-pw" type="password" placeholder="New password (8+ chars)" autocomplete="new-password">
+      <input id="auth-pw2" type="password" placeholder="Repeat password" autocomplete="new-password">
+      <button id="auth-pw-btn">Update password</button>
+      <p id="auth-pw-msg"></p>
+    </div>
+    <p style="font-size:13px; margin-top:28px; color:#6b7280;">Made by <strong style="color:#9aa1b5;">PallettAI</strong></p>
+  </div>
+</body>
+</html>

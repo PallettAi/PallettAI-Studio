@@ -1,0 +1,3 @@
+# PallettAI referral page — keep /ref/CODE in the address bar while serving ref.html
+# Netlify: drop this file in the site root. Cloudflare Pages: Settings → Redirects → paste the rule.
+/ref/*  /ref.html  200

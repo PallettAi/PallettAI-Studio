@@ -1,0 +1,35 @@
+{
+  "name": "pallettai-studio",
+  "productName": "PallettAI Studio",
+  "version": "0.3.7",
+  "description": "Design and build fully functioning, animated websites for clients. Made by PallettAI.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "web": "node server.js",
+    "pack:mac": "electron-builder --mac --dir",
+    "dist:mac": "electron-builder --mac",
+    "dist:mac:arm64": "electron-builder --mac --arm64",
+    "dist:mac:x64": "electron-builder --mac --x64",
+    "dist:all": "electron-builder --mac --publish never",
+    "pack:win": "electron-builder --win --dir",
+    "dist:win": "electron-builder --win",
+    "release:check": "node scripts/release-check.js"
+  },
+  "author": "PallettAI",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PallettAi/pallettai-website.git"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  },
+  "devDependencies": {
+    "electron": "^44.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "allowScripts": {
+    "electron@44.2.0": true
+  }
+}
