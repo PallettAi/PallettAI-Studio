@@ -16,5 +16,7 @@ contextBridge.exposeInMainWorld('pallettai', {
     const listener = (_e, action) => cb(action);
     ipcRenderer.on('menu', listener);
     return () => ipcRenderer.removeListener('menu', listener);
-  }
+  },
+  secretsGet: (key) => ipcRenderer.invoke('secrets-get', key),
+  secretsSet: (key, value) => ipcRenderer.invoke('secrets-set', key, value)
 });

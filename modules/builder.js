@@ -106,6 +106,32 @@ const Builder = (() => {
   // stays portable and clients can change their scheduler without an SDK or
   // PallettAI account. Invalid/non-HTTPS values intentionally render the setup
   // state rather than becoming an executable iframe source.
+  function safeHref(value, fallback) {
+    const fallbackHref = fallback == null ? '' : String(fallback);
+    const raw = String(value == null ? '' : value).trim();
+    if (!raw) return fallbackHref;
+    if (raw.charAt(0) === '#' || raw.startsWith('mailto:') || raw.startsWith('tel:')) return raw;
+    if (/^[a-z0-9][\w./-]*\.html(?:#.*)?$/i.test(raw)) return raw;
+    if (!/^https:\/\//i.test(raw)) return fallbackHref;
+    try {
+      const url = new URL(raw);
+      return url.protocol === 'https:' ? url.href : fallbackHref;
+    } catch (e) {
+      return fallbackHref;
+    }
+  }
+
+  function safeEmbedUrl(value) {
+    const raw = String(value == null ? '' : value).trim();
+    if (!raw || !/^https:\/\//i.test(raw)) return '';
+    try {
+      const url = new URL(raw);
+      return url.protocol === 'https:' ? url.href : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
   function safeBookingUrl(value) {
     const raw = String(value || '').trim();
     if (!raw || !/^https:\/\//i.test(raw)) return '';
@@ -173,7 +199,7 @@ const Builder = (() => {
     const glow = pro ? '<span class="orb orb-a"></span><span class="orb orb-b"></span>' : '';
     const desc = s.text || p.site.description;
     const cta2 = `<a class="btn ghost" href="${contactRef(p)}">Get in touch</a>`;
-    const cta1 = `<a class="btn solid" href="${esc(s.extra || p.site.ctaLink || contactRef(p))}">${esc(p.site.ctaText || 'Get started')}</a>`;
+    const cta1 = `<a class="btn solid" href="${esc(safeHref(s.extra || p.site.ctaLink, contactRef(p)))}">${esc(p.site.ctaText || 'Get started')}</a>`;
     const badge = p.site.eyebrow ? `<p class="hero-badge">${esc(p.site.eyebrow)}</p>` : '';
     const title = `<h1>${esc(s.title || p.site.name)}</h1>`;
     const tag = `<p class="hero-tag">${esc(s.subtitle || p.site.tagline)}</p>`;
@@ -597,7 +623,7 @@ const Builder = (() => {
           <span class="splash-blob sb-1"></span><span class="splash-blob sb-2"></span><span class="splash-blob sb-3"></span>
           <h2>${esc(s.title || 'Let’s work together')}</h2>
           <p>${esc(s.text || '')}</p>
-          <a class="btn solid" href="${esc(s.extra || p.site.ctaLink || contactRef(p))}">${esc(p.site.ctaText || 'Get started')}</a>
+          <a class="btn solid" href="${esc(safeHref(s.extra || p.site.ctaLink, contactRef(p)))}">${esc(p.site.ctaText || 'Get started')}</a>
         </div>`);
     }
     if (s.layout === 'email') {
@@ -614,7 +640,7 @@ const Builder = (() => {
       <div class="cta-banner">
         <h2>${esc(s.title || 'Let’s work together')}</h2>
         <p>${esc(s.text || '')}</p>
-        <a class="btn solid" href="${esc(s.extra || p.site.ctaLink || contactRef(p))}">${esc(p.site.ctaText || 'Get started')}</a>
+        <a class="btn solid" href="${esc(safeHref(s.extra || p.site.ctaLink, contactRef(p)))}">${esc(p.site.ctaText || 'Get started')}</a>
       </div>`);
   }
 
@@ -700,7 +726,7 @@ const Builder = (() => {
   }
 
   function renderEmbed(p, s, i) {
-    const url = (s.extra || '').trim();
+    const url = safeEmbedUrl(s.extra);
     return sectionShell(s, i, `
       ${head(s)}
       ${url
@@ -885,7 +911,7 @@ const Builder = (() => {
     }
     const cart = (p.suites || []).includes('shop') ? `<button class="cart-btn" data-cart="open">🛒<span class="cart-count" hidden>0</span></button>` : '';
     const themeBtn = s.themeToggle === false ? '' : `<button class="theme-btn" aria-label="Toggle dark or light theme">🌙</button>`;
-    const cta = s.navCta ? `<a class="btn solid small nav-cta" href="${esc(s.ctaLink || contactRef(p))}">${esc(s.navCta)}</a>` : '';
+    const cta = s.navCta ? `<a class="btn solid small nav-cta" href="${esc(safeHref(s.ctaLink, contactRef(p)))}">${esc(s.navCta)}</a>` : '';
     const cls = (s.navSticky === false ? ' static' : '') + (s.navStyle === 'transparent' ? ' transparent' : '');
     const mark = s.logo
       ? `<span class="brand-mark"><img src="${esc(s.logo)}" alt=""></span>`
@@ -931,7 +957,7 @@ const Builder = (() => {
     if (!rows.length) return '';
     const links = rows.slice(0, 40).map((r) => {
       const label = esc(r.label);
-      return (/^https?:\/\//i.test(r.href) ? `<a href="${esc(r.href)}" target="_blank" rel="noopener nofollow">${label}</a>` : label);
+      return (safeHref(r.href) ? `<a href="${esc(safeHref(r.href))}" target="_blank" rel="noopener nofollow">${label}</a>` : label);
     }).join(' · ');
     return `
       <div class="foot-credits"><b>Photos</b>${links}</div>`;
@@ -940,10 +966,10 @@ const Builder = (() => {
   function buildFooter(p, settings) {
     const year = new Date().getFullYear();
     const made = settings.brandFooter !== false
-      ? `<p class="made-by">${esc(settings.brandFooterText || 'Made by PallettAI')}${settings.brandLink ? ` · <a href="${esc(settings.brandLink)}" target="_blank" rel="noopener">${esc(settings.brandLink.replace(/^https?:\/\//, ''))}</a>` : ''}</p>`
+      ? `<p class="made-by">${esc(settings.brandFooterText || 'Made by PallettAI')}${safeHref(settings.brandLink) ? ` · <a href="${esc(safeHref(settings.brandLink))}" target="_blank" rel="noopener">${esc(String(settings.brandLink).replace(/^https?:\/\//, ''))}</a>` : ''}</p>`
       : '';
     const socials = (Array.isArray(p.site.socials) && p.site.socials.length
-      ? p.site.socials.map((so) => `<a class="social" href="${esc(so.url || '#')}" target="_blank" rel="noopener" aria-label="Social">${esc(so.icon || '•')}</a>`).join('')
+      ? p.site.socials.map((so) => `<a class="social" href="${esc(safeHref(so.url, '#'))}" target="_blank" rel="noopener" aria-label="Social">${esc(so.icon || '•')}</a>`).join('')
       : ['𝕏', 'in', 'ig', '▶'].map((s2) => `<a class="social" href="#" aria-label="Social">${s2}</a>`).join(''));
     const mark = p.site.logo ? `<img src="${esc(p.site.logo)}" alt="">` : '◆ ';
     return `
@@ -1886,7 +1912,9 @@ body.theme-dark .hero-tag{color:#e8eaf2}
         items.forEach((it, i) => {
           const row = document.createElement('div');
           row.className = 'cart-row';
-          row.innerHTML = '<div><strong>' + it.name + '</strong><br><small>' + it.price + '</small></div>';
+          row.innerHTML = '<div><strong></strong><br><small></small></div>';
+          row.querySelector('strong').textContent = it.name;
+          row.querySelector('small').textContent = it.price;
           const q = document.createElement('div'); q.className = 'cart-qty';
           const minus = document.createElement('button'); minus.textContent = '−';
           const plus = document.createElement('button'); plus.textContent = '+';
@@ -1932,6 +1960,17 @@ body.theme-dark .hero-tag{color:#e8eaf2}
       }).finally(function () { if (timer) clearTimeout(timer); });
     }
     function json(url, init, ms) { return request(url, init, ms).then(function (r) { return r.json(); }); }
+    function escHtml(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function safeHttps(u) {
+      try {
+        var x = new URL(String(u || ''));
+        return x.protocol === 'https:' ? x.href : '';
+      } catch (e) { return ''; }
+    }
     var emoji = { 0: '☀️', 1: '🌤️', 2: '⛅', 3: '☁️', 45: '🌫️', 48: '🌫️', 51: '🌦️', 53: '🌦️', 55: '🌦️', 61: '🌧️', 63: '🌧️', 65: '🌧️', 71: '🌨️', 73: '🌨️', 75: '🌨️', 80: '🌧️', 81: '🌧️', 82: '🌧️', 95: '⛈️', 96: '⛈️', 99: '⛈️' };
     document.querySelectorAll('.weather[data-city]').forEach(function (w) {
       var city = (w.getAttribute('data-city') || '').trim();
@@ -1948,7 +1987,7 @@ body.theme-dark .hero-tag{color:#e8eaf2}
           var rows = times.slice(0, 5).map(function (t, j) {
             return '<div class="w-day"><b>' + new Date(t + 'T00:00:00').toLocaleDateString([], { weekday: 'short' }) + '</b><span class="w-emoji">' + (emoji[codes[j]] || '🌡️') + '</span><span>' + Math.round(mx[j]) + '° / ' + Math.round(mn[j]) + '°</span></div>';
           }).join('');
-          w.innerHTML = '<div class="w-now"><span class="w-emoji">' + (emoji[cur.weather_code] || '🌡️') + '</span><b>' + Math.round(cur.temperature_2m) + '°C</b><span class="w-city">' + city + '</span></div><div class="w-days">' + rows + '</div>';
+          w.innerHTML = '<div class="w-now"><span class="w-emoji">' + (emoji[cur.weather_code] || '🌡️') + '</span><b>' + Math.round(cur.temperature_2m) + '°C</b><span class="w-city">' + escHtml(city) + '</span></div><div class="w-days">' + rows + '</div>';
         })
         .catch(function () {
           w.innerHTML = '<span class="sub">Weather unavailable — check the city name.</span>';
@@ -1986,10 +2025,11 @@ body.theme-dark .hero-tag{color:#e8eaf2}
         json('https://api.github.com/users/' + encodeURIComponent(user) + '/repos?per_page=5&sort=updated', undefined, 9000).catch(function () { return []; })
       ]).then(function (a) {
         var u = a[0], repos = a[1] || [];
+        var avatar = safeHttps(u.avatar_url);
         out.innerHTML =
-          '<div class="gh-head"><img src="' + (u.avatar_url || '') + '" alt=""><div><b>' + (u.name || u.login) + '</b><br><small>' + (u.bio || '') + '</small></div></div>' +
-          '<div class="gh-stats"><span class="gh-stat"><b>' + (u.public_repos || 0) + '</b><small>repos</small></span><span class="gh-stat"><b>' + (u.followers || 0) + '</b><small>followers</small></span><span class="gh-stat"><b>' + (u.following || 0) + '</b><small>following</small></span></div>' +
-          (repos.length ? '<div class="gh-repos">' + repos.map(function (r) { return '<div class="gh-repo"><span class="gh-star">★ ' + (r.stargazers_count || 0) + '</span><b>' + r.name + '</b><small>' + (r.description || r.language || '') + '</small></div>'; }).join('') + '</div>' : '');
+          '<div class="gh-head">' + (avatar ? '<img src="' + escHtml(avatar) + '" alt="">' : '') + '<div><b>' + escHtml(u.name || u.login) + '</b><br><small>' + escHtml(u.bio || '') + '</small></div></div>' +
+          '<div class="gh-stats"><span class="gh-stat"><b>' + escHtml(u.public_repos || 0) + '</b><small>repos</small></span><span class="gh-stat"><b>' + escHtml(u.followers || 0) + '</b><small>followers</small></span><span class="gh-stat"><b>' + escHtml(u.following || 0) + '</b><small>following</small></span></div>' +
+          (repos.length ? '<div class="gh-repos">' + repos.map(function (r) { return '<div class="gh-repo"><span class="gh-star">★ ' + escHtml(r.stargazers_count || 0) + '</span><b>' + escHtml(r.name) + '</b><small>' + escHtml(r.description || r.language || '') + '</small></div>'; }).join('') + '</div>' : '');
       }).catch(function () {
         out.innerHTML = '<span class="sub">GitHub profile unavailable — check the username.</span>';
       });
@@ -2275,7 +2315,7 @@ ${customJs}
     return true;
   }
 
-  return { buildSiteHTML, buildSitePages, seoExtras, applySuite, removeSuite, esc, picsum, pages: pagesOf, slugify, pageHref };
+  return { buildSiteHTML, buildSitePages, seoExtras, applySuite, removeSuite, esc, picsum, pages: pagesOf, slugify, pageHref, safeHref, safeEmbedUrl, safeBookingUrl };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = Builder;

@@ -5,12 +5,13 @@
 // Run before tagging a release. Fails (exit 1) on any error:
 //   1. Syntax-checks every shipped .js file (app/main/preload/
 //      server + data/** + modules/**).
-//   2. Boots scripts/mock-supabase.js itself on :54321 and runs
+//   2. Runs scripts/security-hardening-smoke.js (offline).
+//   3. Boots scripts/mock-supabase.js itself on :54321 and runs
 //      the registry-backed smoke suites against it:
 //        supabase-smoke.js · streak-smoke.js · credit-smoke.js
 //      plus the offline ai-features-smoke.js.
-//   3. Exercises the ZIP export writer's safety/limits.
-//   4. Compiles a representative project through the builder
+//   4. Exercises the ZIP export writer's safety/limits.
+//   5. Compiles a representative project through the builder
 //      (single + multi-page output, SEO extras) and asserts the
 //      generated HTML is well-formed enough to ship.
 // No network access and no external services are required.
@@ -227,6 +228,7 @@ function checkBuilder() {
 // Run everything
 // ============================================================
 (async () => {
+  runScript(['scripts/security-hardening-smoke.js'], 'Security hardening smoke');
   await runSmokeSuites();
   checkZipLimits();
   checkBuilder();

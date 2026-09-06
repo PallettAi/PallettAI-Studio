@@ -1,6 +1,6 @@
 // PallettAI Studio — desktop shell (macOS first-class, Windows/Linux run too).
 // Distribution is direct-download (Developer ID + notarized DMG), NOT the Mac App Store.
-const { app, BrowserWindow, Menu, shell, dialog } = require('electron');
+const { app, BrowserWindow, Menu, shell, dialog, ipcMain, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -92,17 +92,75 @@ function main() {
 
     // External links always open in the system browser, never inside the app.
     win.webContents.setWindowOpenHandler(({ url }) => {
-      if (/^https?:/i.test(url)) shell.openExternal(url);
+      if (isSafeExternalUrl(url)) shell.openExternal(url);
       return { action: 'deny' };
     });
     win.webContents.on('will-navigate', (e, url) => {
-      if (url !== win.webContents.getURL() && /^https?:/i.test(url)) {
+      if (url !== win.webContents.getURL() && isSafeExternalUrl(url)) {
         e.preventDefault();
         shell.openExternal(url);
+      } else if (url !== win.webContents.getURL()) {
+        e.preventDefault();
       }
     });
 
     win.on('closed', () => { win = null; });
+  }
+
+  function isSafeExternalUrl(url) {
+    try {
+      const parsed = new URL(String(url || ''));
+      return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  const SECRET_KEYS = new Set(['publish.netlifyToken', 'publish.neocitiesKey']);
+
+  function secretsStorePath() {
+    return path.join(app.getPath('userData'), 'publish-secrets.bin');
+  }
+
+  function readAllSecrets() {
+    try {
+      const buf = fs.readFileSync(secretsStorePath());
+      if (safeStorage.isEncryptionAvailable()) {
+        return JSON.parse(safeStorage.decryptString(buf));
+      }
+      return JSON.parse(buf.toString('utf8'));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function writeAllSecrets(obj) {
+    const json = JSON.stringify(obj || {});
+    const payload = safeStorage.isEncryptionAvailable()
+      ? safeStorage.encryptString(json)
+      : Buffer.from(json, 'utf8');
+    fs.writeFileSync(secretsStorePath(), payload, { mode: 0o600 });
+    return true;
+  }
+
+  function registerSecretIpc() {
+    ipcMain.handle('secrets-get', (event, key) => {
+      if (!win || event.sender !== win.webContents) return '';
+      const name = String(key || '');
+      if (!SECRET_KEYS.has(name)) return '';
+      const all = readAllSecrets();
+      return typeof all[name] === 'string' ? all[name] : '';
+    });
+    ipcMain.handle('secrets-set', (event, key, value) => {
+      if (!win || event.sender !== win.webContents) return false;
+      const name = String(key || '');
+      if (!SECRET_KEYS.has(name)) return false;
+      const all = readAllSecrets();
+      const next = String(value == null ? '' : value);
+      if (next) all[name] = next;
+      else delete all[name];
+      return writeAllSecrets(all);
+    });
   }
 
   function screenBoundsContain(b) {
@@ -438,6 +496,7 @@ function main() {
     }
     initUpdater();
     buildMenu();
+    registerSecretIpc();
     app.on('activate', () => {
       if (startupUpdateRunning) {
         if (startupWindow && !startupWindow.isDestroyed()) startupWindow.focus();

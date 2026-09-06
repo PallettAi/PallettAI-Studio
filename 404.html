@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PallettAI — Page not found</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://fjahxichioccknszuxhb.supabase.co; frame-ancestors 'none'; form-action 'self'; object-src 'none'; base-uri 'self'" />
 <!--
   GitHub Pages cannot rewrite URLs, so it serves this file for ANY unknown
   path. That gives us two jobs:
@@ -23,11 +24,10 @@
     var ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZqYWh4aWNoaW9jY2tuc3p1eGhiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg1MDk0MjUsImV4cCI6MjEwNDA4NTQyNX0.n1NMO7W5StuAAIxIZh2ZnMuM6qJqytKQaOUIav4aDm4';
 
     // ---- 1. referral invite links: /ref/CODE -------------------------------
-    var m = location.pathname.match(/\/ref\/([A-Za-z0-9-]+)/);
+    var m = location.pathname.indexOf('//') === -1 && location.pathname.match(/\/ref\/([A-Za-z0-9-]+)/);
     if (m) {
-      var base = location.pathname.split('/ref/')[0].replace(/\/+$/, '');
       var code = m[1].toUpperCase().replace(/[^A-Z0-9]/g, '');
-      location.replace(base + '/ref.html?code=' + code);
+      location.replace('/ref.html?code=' + encodeURIComponent(code));
       return;
     }
 
@@ -52,6 +52,7 @@
       var p = new URLSearchParams(location.search);
       var tokenHash = p.get('token_hash');
       var type = p.get('type') || 'email';
+      if (!/^(email|recovery|signup|invite|magiclink|email_change)$/.test(type)) type = 'email';
       var token = p.get('token');
 
       if (!tokenHash && !token) { status('This link is missing its verification code.', false); return; }

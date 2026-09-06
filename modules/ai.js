@@ -3106,6 +3106,46 @@ const AI = (() => {
     if (typeof v === 'object') return _siteText(v.name || v.text || v.url || v['@id'] || '');
     return '';
   };
+  function _ipv4ToInt(h) {
+    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+    if (!m) return null;
+    const p = m.slice(1).map(Number);
+    if (p.some((x) => x > 255)) return null;
+    return ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
+  }
+  function _isPrivateIpv4(n) {
+    if ((n >>> 24) === 0) return true;
+    if ((n >>> 24) === 10) return true;
+    if ((n >>> 24) === 127) return true;
+    if ((n >>> 24) === 169 && ((n >>> 16) & 0xff) === 254) return true;
+    if ((n >>> 24) === 172 && ((n >>> 16) & 0xff) >= 16 && ((n >>> 16) & 0xff) <= 31) return true;
+    if ((n >>> 24) === 192 && ((n >>> 16) & 0xff) === 168) return true;
+    if (((n & 0xffc00000) >>> 0) === 0x64400000) return true;
+    if ((n >>> 28) >= 14) return true;
+    return false;
+  }
+  function isPublicFetchUrl(raw) {
+    let u;
+    try { u = new URL(String(raw || '').trim()); } catch (e) { return false; }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    if (u.username || u.password) return false;
+    let h = String(u.hostname || '').trim().toLowerCase().replace(/\.$/, '');
+    if (h.startsWith('[')) { h = h.slice(1); if (h.endsWith(']')) h = h.slice(0, -1); }
+    if (!h) return false;
+    if (h === 'localhost' || h.endsWith('.localhost') || /^(local|home)$/.test(h)) return false;
+    if (/\.(local|internal|localhost|home\.arpa|onion)$/i.test(h)) return false;
+    const v4 = _ipv4ToInt(h);
+    if (v4 !== null) return !_isPrivateIpv4(v4);
+    if (h.includes(':')) {
+      if (h === '::1' || h === '0:0:0:0:0:0:0:1') return false;
+      if (h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return false;
+      if (/^::ffff:/.test(h)) {
+        const mapped = _ipv4ToInt(h.slice(7));
+        if (mapped !== null) return !_isPrivateIpv4(mapped);
+      }
+    }
+    return true;
+  }
   const _abs = (u, base) => { try { return new URL(String(u || ''), base || 'https://example.com').href; } catch (e) { return ''; } };
   const _hostBrand = (url) => {
     try { const h = new URL(url).hostname.replace(/^www\./, '').split('.')[0]; return h.charAt(0).toUpperCase() + h.slice(1); } catch (e) { return ''; }
@@ -3141,6 +3181,7 @@ const AI = (() => {
     return out;
   };
   async function _fetchHtmlRaw(url, ms = 12000, options) {
+    if (!isPublicFetchUrl(url)) return null;
     const opts = options || {};
     const deadline = Date.now() + ms;
     const attempt = async (u) => {
@@ -3197,6 +3238,7 @@ const AI = (() => {
     } else {
       if (!html) return null;
       base = /^https?:\/\//i.test(html) ? html : 'https://' + html;
+      if (!isPublicFetchUrl(base)) return null;
       html = await _fetchHtmlRaw(base, options && options.timeoutMs || 12000, options);
       if (!html) return null;
     }
@@ -4173,7 +4215,7 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
   // credits consumed per action
   const COST = { site: 1, images: 1, enhance: 1, restyle: 1, section: 1 };
 
-  return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, studySite, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatHelp, sampleSection, imageBase, photoPicks, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES };
+  return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, studySite, isPublicFetchUrl, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatHelp, sampleSection, imageBase, photoPicks, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = AI;

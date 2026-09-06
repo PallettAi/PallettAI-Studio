@@ -923,115 +923,90 @@ const App = (() => {
     $$('[data-down]').forEach((b) => b.onclick = downgradePlan);
     $('#licActivate').onclick = () => activateLicense($('#licKey').value);
     $('#licKey').onkeydown = (e) => { if (e.key === 'Enter') activateLicense($('#licKey').value); };
-    // cloud-aware redemption: verifies against the registry when signed in,
-    // falls back to the local demo engine otherwise (see applyReferralCode)
+    // cloud-aware redemption: verifies against the registry when signed in
     $('#btnRedeemRef').onclick = () => applyReferralCode($('#refCodeInput').value);
-    $('#refCodeInput').onkeydown = (e) => { if (e.key === 'Enter') redeemRef(); };
+    $('#refCodeInput').onkeydown = (e) => { if (e.key === 'Enter') applyReferralCode($('#refCodeInput').value); };
   }
 
   function checkoutFlow(planId) {
     const plan = PLANS.getPlan(planId);
-    openModal('Checkout — ' + plan.name, `
+    const signedIn = SUPABASE.isConfigured() && SUPABASE.signedIn();
+    if (!signedIn) {
+      openModal('Sign in to upgrade', `
+        <p style="color:var(--muted);line-height:1.55">Paid plans and license keys are verified on the cloud registry. Sign in from Settings, then activate a key issued by pallettai.org or redeem a referral code.</p>
+        <button class="btn primary" id="goSettings">Open Settings</button>`, true);
+      $('#goSettings').onclick = () => { closeModal(); settingsTab = 'account'; switchView('settings'); };
+      return;
+    }
+    openModal('Upgrade — ' + plan.name, `
       <div class="checkout-form">
-        <div class="demo-note">Demo checkout — no real payment is processed. In production, wire Stripe (or your provider) here — see the README.</div>
-        <div><label>Card number</label><input id="ccNum" value="4242 4242 4242 4242" inputmode="numeric"></div>
-        <div class="cf-row">
-          <div><label>Expiry</label><input id="ccExp" value="12/29"></div>
-          <div><label>CVC</label><input id="ccCvc" value="123"></div>
-        </div>
-        <div><label>Name on card</label><input id="ccName" value="Pallett AI"></div>
+        <div class="demo-note">Card checkout is not live yet. Activate a registry license key or redeem a referral code — nothing is unlocked locally.</div>
         <div class="checkout-sum"><span>${plan.name} · billed ${plan.period}</span><b>${plan.price ? PLANS.currency.symbol + plan.price + '/mo' : 'Free'}</b></div>
-        <button class="btn primary pay-btn" id="payBtn">Pay ${plan.price ? PLANS.currency.symbol + plan.price + ' / month' : ''} →</button>
         <button class="btn ghost small" id="ccBack">← Back to plans</button>
       </div>`, true);
-    $('#payBtn').onclick = () => {
-      PLANS.store.activate(planId, 'checkout');
-      refreshEntitlements();
-      openModal('Welcome to ' + plan.name + '! 🎉', `
-        <div class="upgrade-ok">
-          <div class="big">🎉</div>
-          <h3 style="color:var(--text);letter-spacing:0;text-transform:none">You're on ${plan.name}</h3>
-          <p style="color:var(--muted)">Every ${plan.name} feature is unlocked. Happy building!</p>
-          <button class="btn primary" id="okBtn">Start building</button>
-        </div>`);
-      $('#okBtn').onclick = closeModal;
-      toast('Welcome to ' + plan.name + ' ★', true);
-    };
     $('#ccBack').onclick = openPricing;
   }
 
-  // Activate a license key. Signed in → verified against the registry and bound
-  // to the account (syncs across devices). Signed out → local checksum demo path.
+  // Activate a license key. Always verified against the registry and bound
+  // to the signed-in account (syncs across devices).
   async function activateLicense(key) {
-    if (SUPABASE.isConfigured() && SUPABASE.signedIn()) {
-      const btn = $('#licActivate');
-      const old = btn ? btn.textContent : '';
-      if (btn) { btn.disabled = true; btn.textContent = 'Verifying…'; }
-      const r = await SUPABASE.activateLicense(key);
-      if (btn) { btn.disabled = false; btn.textContent = old; }
-      if (!r.ok) return toast(r.msg, false);
-      if (r.outcome === 'verified') {
-        PLANS.store.applyRegistryPlan({
-          plan: r.plan, key: String(key).trim().toUpperCase(),
-          expiresAt: r.expiresAt ? new Date(r.expiresAt).getTime() : null
-        });
-        closeModal();
-        refreshEntitlements();
-        toast('License verified on the registry — welcome to ' + PLANS.getPlan(r.plan).name + ' ★', true);
-      } else {
-        const msgs = {
-          'not-found': 'That key isn’t in the registry — check it or buy one at pallettai.org.',
-          'in-use': 'That key is already activated on another account.',
-          'revoked': 'That key has been revoked.',
-          'expired': 'That key has expired.'
-        };
-        toast(msgs[r.outcome] || 'Key could not be verified.', false);
-      }
-      return;
+    if (!(SUPABASE.isConfigured() && SUPABASE.signedIn())) {
+      return toast('Sign in to activate a license key — keys are verified on the registry.', false);
     }
-    const r = PLANS.validateLicense(key);
-    if (!r.ok) return toast('Invalid license key — expected PAL-PRO-XXXX-XXXX or PAL-PROPLUS-XXXX-XXXX', false);
-    PLANS.store.activate(r.plan, 'license', r.key);
-    closeModal();
-    refreshEntitlements();
-    toast('License activated — welcome to ' + PLANS.getPlan(r.plan).name + ' ★', true);
+    const btn = $('#licActivate');
+    const old = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Verifying…'; }
+    const r = await SUPABASE.activateLicense(key);
+    if (btn) { btn.disabled = false; btn.textContent = old; }
+    if (!r.ok) return toast(r.msg, false);
+    if (r.outcome === 'verified') {
+      PLANS.store.applyRegistryPlan({
+        plan: r.plan, key: String(key).trim().toUpperCase(),
+        expiresAt: r.expiresAt ? new Date(r.expiresAt).getTime() : null
+      });
+      closeModal();
+      refreshEntitlements();
+      toast('License verified on the registry — welcome to ' + PLANS.getPlan(r.plan).name + ' ★', true);
+    } else {
+      const msgs = {
+        'not-found': 'That key isn’t in the registry — check it or buy one at pallettai.org.',
+        'in-use': 'That key is already activated on another account.',
+        'revoked': 'That key has been revoked.',
+        'expired': 'That key has expired.'
+      };
+      toast(msgs[r.outcome] || 'Key could not be verified.', false);
+    }
   }
 
-  // Redeem a referral code. Signed in → verified against the cloud registry
-  // (one stable code per account, stamped trace log, cross-device rewards).
-  // Signed out → the honest local demo engine.
+  // Redeem a referral code. Always verified against the cloud registry.
   async function applyReferralCode(code) {
     code = String(code || '').trim().toUpperCase();
     if (!/^REF-[A-Z0-9]{4,10}$/.test(code)) return toast('That referral code doesn’t look right — codes look like REF-XXXXXX', false);
-    if (SUPABASE.isConfigured() && SUPABASE.signedIn()) {
-      const btn = $('#btnRedeemRef');
-      const old = btn ? btn.textContent : '';
-      if (btn) { btn.disabled = true; btn.textContent = 'Verifying…'; }
-      const r = await SUPABASE.redeem(code);
-      if (btn) { btn.disabled = false; btn.textContent = old; }
-      if (!r.ok) return toast(r.msg, false);
-      if (r.outcome === 'verified') {
-        if (r.trialExpiresAt) PLANS.store.applyTrialUntil(new Date(r.trialExpiresAt).getTime());
-        PLANS.store.logReferral({ code, kind: 'friend-code', days: r.grantedDays || 30, source: 'cloud', outcome: 'verified' });
-        closeModal();
-        refreshEntitlements();
-        toast('Referral verified on the cloud — +' + (r.grantedDays || 30) + ' days of Pro free 🎉', true);
-      } else {
-        const msgs = {
-          'already-used': 'That code was already redeemed by your account — codes work once per account.',
-          'self-redeemed': 'That’s your own referral code — share it with a friend instead!',
-          'not-found': 'That code isn’t in the registry — double-check the letters.'
-        };
-        PLANS.store.logReferral({ code, kind: 'attempt', days: 0, source: 'cloud', outcome: r.outcome });
-        toast(msgs[r.outcome] || 'That code could not be verified.', false);
-        if (currentView === 'settings') renderSettings();
-      }
-      return;
+    if (!(SUPABASE.isConfigured() && SUPABASE.signedIn())) {
+      return toast('Sign in to redeem a referral code — rewards are verified on the registry.', false);
     }
-    const r = PLANS.store.redeem(code);
+    const btn = $('#btnRedeemRef');
+    const old = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Verifying…'; }
+    const r = await SUPABASE.redeem(code);
+    if (btn) { btn.disabled = false; btn.textContent = old; }
     if (!r.ok) return toast(r.msg, false);
-    refreshEntitlements();
-    toast(r.msg, true);
+    if (r.outcome === 'verified') {
+      if (r.trialExpiresAt) PLANS.store.applyTrialUntil(new Date(r.trialExpiresAt).getTime());
+      PLANS.store.logReferral({ code, kind: 'friend-code', days: r.grantedDays || 30, source: 'cloud', outcome: 'verified' });
+      closeModal();
+      refreshEntitlements();
+      toast('Referral verified on the cloud — +' + (r.grantedDays || 30) + ' days of Pro free 🎉', true);
+    } else {
+      const msgs = {
+        'already-used': 'That code was already redeemed by your account — codes work once per account.',
+        'self-redeemed': 'That’s your own referral code — share it with a friend instead!',
+        'not-found': 'That code isn’t in the registry — double-check the letters.'
+      };
+      PLANS.store.logReferral({ code, kind: 'attempt', days: 0, source: 'cloud', outcome: r.outcome });
+      toast(msgs[r.outcome] || 'That code could not be verified.', false);
+      if (currentView === 'settings') renderSettings();
+    }
   }
 
   // Pull account, credit and streak state independently. A slow or failed
@@ -2966,10 +2941,43 @@ const App = (() => {
 
   // ---------------- one-click publish ----------------
   const PUB_KEY = 'pallettai.publish.v1';
-  function loadPublish() { try { return JSON.parse(localStorage.getItem(PUB_KEY) || '{}'); } catch (e) { return {}; } }
-  function savePublish(v) {
-    try { localStorage.setItem(PUB_KEY, JSON.stringify(v)); return true; }
+  const SECRET_NETLIFY = 'publish.netlifyToken';
+  const SECRET_NEO = 'publish.neocitiesKey';
+  function loadPublishMeta() {
+    try { return JSON.parse(localStorage.getItem(PUB_KEY) || '{}'); } catch (e) { return {}; }
+  }
+  function savePublishMeta(v, keepSecretsInMeta) {
+    const copy = Object.assign({}, v);
+    if (!keepSecretsInMeta) {
+      delete copy.netlifyToken;
+      delete copy.neocitiesKey;
+    }
+    try { localStorage.setItem(PUB_KEY, JSON.stringify(copy)); return true; }
     catch (e) { toast('Publishing credentials could not be saved on this device.', false); return false; }
+  }
+  async function loadPublish() {
+    const v = loadPublishMeta();
+    const bridge = typeof window !== 'undefined' ? window.pallettai : null;
+    if (bridge && typeof bridge.secretsGet === 'function') {
+      try {
+        v.netlifyToken = (await bridge.secretsGet(SECRET_NETLIFY)) || v.netlifyToken || '';
+        v.neocitiesKey = (await bridge.secretsGet(SECRET_NEO)) || v.neocitiesKey || '';
+      } catch (e) { /* keep meta-only */ }
+      if (v.netlifyToken || v.neocitiesKey) await savePublish(v);
+    }
+    return v;
+  }
+  async function savePublish(v) {
+    const bridge = typeof window !== 'undefined' ? window.pallettai : null;
+    const hasSecrets = !!(bridge && typeof bridge.secretsSet === 'function');
+    const ok = savePublishMeta(v, !hasSecrets);
+    if (hasSecrets) {
+      try {
+        await bridge.secretsSet(SECRET_NETLIFY, v.netlifyToken || '');
+        await bridge.secretsSet(SECRET_NEO, v.neocitiesKey || '');
+      } catch (e) { return false; }
+    }
+    return ok;
   }
   function publishFiles(c) {
     // Every page as {name (file), content (html)} — index.html guaranteed by the page model.
@@ -3034,7 +3042,7 @@ const App = (() => {
     return { url: 'https://' + user + '.neocities.org/', provider: 'Neocities' };
   }
 
-  function openPublish(options) {
+  async function openPublish(options) {
     const c = current();
     if (!c) return toast('Open a project first');
     const skipQuality = !!(options && options.skipQuality);
@@ -3044,7 +3052,7 @@ const App = (() => {
         return openQualityGate(() => openPublish({ skipQuality: true }), c);
       }
     }
-    const cred = loadPublish();
+    const cred = await loadPublish();
     const pages = Builder.pages(c);
     openModal('🌐 Publish online', `
       <p style="color:var(--muted);margin-bottom:14px">${esc(c.name)} — ${pages.length} page${pages.length === 1 ? '' : 's'}. Choose a free host, connect once, then publish with one click. Credentials stay in this app only.</p>
@@ -3055,7 +3063,7 @@ const App = (() => {
         ${cred.netlifyToken
           ? `<p class="pub-saved">✓ Token saved${cred.netlifyUrl ? ' — last live at <a href="' + esc(cred.netlifyUrl) + '" target="_blank" rel="noopener">' + esc(cred.netlifyUrl.replace(/^https?:\/\//, '')) + '</a>' : ''}</p>`
           : '<p class="pub-saved" style="color:var(--danger)">No token yet — paste one to enable publishing.</p>'}
-        <input id="pubNetlifyTok" type="password" placeholder="nfp_…" spellcheck="false" autocomplete="off" ${cred.netlifyToken ? 'value="' + esc(cred.netlifyToken) + '"' : ''}>
+        <input id="pubNetlifyTok" type="password" placeholder="${cred.netlifyToken ? 'Token saved — paste a new one to replace' : 'nfp_…'}" spellcheck="false" autocomplete="off">
         <div style="display:flex;gap:8px;margin-top:10px">
           <button class="btn primary small" id="pubNetlify">▲ Publish to Netlify</button>
           ${cred.netlifyToken ? '<button class="btn ghost small" id="pubNetlifyForget">Forget token</button>' : ''}
@@ -3081,13 +3089,14 @@ const App = (() => {
       <div id="pubResult" style="display:none;margin-top:8px"></div>`);
     const busy = (b, on, label) => { b.disabled = on; b.textContent = on ? 'Working…' : label; };
     $('#pubNetlify').onclick = async () => {
-      const tok = ($('#pubNetlifyTok').value || '').trim();
+      const typed = ($('#pubNetlifyTok').value || '').trim();
+      const tok = typed || cred.netlifyToken || '';
       const btn = $('#pubNetlify');
       if (!tok) return toast('Paste a Netlify token first', false);
       busy(btn, true);
       try {
         const r = await netlifyDeploy(c, tok);
-        const v = loadPublish(); v.netlifyToken = tok; v.netlifyUrl = r.url; savePublish(v);
+        const v = await loadPublish(); v.netlifyToken = tok; v.netlifyUrl = r.url; await savePublish(v);
         $('#pubResult').style.display = '';
         $('#pubResult').innerHTML = `<div class="pub-success">🎉 Live! <a href="${esc(r.url)}" target="_blank" rel="noopener"><b>${esc(r.url)}</b></a> <button class="btn ghost small" data-copy="${esc(r.url)}">Copy link</button></div>`;
         $('#pubResult [data-copy]').onclick = (e) => { navigator.clipboard.writeText(e.target.dataset.copy); toast('Link copied 📋', true); };
@@ -3100,13 +3109,15 @@ const App = (() => {
       const user = ($('#pubNeoUser').value || '').trim();
       const pass = $('#pubNeoPass').value || '';
       const btn = $('#pubNeo');
-      if (!user || !pass) return toast('Enter your Neocities username and password', false);
+      const savedKey = cred.neocitiesKey && cred.neocitiesUser === user ? cred.neocitiesKey : '';
+      if (!user) return toast('Enter your Neocities username', false);
+      if (!pass && !savedKey) return toast('Enter your Neocities username and password', false);
       busy(btn, true);
       try {
-        let key = (loadPublish() || {}).neocitiesKey;
-        if (cred.neocitiesUser !== user || !key) key = await neocitiesKey(user, pass);
+        let key = savedKey;
+        if (!key || pass) key = await neocitiesKey(user, pass);
         const r = await neocitiesUpload(user, key, publishFiles(c));
-        const v = loadPublish(); v.neocitiesUser = user; v.neocitiesKey = key; v.neocitiesUrl = r.url; savePublish(v);
+        const v = await loadPublish(); v.neocitiesUser = user; v.neocitiesKey = key; v.neocitiesUrl = r.url; await savePublish(v);
         $('#pubResult').style.display = '';
         $('#pubResult').innerHTML = `<div class="pub-success">🎉 Live! <a href="${esc(r.url)}" target="_blank" rel="noopener"><b>${esc(r.url)}</b></a> <button class="btn ghost small" data-copy="${esc(r.url)}">Copy link</button></div>`;
         $('#pubResult [data-copy]').onclick = (e) => { navigator.clipboard.writeText(e.target.dataset.copy); toast('Link copied 📋', true); };
@@ -3116,9 +3127,9 @@ const App = (() => {
       } finally { busy(btn, false, '⚑ Publish to Neocities'); }
     };
     const forgetNetlify = $('#pubNetlifyForget');
-    if (forgetNetlify) forgetNetlify.onclick = () => { const v = loadPublish(); delete v.netlifyToken; delete v.netlifyUrl; savePublish(v); toast('Netlify token forgotten'); openPublish({ skipQuality: true }); };
+    if (forgetNetlify) forgetNetlify.onclick = async () => { const v = await loadPublish(); delete v.netlifyToken; delete v.netlifyUrl; await savePublish(v); toast('Netlify token forgotten'); openPublish({ skipQuality: true }); };
     const forgetNeo = $('#pubNeoForget');
-    if (forgetNeo) forgetNeo.onclick = () => { const v = loadPublish(); delete v.neocitiesUser; delete v.neocitiesKey; delete v.neocitiesUrl; savePublish(v); toast('Neocities signed out'); openPublish({ skipQuality: true }); };
+    if (forgetNeo) forgetNeo.onclick = async () => { const v = await loadPublish(); delete v.neocitiesUser; delete v.neocitiesKey; delete v.neocitiesUrl; await savePublish(v); toast('Neocities signed out'); openPublish({ skipQuality: true }); };
   }
 
   // ---------------- suites ----------------
@@ -4865,7 +4876,7 @@ const App = (() => {
       <div class="set-row"><div><label>Anon public key</label><div class="set-desc">Settings → API → anon public key. Safe to embed — database rules protect the data.</div></div>
         <input id="sbKey" placeholder="eyJhbGciOi…" spellcheck="false"></div>
       <div class="acc-row"><button class="btn primary small" id="btnAccSave">💾 Save & connect</button></div>
-      <div class="acc-status">Not connected — referral codes work in local demo mode. Run the one-file setup script (supabase/schema.sql) in your project, then paste the URL + key above. Full walkthrough in the README.</div>`
+      <div class="acc-status">Not connected — sign in after connecting the registry to redeem codes and activate keys. Run the one-file setup script (supabase/schema.sql) in your project, then paste the URL + key above. Full walkthrough in the README.</div>`
       : !signedIn ? `
       <div class="acc-row"><span class="acc-badge">☁ Connected · registry live</span><span class="conn-host">${esc(String((SUPABASE.getConfig() || {}).url || '').replace(/^https?:\/\//, ''))}</span></div>
       <div class="set-row"><div><label>Email</label></div><input type="email" id="accEmail" placeholder="you@example.com" autocomplete="email"></div>
@@ -4897,13 +4908,13 @@ const App = (() => {
       cards('account', `
       <div class="settings-card">
         <h3>Account & cloud registry</h3>
-        <p class="sub">One stable referral code per account, verified server-side with a stamped redemption log — rewards follow you across devices. Without an account, codes use local demo mode and still work offline.</p>
+        <p class="sub">One stable referral code per account, verified server-side with a stamped redemption log — rewards follow you across devices. Sign in to redeem codes or activate a license key.</p>
         ${accountCard}
       </div>
 
       <div class="settings-card">
         <h3>Plan & billing</h3>
-        <p class="sub">Your PallettAI Studio subscription. Checkout is a demo — see the README for production billing.</p>
+        <p class="sub">Your PallettAI Studio subscription. License keys and referrals are verified on the cloud registry.</p>
         <div class="plan-banner">
           <div class="plan-badge ${pro ? '' : 'free'}"><span class="pb-ico">${pro ? '★' : '✦'}</span>${esc(plan.name)}</div>
           <div class="plan-meta">

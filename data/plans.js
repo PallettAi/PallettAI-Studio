@@ -1,8 +1,8 @@
 // ============================================================
 // PallettAI Studio — plans, licenses & entitlement engine
-// Free / Pro / Pro+ tiers with a local license-key system.
-// NOTE: the checkout is a demo flow — wire a real backend
-// (Stripe etc.) for production billing. See README.
+// Free / Pro / Pro+ tiers. Paid unlocks and referral days are granted
+// only after the cloud registry verifies them — local checkout and
+// checksum keys are not entitlements.
 // ============================================================
 
 const PLANS = {
@@ -114,7 +114,7 @@ const PLANS = {
     _default() {
       return {
         plan: 'free', active: true, source: 'trial', key: '', expiresAt: null,
-        planExpiresAt: null,   // registry licenses can expire; demo checkout is lifetime
+        planExpiresAt: null,   // registry licenses can expire; local checkout is not an entitlement
         credits: { used: 0 },
         creditsSpends: [],  // ledger: refs + statuses for server-mirrored AI spends
         bonusCredits: 0,    // server-tracked bonus AI credits (daily streak rewards)
@@ -127,9 +127,27 @@ const PLANS = {
     load() {
       try {
         const state = { ...this._default(), ...JSON.parse(localStorage.getItem(this.key) || '{}') };
+        let dirty = false;
         const normalized = PLANS.normalizePlan(state.plan);
         if (normalized !== state.plan) {
           state.plan = normalized;
+          dirty = true;
+        }
+        // Demo checkout and client-side checksum keys are not entitlements.
+        if (state.source === 'checkout' || state.source === 'license') {
+          state.plan = 'free';
+          state.source = 'trial';
+          state.key = '';
+          state.planExpiresAt = null;
+          dirty = true;
+        }
+        // Local referral redeem used to stamp trialProUntil without the registry.
+        if ((state.trialProUntil || 0) > 0 && state.trialSource !== 'registry') {
+          state.trialProUntil = 0;
+          state.trialSource = '';
+          dirty = true;
+        }
+        if (dirty) {
           try { localStorage.setItem(this.key, JSON.stringify(state)); } catch (e) { /* read-only storage */ }
         }
         return state;
@@ -300,17 +318,10 @@ const PLANS = {
       this.save(s);
     },
     activate(planId, source, key, expiresAtMs) {
-      const s = this.load();
-      s.plan = PLANS.normalizePlan(planId);
-      s.active = true;
-      s.source = source || 'checkout';
-      if (key) s.key = key;
-      s.expiresAt = null; // demo: lifetime while active
-      s.planExpiresAt = source === 'registry' ? (Number(expiresAtMs) || null) : null;
-      s.trialProUntil = 0; // a paid plan supersedes earned trial days
-      s.updatedAt = Date.now();
-      this.save(s);
-      return s;
+      // Local checkout / checksum unlocks are not entitlements. Paid plans
+      // only stick when the cloud registry verified the key.
+      if (source !== 'registry') return this.load();
+      return this.applyRegistryPlan({ plan: planId, key, expiresAt: expiresAtMs });
     },
     // Adopt an account-bound registry license (plan + key + optional expiry).
     applyRegistryPlan({ plan, key, expiresAt }) {
@@ -321,6 +332,7 @@ const PLANS = {
       if (key) s.key = key;
       s.planExpiresAt = Number(expiresAt) || null;
       s.trialProUntil = 0;
+      s.trialSource = '';
       s.updatedAt = Date.now();
       this.save(s);
       return s;
@@ -333,6 +345,7 @@ const PLANS = {
       s.source = 'trial';
       s.key = '';
       s.trialProUntil = 0;
+      s.trialSource = '';
       s.planExpiresAt = null;
       s.updatedAt = Date.now();
       this.save(s);
@@ -357,24 +370,13 @@ const PLANS = {
     },
     redeem(raw) {
       const code = String(raw || '').trim().toUpperCase();
-      const s = this.load();
-      if (PLANS.premium.includes(PLANS.normalizePlan(s.plan))) {
-        return { ok: false, msg: 'You are already on ' + PLANS.getPlan(s.plan).name + ' — nothing to redeem.' };
-      }
       if (!/^REF-[A-Z0-9]{4,10}$/.test(code)) {
         return { ok: false, msg: 'That referral code doesn’t look right — codes look like REF-XXXXXX' };
       }
-      const mine = code === this.refCode();
-      const days = mine ? 7 : 30;
-      s.trialProUntil = Math.max(Date.now(), s.trialProUntil || 0) + days * 864e5;
-      s.referrals = s.referrals || [];
-      s.referrals.unshift({ code, at: Date.now(), kind: mine ? 'friend-redeemed' : 'friend-code', days, source: 'local' });
-      this.save(s);
       return {
-        ok: true, mine, days,
-        msg: mine
-          ? 'Demo: a friend redeemed your code — +7 Pro days for you 🎁'
-          : 'Referral accepted — +' + days + ' days of Pro free 🎉'
+        ok: false,
+        reason: 'signin-required',
+        msg: 'Sign in to redeem a referral code — rewards are verified on the registry.'
       };
     },
 
@@ -398,6 +400,7 @@ const PLANS = {
       const t = Number(untilMs) || 0;
       if (t > 0) {
         s.trialProUntil = Math.max(s.trialProUntil || 0, t);
+        s.trialSource = 'registry';
         s.updatedAt = Date.now();
         this.save(s);
       }
