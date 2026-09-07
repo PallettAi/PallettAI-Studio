@@ -1116,7 +1116,51 @@ const AI = (() => {
       gal: ['Poodle clip in progress', 'Deshed satisfaction', 'Puppy first groom', 'Senior gentle care', 'The treat jar', 'After-shot smile'],
       extraSections: ['gallery']
     }
-  ];
+  ].concat((typeof AiNichesExtra !== 'undefined' && Array.isArray(AiNichesExtra))
+    ? AiNichesExtra
+    : (typeof require === 'function' ? (function () {
+        try { return require('../data/ai-niches-extra.js'); } catch (e) { return []; }
+      })() : []));
+
+  function briefLib() {
+    if (typeof AiBrief !== 'undefined') return AiBrief;
+    try { if (typeof require === 'function') return require('../data/ai-brief.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
+  function followLib() {
+    if (typeof AiFollowup !== 'undefined') return AiFollowup;
+    try { if (typeof require === 'function') return require('../data/ai-followup.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
+  function fingerprintLib() {
+    if (typeof AiFingerprint !== 'undefined') return AiFingerprint;
+    try { if (typeof require === 'function') return require('../data/ai-fingerprint.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
+  function aaPaletteIds(ids) {
+    const list = Array.isArray(ids) ? ids : [];
+    const ok = list.filter((pid) => {
+      const pal = (DB.palettes || []).find((p) => p.id === pid);
+      if (!pal) return false;
+      const ch = DB.paletteChecks(pal);
+      return ch.length > 0 && ch.every((c) => c.ratio >= 4.5);
+    });
+    if (ok.length) return ok;
+    return (DB.palettes || []).filter((p) => {
+      if (!p || String(p.id).indexOf('pack_') === 0) return false;
+      const ch = DB.paletteChecks(p);
+      return ch.length > 0 && ch.every((c) => c.ratio >= 4.5);
+    }).map((p) => p.id);
+  }
+  function speak(text, voice) {
+    const lib = briefLib();
+    return lib ? lib.applyVoice(text, voice) : String(text || '');
+  }
+  function voiceFrom(brief, extra) {
+    const lib = briefLib();
+    if (!lib) return { tone: (brief && brief.voice) || 'warm', banned: [] };
+    return lib.normalizeVoice(Object.assign({ tone: brief && brief.voice }, extra || {}));
+  }
 
   // ----- prompt → concrete subject + scene -----
   // Search every subject entry regardless of the detected industry (a prompt
@@ -1308,12 +1352,12 @@ const AI = (() => {
 
     // palette: prefer the look's family, keep a classic type palette ~35% of the time
     let palette;
-    const fam = (LOOK_PALETTES[ls.pal] || LOOK_PALETTES.light).filter((pid) => DB.getPalette(pid));
+    const fam = aaPaletteIds((LOOK_PALETTES[ls.pal] || LOOK_PALETTES.light).filter((pid) => DB.getPalette(pid)));
     if (Math.abs(seed) % 10 < 4 && type.palettes && type.palettes.length) {
-      const legacy = type.palettes.filter((pid) => DB.getPalette(pid));
+      const legacy = aaPaletteIds(type.palettes.filter((pid) => DB.getPalette(pid)));
       palette = pick(legacy.length ? legacy : fam, seed + 3);
     } else {
-      palette = pick(fam, seed);
+      palette = pick(fam.length ? fam : ['paper'], seed);
     }
 
     // heading + body pairing
@@ -2102,6 +2146,12 @@ const AI = (() => {
     const raw = String(prompt || '').trim() || 'a modern, friendly business';
     const website = (opts && opts.website) || null;
     const webText = website && website.text ? String(website.text) : '';
+    const Brief = briefLib();
+    const brief = (Brief && opts && opts.brief) ? Brief.normalizeBrief(opts.brief) : null;
+    const filled = !!(Brief && brief && Brief.briefFilled(brief));
+    const studiedIn = Array.isArray(opts && opts.studied) ? opts.studied.filter(Boolean).slice(0, 3) : [];
+    const voice = voiceFrom(brief || { voice: 'warm' });
+    const onePager = !!(opts && opts.onePager);
     // a concrete subject beats an ambiguous guess (“dog grooming studio” is
     // pet care first, a creative agency never)
     let subjAll = extractSubjectAll(raw);
@@ -2116,21 +2166,45 @@ const AI = (() => {
       const ws = extractSubjectAll(webText);
       if (ws) subjAll = ws;
     }
-    const seed = hash(raw.toLowerCase());
-    const jitter = (opts.seed || Date.now()) % 5;
-    const brand = (opts && opts.name && String(opts.name).trim())
-      ? String(opts.name).trim().replace(/\s+/g, ' ')
-      : (website && website.brand)
-        ? String(website.brand).trim().replace(/\s+/g, ' ')
-        : brandName(raw, type, seed);
-    const area = (opts && opts.area && String(opts.area).trim())
-      ? String(opts.area).trim().replace(/\s+/g, ' ')
-      : (website && website.area) ? String(website.area).trim() : '';
+    const nameSeed = hash(raw.toLowerCase());
+    let brand = (brief && brief.name)
+      ? brief.name
+      : (opts && opts.name && String(opts.name).trim())
+        ? String(opts.name).trim().replace(/\s+/g, ' ')
+        : (website && website.brand)
+          ? String(website.brand).trim().replace(/\s+/g, ' ')
+          : brandName(raw, type, nameSeed);
+    let area = (brief && brief.area)
+      ? brief.area
+      : (opts && opts.area && String(opts.area).trim())
+        ? String(opts.area).trim().replace(/\s+/g, ' ')
+        : (website && website.area) ? String(website.area).trim() : '';
+    if (brief && !brief.name && opts && opts.name && String(opts.name).trim()) brand = String(opts.name).trim().replace(/\s+/g, ' ');
+    if (brief && !brief.area && opts && opts.area && String(opts.area).trim()) area = String(opts.area).trim().replace(/\s+/g, ' ');
     const subj = subjAll || extractSubject(raw, type.id);
     // deep niche pack: when the prompt or a studied website names a sub-niche,
     // its hand-written content layers over the industry copy bank and adds
     // real sections (e.g. a wood-fired pizzeria gets an actual menu table).
     const niche = matchNiche((raw + ' ' + webText).trim());
+    const Finger = fingerprintLib();
+    const salt = Number(opts && opts.salt) || 0;
+    const fp = Finger
+      ? Finger.make({
+        name: brand,
+        area,
+        offer: (brief && brief.offer) || '',
+        voice: (brief && brief.voice) || '',
+        nicheId: (niche && niche.id) || '',
+        prompt: raw,
+        salt
+      })
+      : { key: raw.toLowerCase(), seed: nameSeed, salt: 0, prompt: raw };
+    let seed = fp.seed;
+    if (opts && opts.seed != null && String(opts.seed) !== '') {
+      const n = Number(opts.seed);
+      if (!Number.isNaN(n)) seed = n;
+    }
+    const jitter = (seed >>> 8) % 5;
     const effType = effectiveType(type, niche);
     const focus = (niche && niche.focus) || subj.focus || TYPE_FOCUS[type.id];
     const brandLower = brand.toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -2139,7 +2213,8 @@ const AI = (() => {
 
     const bank = copyBank(effType, brand, focus);
     // — real client knowledge from their existing website takes the wheel —
-    if (website) {
+    // A filled brief keeps copy (tagline / about / reviews / service bodies).
+    if (website && !filled) {
       if (website.tagline) tagline = String(website.tagline).trim();
       const aboutTxt = String(website.about || '');
       if (aboutTxt.length > 40) {
@@ -2169,6 +2244,38 @@ const AI = (() => {
           icon: '⭐', title: r.title || 'Happy client', text: r.text, extra: r.extra || 'Google review', tag: ''
         }));
       }
+    }
+    if (brief && brief.offer) tagline = brief.offer;
+    if (brief && (brief.proofs || []).some(Boolean) && bank.features && bank.features.items) {
+      bank.features.items = bank.features.items.map((it, i) => brief.proofs[i] ? { ...it, text: brief.proofs[i] } : it);
+    }
+    const studiedMeta = [];
+    if (studiedIn.length && bank.features) {
+      const titles = [];
+      studiedIn.forEach((st) => {
+        const svc = (st.services || []).map((sv) => typeof sv === 'string' ? sv : (sv && sv.title)).filter(Boolean);
+        studiedMeta.push({ url: st.url || '', brand: st.brand || '', services: svc });
+        svc.forEach((title) => titles.push(title));
+      });
+      if (titles.length) {
+        bank.features.items = (bank.features.items || []).map((it, i) => titles[i] ? { ...it, title: titles[i] } : it);
+        const poolIcons = (effType.features || []).map((f) => f.icon).filter(Boolean);
+        for (let i = bank.features.items.length; i < Math.min(titles.length, 6); i++) {
+          bank.features.items.push({
+            icon: poolIcons[i % (poolIcons.length || 1)] || '✦',
+            title: titles[i],
+            text: (brief && brief.proofs[i]) || ('Done properly by ' + brand + '.'),
+            extra: '', tag: '', image: ''
+          });
+        }
+      }
+    }
+    tagline = speak(tagline, voice);
+    if (bank.hero && bank.hero.text) bank.hero.text = speak(bank.hero.text, voice);
+    if (bank.about && bank.about.text) bank.about.text = speak(bank.about.text, voice);
+    if (bank.cta) {
+      if (bank.cta.title) bank.cta.title = speak(bank.cta.title, voice);
+      if (bank.cta.text) bank.cta.text = speak(bank.cta.text, voice);
     }
     bank.hero = { ...bank.hero, subtitle: tagline };
     const S = (name) => {
@@ -2207,6 +2314,9 @@ const AI = (() => {
         sections = sections.filter((x) => x.type !== 'pricing');
       }
     }
+    if (Finger && opts.layouts !== 'classic') {
+      sections = Finger.orderSections(sections, seed + 17);
+    }
 
     // Local-first: when the creator names their town/area, the generated copy
     // proves local knowledge and the site gains an areaServed schema signal
@@ -2220,6 +2330,15 @@ const AI = (() => {
         fSec.items.push({ icon: '📍', title: 'Do you serve ' + area + '?', text: 'Yes — we proudly serve ' + area + ' and the surrounding areas. Reach out and we’ll talk through your project.', extra: '', tag: '' });
       }
     }
+    const primaryCta = (brief && brief.cta) ? speak(brief.cta, voice) : 'Get started';
+    const ctaSec = sections.find((x) => x.type === 'cta');
+    if (brief && brief.cta && ctaSec) {
+      ctaSec.title = speak(brief.cta, voice);
+      if (ctaSec.text) ctaSec.text = speak(ctaSec.text, voice);
+    }
+    const photoGrade = (Finger && Finger.photoGradeSpec)
+      ? Finger.photoGradeSpec({ on: !!(opts && opts.photoGrade), typeId: type.id, look: dna.look })
+      : { on: false, blend: 'color', strength: 0 };
 
     const project = {
       id: 'ai_' + Math.random().toString(36).slice(2, 10),
@@ -2239,7 +2358,8 @@ const AI = (() => {
         tagline,
         eyebrow,
         description: desc,
-        ctaText: 'Get started',
+        ctaText: primaryCta,
+        navCta: primaryCta,
         ctaLink: '',
         email: (website && website.email) || ('hello@' + (brandLower || 'pallettai') + '.com'),
         phone: (website && website.phone) || '',
@@ -2250,10 +2370,102 @@ const AI = (() => {
         font: dna.font,
         fontDisplay: dna.fontDisplay,
         design: { containerWidth: 1140, radius: dna.radius, spacing: dna.spacing },
-        sections
+        sections,
+        brief: brief || undefined,
+        voice,
+        studied: studiedMeta.length ? studiedMeta : undefined,
+        fingerprint: { key: fp.key, seed: fp.seed, salt: fp.salt, prompt: raw },
+        photoGrade
       }
     };
+    if (filled && !onePager) splitPages(project, niche, area);
     return project;
+  }
+
+  function cloneSec(s) {
+    const c = JSON.parse(JSON.stringify(s));
+    c.id = uid();
+    return c;
+  }
+
+  function splitPages(project, niche, area) {
+    const all = (project.site && project.site.sections) || [];
+    const first = (t) => all.find((s) => s.type === t);
+    const hero = first('hero');
+    const feat = first('features');
+    const stats = first('stats');
+    const testi = first('testimonials');
+    const cta = first('cta');
+    const about = first('about');
+    const pricing = first('pricing');
+    const table = first('table');
+    const contact = first('contact');
+    const faq = first('faq');
+    const home = [];
+    if (hero) home.push(hero);
+    if (feat) {
+      const teaser = cloneSec(feat);
+      teaser.items = (teaser.items || []).slice(0, 3);
+      home.push(teaser);
+    }
+    if (stats) home.push(stats);
+    else if (testi) home.push(testi);
+    if (cta) home.push(cta);
+    const serviceSlug = niche && niche.menu ? 'menu' : 'services';
+    const serviceName = niche && niche.menu ? 'Menu' : 'Services';
+    const services = [];
+    if (feat) services.push(cloneSec(feat));
+    if (pricing) services.push(cloneSec(pricing));
+    if (table) services.push(cloneSec(table));
+    const aboutPg = [];
+    if (about) aboutPg.push(cloneSec(about));
+    if (stats) aboutPg.push(cloneSec(stats));
+    if (testi) aboutPg.push(cloneSec(testi));
+    const contactPg = [];
+    if (contact) contactPg.push(cloneSec(contact));
+    if (faq) contactPg.push(cloneSec(faq));
+    if (area) contactPg.push(sec('map', { title: 'Find us', subtitle: 'We serve ' + area + ' and nearby.', extra: area }));
+    project.site.pages = [
+      { id: 'pg-home', name: 'Home', slug: 'index', sections: home },
+      { id: 'pg-' + serviceSlug, name: serviceName, slug: serviceSlug, sections: services },
+      { id: 'pg-about', name: 'About', slug: 'about', sections: aboutPg },
+      { id: 'pg-contact', name: 'Contact', slug: 'contact', sections: contactPg }
+    ];
+    project.site.activePageId = 'pg-home';
+    project.site.sections = home;
+  }
+
+  function applyNicheExtras(project, nicheId) {
+    if (!project || !project.site) return false;
+    const niche = NICHES.find((n) => n.id === nicheId) || matchNiche(String(nicheId || ''));
+    if (!niche) return false;
+    const type = TYPES.find((x) => x.id === project.aiType) || detectType(project.site.name || '');
+    const bank = copyBank(effectiveType(type, niche), project.site.name, project.aiSubject || niche.focus);
+    project.site.sections = insertNicheExtras(project.site.sections || [], nicheExtras(niche, type, bank));
+    if (!project.aiNicheId) {
+      project.aiNicheId = niche.id;
+      project.aiNiche = niche.name;
+    }
+    return true;
+  }
+
+  function addServicesPage(project) {
+    if (!project || !project.site) return false;
+    const pages = Array.isArray(project.site.pages) ? project.site.pages : [];
+    if (pages.some((p) => p.slug === 'services' || p.slug === 'menu')) return true;
+    const feat = (project.site.sections || []).find((s) => s.type === 'features');
+    const pricing = (project.site.sections || []).find((s) => s.type === 'pricing');
+    const table = (project.site.sections || []).find((s) => s.type === 'table');
+    const sections = [];
+    if (feat) sections.push(cloneSec(feat));
+    if (pricing) sections.push(cloneSec(pricing));
+    if (table) sections.push(cloneSec(table));
+    if (!sections.length) return false;
+    if (!pages.length) {
+      project.site.pages = [{ id: 'pg-home', name: 'Home', slug: 'index', sections: project.site.sections || [] }];
+    }
+    project.site.pages.push({ id: 'pg-services', name: 'Services', slug: 'services', sections });
+    return true;
   }
 
   // ============================================================
@@ -2937,7 +3149,7 @@ const AI = (() => {
 
     // fall back to the chosen source only for slots the creator didn't fill
     if (source === 'none') return out;
-    const seedB = hash(String(prompt || '') + ' ' + s.name);
+    const seedB = (s.fingerprint && s.fingerprint.seed) || hash(String(prompt || '') + ' ' + s.name);
     const base = imageBase(prompt, type.id);
     const tryAI = async (slot, q, seed) => {
       const url = imageUrl(q, slot.w, slot.h, seed);
@@ -3460,8 +3672,8 @@ const AI = (() => {
     // make sure the restyle is visible: nudge if nothing at all changed
     const same = pal === project.site.palette && fnt === project.site.font && !fntD;
     if (same) {
-      const fam = LOOK_PALETTES[LOOK_STYLE[dna.look].pal] || LOOK_PALETTES.light;
-      pal = fam[(Math.abs(seed) + 1) % fam.length] || pal;
+      const fam = aaPaletteIds(LOOK_PALETTES[LOOK_STYLE[dna.look].pal] || LOOK_PALETTES.light);
+      pal = fam[(Math.abs(seed) + 1) % (fam.length || 1)] || pal;
     }
     project.site.palette = pal;
     project.site.font = fnt;
@@ -3474,6 +3686,67 @@ const AI = (() => {
     return { palette: pal, font: fnt, fontDisplay: fntD, look: dna.look, type: type.id };
   }
 
+  function shuffleLook(project, opts = {}) {
+    const Finger = fingerprintLib();
+    if (!Finger || !project || !project.site) return null;
+    const prev = project.site.fingerprint || {};
+    const brief = project.site.brief || {};
+    const voiceTone = (project.site.voice && project.site.voice.tone) || brief.voice || '';
+    const prompt = prev.prompt || ((project.site.name || '') + ' ' + (project.site.tagline || ''));
+    const type = TYPES.find((x) => x.id === project.aiType) || detectType(project.site.name || prompt);
+    let salt = Finger.nextSalt(prev.salt);
+    let fp = Finger.make({
+      name: project.site.name,
+      area: project.site.area,
+      offer: brief.offer || '',
+      voice: voiceTone,
+      nicheId: project.aiNicheId || '',
+      prompt,
+      salt
+    });
+    let dna = pickDesignDNA(type, prompt, { tier: opts.tier || 'free' }, fp.seed);
+    const heroSec = (project.site.sections || []).find((x) => x.type === 'hero');
+    const visual = (d, h) => [d.palette, d.font, d.fontDisplay || '', d.radius, (h && h.layout) || ''].join('|');
+    const trayFor = (look) => LOOK_HERO[look] || LOOK_HERO.light;
+    let nextHero = heroSec ? trayFor(dna.look)[Math.abs(fp.seed) % trayFor(dna.look).length] : '';
+    const before = visual({
+      palette: project.site.palette,
+      font: project.site.font,
+      fontDisplay: project.site.fontDisplay || '',
+      radius: (project.site.design && project.site.design.radius) || ''
+    }, heroSec);
+    for (let i = 0; i < 8 && visual(dna, { layout: nextHero }) === before; i++) {
+      salt += 1;
+      fp = Finger.make({
+        name: project.site.name,
+        area: project.site.area,
+        offer: brief.offer || '',
+        voice: voiceTone,
+        nicheId: project.aiNicheId || '',
+        prompt,
+        salt
+      });
+      dna = pickDesignDNA(type, prompt, { tier: opts.tier || 'free' }, fp.seed);
+      nextHero = heroSec ? trayFor(dna.look)[Math.abs(fp.seed) % trayFor(dna.look).length] : '';
+    }
+    project.dnaLook = dna.look;
+    project.site.palette = dna.palette;
+    project.site.font = dna.font;
+    project.site.fontDisplay = dna.fontDisplay;
+    project.site.design = project.site.design || {};
+    if (!project.site.stylePack) {
+      project.site.design.radius = dna.radius;
+      project.site.design.spacing = dna.spacing;
+    }
+    if (heroSec && opts.layouts !== 'classic') heroSec.layout = nextHero;
+    if (project.site.photoGrade && project.site.photoGrade.on) {
+      project.site.photoGrade = Finger.photoGradeSpec({ on: true, typeId: type.id, look: dna.look });
+    }
+    project.site.fingerprint = { key: fp.key, seed: fp.seed, salt: fp.salt, prompt };
+    project.updatedAt = Date.now();
+    return { palette: dna.palette, font: dna.font, fontDisplay: dna.fontDisplay, look: dna.look, salt: fp.salt };
+  }
+
   function localSectionText(section, prompt, project) {
     const brand = project.site.name;
     const topic = prompt || section.title || 'this';
@@ -3481,6 +3754,7 @@ const AI = (() => {
   }
 
   async function enhanceSection(section, prompt, project, onlineEnabled) {
+    const voice = project && project.site ? voiceFrom(project.site.brief, project.site.voice) : voiceFrom({ voice: 'warm' });
     const itemTypes = ['features', 'stats', 'pricing', 'testimonials', 'faq', 'blog', 'shop', 'gallery', 'logos'];
     if (itemTypes.includes(section.type)) {
       // local: reuse the business-type copy bank so every item type gets refreshed
@@ -3488,9 +3762,16 @@ const AI = (() => {
       const bank = copyBank(effectiveType(type, nicheForProject(project)), project.site.name, project.aiSubject || focusPhrase(project.site.name + ' ' + (project.site.tagline || '')));
       const fresh = bank[section.type];
       let n = 0;
-      if (fresh && fresh.items && fresh.items.length) { section.items = fresh.items.map((it) => ({ ...it })); n += section.items.length; }
-      if (fresh && fresh.title) { section.title = fresh.title; n++; }
-      if (fresh && fresh.subtitle) section.subtitle = fresh.subtitle;
+      if (fresh && fresh.items && fresh.items.length) {
+        section.items = fresh.items.map((it) => ({
+          ...it,
+          title: speak(it.title || '', voice),
+          text: speak(it.text || '', voice)
+        }));
+        n += section.items.length;
+      }
+      if (fresh && fresh.title) { section.title = speak(fresh.title, voice); n++; }
+      if (fresh && fresh.subtitle) section.subtitle = speak(fresh.subtitle, voice);
       return { applied: n, source: 'local' };
     }
     if (onlineEnabled) {
@@ -3498,11 +3779,11 @@ const AI = (() => {
         'Write 2 punchy sentences (max 40 words) for the "' + (section.title || section.type) + '" section of ' + project.site.name + '\'s website. Warm, confident, client-facing.',
         '');
       if (res) {
-        section.text = res;
+        section.text = speak(res, voice);
         return { applied: 1, source: 'ai' };
       }
     }
-    section.text = localSectionText(section, prompt, project);
+    section.text = speak(localSectionText(section, prompt, project), voice);
     return { applied: 1, source: 'local' };
   }
 
@@ -3922,7 +4203,7 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
 
   const chatHelp = 'I can restyle the whole site (“make it glassmorphism” or “luxury gold”), retune design (“rounder corners”, “more spacing”), apply catalog layouts (“make the features bento”, “terminal hero”, “masonry testimonials”), tweak copy (“make the hero punchier”), change colors, fonts, buttons and nav, and add or remove sections — “add a pricing section”, “add a map of Paris”, “weather in London”, “add an online booking block”, “delete the FAQ”, “swap the order”… I can even change your site name, phone, email or CTA, or build a full brand kit with one command. Every change is undoable (' + KBD + 'Z), and AI copy rewrites use one credit.';
 
-  function chatPlan(site, msg) {
+  function chatPlan(site, msg, ctx) {
     const raw = String(msg || '').trim();
     if (!raw) return { acts: [], reply: 'Say what you\'d like to change — for example “make it glassmorphism” or “rounder corners”.' };
     const n = norm(raw);
@@ -3932,7 +4213,30 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
     const askingOnly = isAsking && !mentionedSections(raw).length && !TONES.some((t) => n.indexOf(' ' + t + ' ') !== -1) && !/\b(add|remove|make|change|switch|set|rewrite|color|palette|font)\b/.test(n);
     if (askingOnly) return { acts: [], reply: chatHelp };
 
-    // ---- brand kit (logo + palette + fonts + alt text, one command) ----
+    const FU = followLib();
+    const followId = FU && FU.isFollowUp(raw);
+    if (followId) {
+      const target = ctx && ctx.targetType;
+      if (!target) return { acts: [], reply: 'Nothing to tweak yet — edit a section first, then say shorter, more local, or less salesy.' };
+      const idx = lastSecOfType(site, target);
+      if (idx < 0) return { acts: [], reply: 'Nothing to tweak yet — edit a section first, then say shorter, more local, or less salesy.' };
+      return { acts: [{ op: 'rewriteSection', type: target, idx, mode: followId, prompt: raw, credit: true, label: 'Rewrote the ' + target + ' section' }] };
+    }
+    if (/\bmore like\b|\bsimilar to\b|\blike https?:\/\//i.test(raw)) {
+      const url = FU && FU.likeUrl(raw);
+      if (url) return { acts: [{ op: 'likeUrl', url, credit: false, label: 'Restyled from the reference site (layout only)' }] };
+    }
+    if (/\badd a menu\b/i.test(raw) || (/\badd\b/i.test(raw) && /\bmenu\b/i.test(raw) && /\b(wine|pub|brewery|bar)\b/i.test(raw))) {
+      const niche = matchNiche(raw);
+      if (niche) return { acts: [{ op: 'nicheExtras', nicheId: niche.id, credit: false, label: 'Added ' + niche.name + ' extras' }] };
+    }
+    if (/\badd a services page\b/.test(n) || (/\bservices page\b/.test(n) && /\badd\b/.test(n))) {
+      return { acts: [{ op: 'servicesPage', credit: false, label: 'Added a Services page from your features' }] };
+    }
+    if (/\bfix the weak cta\b/.test(n)) {
+      const next = (site && site.brief && site.brief.cta) || 'Book now';
+      return { acts: [{ op: 'setField', key: 'ctaText', value: next, credit: true, label: 'Strengthened the primary CTA' }] };
+    }
     if (/\bbrand kit\b|\bbrand package\b|\blogo and (colors|colours|palette)\b|\bnew logo\b/.test(n)) {
       acts.push({ op: 'brandKit', credit: true, label: 'Built you a brand kit — logo, palette, fonts and alt text' });
     }
@@ -4213,9 +4517,9 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
   }
 
   // credits consumed per action
-  const COST = { site: 1, images: 1, enhance: 1, restyle: 1, section: 1 };
+  const COST = { site: 1, images: 1, enhance: 1, restyle: 1, shuffle: 1, section: 1, translate: 1 };
 
-  return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, studySite, isPublicFetchUrl, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatHelp, sampleSection, imageBase, photoPicks, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES };
+  return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, studySite, isPublicFetchUrl, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, shuffleLook, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatHelp, sampleSection, imageBase, photoPicks, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES, applyNicheExtras, addServicesPage, matchNiche };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = AI;

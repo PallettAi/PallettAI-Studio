@@ -11,6 +11,51 @@ const Builder = (() => {
 
   const picsum = (seed, w, h) => `https://picsum.photos/seed/${encodeURIComponent(seed)}/${w}/${h}`;
 
+  function photoGradeOn(p) {
+    return !!(p && p.site && p.site.photoGrade && p.site.photoGrade.on);
+  }
+  function gradeWrap(p, html) {
+    return photoGradeOn(p) ? `<span class="media-grade">${html}</span>` : html;
+  }
+  function faviconLink(p) {
+    const emoji = String((p.site && p.site.favicon) || '').trim();
+    const logo = String((p.site && p.site.logo) || '').trim();
+    const logoOk = /^(data:image\/|https?:)/i.test(logo) || /\.(svg|png|webp|ico|gif|jpe?g)(\?|$)/i.test(logo);
+    if (emoji && emoji !== '◆') {
+      return `<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>${esc(emoji)}</text></svg>">`;
+    }
+    if (logoOk) return `<link rel="icon" href="${esc(logo)}">`;
+    return `<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◆</text></svg>">`;
+  }
+  function photoGradeCSS(p) {
+    if (!photoGradeOn(p)) return '';
+    const g = p.site.photoGrade || {};
+    const strength = Math.min(0.18, Math.max(0.1, Number(g.strength) || 0.14));
+    return `
+body.photo-grade{
+  --grade-map:color-mix(in srgb,var(--primary) 58%,var(--accent));
+  --grade-strength:${strength};
+}
+.media-grade{position:relative;display:block;isolation:isolate;overflow:hidden;border-radius:inherit}
+.media-grade>img{width:100%;height:100%;object-fit:cover;display:block}
+.hero-bg.media-grade{isolation:isolate}
+.hero-split-media .media-grade{border-radius:var(--radius)}
+.about-media .media-grade{border-radius:var(--radius);min-height:380px}
+.gal-item .media-grade,.gal-m .media-grade{position:absolute;inset:0;z-index:0;border-radius:inherit}
+.gal-item figcaption,.gal-m figcaption{z-index:2}
+.coll-media{position:relative}
+.coll-media .media-grade{position:absolute;inset:0}
+@supports (mix-blend-mode: color){
+  .media-grade::after{content:'';position:absolute;inset:0;pointer-events:none;z-index:1;background:var(--grade-map);mix-blend-mode: color;opacity:var(--grade-strength,.14)}
+  .media-grade::before{content:'';position:absolute;inset:0;pointer-events:none;z-index:1;background:linear-gradient(165deg,color-mix(in srgb,var(--bg) 18%,transparent),color-mix(in srgb,var(--primary) 9%,transparent) 48%,transparent 82%);mix-blend-mode: soft-light;opacity:.22}
+  body.photo-grade-soft .media-grade::after{mix-blend-mode: soft-light}
+  body.photo-grade-soft .media-grade::before{display:none}
+}
+@media (prefers-contrast: more){
+  .media-grade::before,.media-grade::after{display:none}
+}`;
+  }
+
   // A deterministic, on-theme hero placeholder used when a project has no hero
   // image of its own. It keeps a free user's first export from shipping a random
   // stock photo as the hero background by surprise — instead the hero shows the site
@@ -238,7 +283,7 @@ const Builder = (() => {
         <div class="hero-split-body ${anim}" data-anim-css="${animCss}">
           ${badge}${title}${tag}${d}${cta}
         </div>         <div class="hero-split-media ${anim}" data-anim-css="${animCss}">${hasImg
-           ? `<img class="hero-img" src="${esc(bg)}" alt="${esc(s.alt || s.title || p.site.name)}" loading="lazy" decoding="async">`
+           ? gradeWrap(p, `<img class="hero-img" src="${esc(bg)}" alt="${esc(s.alt || s.title || p.site.name)}" loading="lazy" decoding="async">`)
            : placeholder}</div>
       </div>
       ${scrollHint}
@@ -267,7 +312,7 @@ const Builder = (() => {
     return `
     <section id="sec-hero-${i}" class="section sec-hero layout-centered">
       ${hasImg
-        ? `<div class="hero-bg" style="background-image:url('${esc(bg)}');background-size:cover;background-position:center;background-repeat:no-repeat"></div>
+        ? `<div class="hero-bg${photoGradeOn(p) ? ' media-grade' : ''}" style="background-image:url('${esc(bg)}');background-size:cover;background-position:center;background-repeat:no-repeat"></div>
       <div class="hero-shade"></div>`
         : placeholder}
       ${glow}
@@ -373,7 +418,7 @@ const Builder = (() => {
         <div class="about-grid">
           <div class="about-media about-float">
             ${hasImg
-              ? `<img src="${esc(img)}" alt="${esc(s.alt || s.title || 'About')}" loading="lazy" decoding="async" style="aspect-ratio:4/3;object-fit:cover;width:100%;height:auto;display:block">`
+              ? gradeWrap(p, `<img src="${esc(img)}" alt="${esc(s.alt || s.title || 'About')}" loading="lazy" decoding="async" style="aspect-ratio:4/3;object-fit:cover;width:100%;height:auto;display:block">`)
               : ph}
             ${chips}
           </div>
@@ -388,7 +433,7 @@ const Builder = (() => {
       <div class="about-grid">
         <div class="about-media ${side ? 'order-2' : ''}">
           ${hasImg
-            ? `<img src="${esc(img)}" alt="${esc(s.alt || s.title || 'About')}" loading="lazy" decoding="async" style="aspect-ratio:4/3;object-fit:cover;width:100%;height:auto;display:block">`
+            ? gradeWrap(p, `<img src="${esc(img)}" alt="${esc(s.alt || s.title || 'About')}" loading="lazy" decoding="async" style="aspect-ratio:4/3;object-fit:cover;width:100%;height:auto;display:block">`)
             : ph}
         </div>
         <div class="about-body ${side ? 'order-1' : ''}">
@@ -405,14 +450,14 @@ const Builder = (() => {
     const cards = items.map((it, j) => {
       const img = it.image || picsum(`${p.id}-gal-${i}-${j}`, 640, pro ? 640 : 480);
       return `
-      <figure class="gal-item ${pro ? 'masonry' : ''}" data-cap="${esc(it.title || '')}" data-extra="${esc(it.extra || '')}">        <img src="${esc(img)}" alt="${esc(it.alt || it.title || '')}" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;height:auto;display:block">
+      <figure class="gal-item ${pro ? 'masonry' : ''}" data-cap="${esc(it.title || '')}" data-extra="${esc(it.extra || '')}">        ${gradeWrap(p, `<img src="${esc(img)}" alt="${esc(it.alt || it.title || '')}" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;height:auto;display:block">`)}
         <figcaption><span>${esc(it.title || '')}</span><small>${esc(it.extra || '')}</small></figcaption>
        </figure>`;
     }).join('');
     if (s.layout === 'mosaic') {
       const mosaic = itemsField(s, Array.from({ length: 7 }, (_, j) => ({ title: `Work ${j + 1}`, extra: 'Project' }))).map((it, j) => `
         <figure class="gal-m mos-${j + 1}" data-cap="${esc(it.title || '')}" data-extra="${esc(it.extra || '')}">
-          <img src="${esc(it.image || picsum(`${p.id}-gal-${i}-${j}`, 640, 480))}" alt="${esc(it.alt || it.title || '')}" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;height:auto;display:block">
+          ${gradeWrap(p, `<img src="${esc(it.image || picsum(`${p.id}-gal-${i}-${j}`, 640, 480))}" alt="${esc(it.alt || it.title || '')}" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;height:auto;display:block">`)}
            <figcaption><strong>${esc(it.title || '')}</strong> <small>${esc(it.extra || '')}</small></figcaption>
          </figure>`).join('');
       return sectionShell(s, i, `${head(s)}<div class="gal-mosaic">${mosaic}</div>`);
@@ -835,7 +880,7 @@ const Builder = (() => {
       const img = (it.image || '').trim() || picsum(seedBase + '-' + (title || 'item') + '-' + j, 800, 600);
       return `
       <article class="coll-item" data-cat="${esc(cat || 'all')}" data-name="${esc(title.toLowerCase())}" data-search="${esc((title + ' ' + (it.text || '') + ' ' + (it.tag || '') + ' ' + cat).toLowerCase())}">
-        <div class="coll-media"><img src="${esc(img)}" alt="${esc(title || 'Collection item')}"><span class="coll-cat">${esc(cat || '•')}</span>${it.tag ? `<span class="coll-tag">${esc(it.tag)}</span>` : ''}</div>
+        <div class="coll-media">${gradeWrap(p, `<img src="${esc(img)}" alt="${esc(title || 'Collection item')}">`)}<span class="coll-cat">${esc(cat || '•')}</span>${it.tag ? `<span class="coll-tag">${esc(it.tag)}</span>` : ''}</div>
         <div class="coll-body"><h3>${esc(title || 'Untitled')}</h3><p>${esc(it.text || '')}</p></div>
       </article>`;
     };
@@ -963,6 +1008,18 @@ const Builder = (() => {
       <div class="foot-credits"><b>Photos</b>${links}</div>`;
   }
 
+  function translationCredit(p) {
+    const t = p && p.site && p.site.translation;
+    if (!t || !t.provider) return '';
+    const label = t.provider === 'deepl'
+      ? 'Translations powered by DeepL'
+      : t.provider === 'mymemory'
+        ? 'Translations powered by MyMemory'
+        : '';
+    if (!label) return '';
+    return `<p class="translate-credit">${esc(label)}</p>`;
+  }
+
   function buildFooter(p, settings) {
     const year = new Date().getFullYear();
     const made = settings.brandFooter !== false
@@ -997,6 +1054,7 @@ const Builder = (() => {
         </div>
       </div>
       ${imageCreditsHTML(p)}
+      ${translationCredit(p)}
       <div class="container foot-end">
         <p>© ${year} ${esc(p.site.name || 'My Site')}. All rights reserved.</p>
         ${made}
@@ -1583,7 +1641,7 @@ body.theme-dark .hero-tag{color:#e8eaf2}
   *{animation:none !important;transition:none !important}
   .reveal{opacity:1 !important;transform:none !important}
   html{scroll-behavior:auto}
-}`;
+}` + photoGradeCSS(p);
   };
 
   // ---------------- generated site JS (stringified, runs in the page) ----------------
@@ -2133,9 +2191,7 @@ body.theme-dark .hero-tag{color:#e8eaf2}
     const dispFont = (p.site.fontDisplay && p.site.fontDisplay !== p.site.font) ? siteFont(p.site, p.site.fontDisplay) : null;
     const metaDesc = p.site.metaDescription || p.site.tagline || '';
     const ogImg = p.site.ogImage ? `<meta property="og:image" content="${esc(p.site.ogImage)}">` : '';
-    const favicon = p.site.favicon
-      ? `<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>${esc(p.site.favicon)}</text></svg>">`
-      : `<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◆</text></svg>">`;
+    const favicon = faviconLink(p);
     const liveUrl = String(p.site.url || '').trim().replace(/\/+$/, '');
     const slugSeg = (pg) => { const sl = String(pg.slug || '').trim() || slugify(pg.name || 'page'); return sl === 'index' ? '' : sl + '.html'; };
     const canonical = liveUrl
@@ -2219,8 +2275,11 @@ body.theme-dark .hero-tag{color:#e8eaf2}
     Referrer-Policy: strict-origin-when-cross-origin
     -->`;
 
+    const lang = String((p.site && p.site.lang) || 'en').toLowerCase().replace(/[^a-z-]/g, '') || 'en';
+    const grade = p.site.photoGrade || {};
+    const bodyClass = grade.on ? ('photo-grade' + (grade.blend === 'soft-light' ? ' photo-grade-soft' : '')) : '';
     let html = `<!DOCTYPE html>
-<html lang="en">
+<html lang="${esc(lang)}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2235,7 +2294,7 @@ ${styleCss}
 ${customCss}
 ${cspStarter}
 </head>
-<body id="top">
+<body id="top"${bodyClass ? ' class="' + bodyClass + '"' : ''}>
 ${buildNav(p)}
 <main>
 ${body}

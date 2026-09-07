@@ -330,6 +330,58 @@ const SUPABASE = (() => {
         const j = await _rpc('refund_credit', { p_ref: String(ref || '').slice(0, 64) }, options, TIMEOUTS.write);
         return { ok: true, ...(j || {}) };
       } catch (e) { return _err(e); }
+    },
+
+    async translateSite(texts, target, source, options) {
+      const s = loadSes();
+      if (!api.isConfigured() || !s) return { ok: false, fallback: true, msg: 'Sign in to use DeepL.' };
+      try {
+        const res = await _request(base() + '/functions/v1/translate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: anon(),
+            Authorization: 'Bearer ' + s.accessToken
+          },
+          body: JSON.stringify({
+            texts: Array.isArray(texts) ? texts : [],
+            target: String(target || 'ES'),
+            source: String(source || 'EN')
+          })
+        }, options, TIMEOUTS.write);
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok || !j || j.ok !== true || !Array.isArray(j.texts)) {
+          return { ok: false, fallback: true, msg: (j && j.error) || 'DeepL unavailable' };
+        }
+        return { ok: true, provider: 'deepl', texts: j.texts };
+      } catch (e) {
+        const err = _err(e);
+        return { ok: false, fallback: true, msg: err.msg };
+      }
+    },
+
+    async openBillingPortal(returnUrl, options) {
+      const s = loadSes();
+      if (!api.isConfigured() || !s) return { ok: false, msg: 'Sign in to manage billing.' };
+      try {
+        const res = await _request(base() + '/functions/v1/billing-portal', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: anon(),
+            Authorization: 'Bearer ' + s.accessToken
+          },
+          body: JSON.stringify({ returnUrl: String(returnUrl || '') })
+        }, options, TIMEOUTS.write);
+        const j = await res.json().catch(() => ({}));
+        if (j && j.error === 'no-customer') {
+          return { ok: false, msg: 'No Stripe subscription on this account — use Upgrade to pay, or a license key.' };
+        }
+        if (!res.ok || !j || j.ok !== true || !j.url) {
+          return { ok: false, msg: 'Billing portal is unavailable right now.' };
+        }
+        return { ok: true, url: j.url };
+      } catch (e) { return _err(e); }
     }
   };
 

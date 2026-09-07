@@ -256,6 +256,8 @@ body.light .bw-ai{background:linear-gradient(92deg,#7c3aed 0%,#a855f7 60%,#c084f
 .set-row:first-of-type{border-top:none}
 .set-row label{font-weight:600;font-size:.9rem}
 .set-row .set-desc{color:var(--muted);font-size:.78rem;margin-top:2px}
+.set-row.keys-note{align-items:flex-start}
+.set-row.keys-note > div{flex:1;min-width:0}
 .set-row input[type=text],.set-row input[type=email],.set-row input[type=password],.set-row input[type=url],.set-row input[type=number],.set-row select{
   background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 13px;color:var(--text);font-size:.85rem;min-width:220px;line-height:1.3;
   transition:border-color .15s,box-shadow .15s,background .15s;
@@ -399,6 +401,18 @@ body.light .bw-ai{background:linear-gradient(92deg,#7c3aed 0%,#a855f7 60%,#c084f
 .ai-card .sub{color:var(--muted);font-size:.82rem;margin-top:-6px}
 .ai-card textarea{width:100%;min-height:110px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:13px 15px;color:var(--text);font-size:.95rem;resize:vertical;line-height:1.5}
 .ai-card textarea:focus{outline:none;border-color:var(--primary)}
+.ai-brief{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px}
+.ai-brief input,.ai-brief select{padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font:inherit;font-size:.85rem}
+.ai-brief #aiOffer{grid-column:1 / span 2}
+.ai-onepager{display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--muted)}
+.ai-photo-grade{width:100%;margin:4px 0 2px;align-items:flex-start;line-height:1.35}
+.ai-photo-grade small{display:block;font-weight:400;opacity:.8;margin-top:2px}
+.ai-comps{display:grid;grid-template-columns:1fr;gap:6px;margin-top:8px}
+.ai-translate{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px;width:100%}
+.ai-powered{font-size:.72rem;color:var(--muted)}
+.ai-key-note{flex:1 0 100%;margin:2px 0 0;font-size:.72rem;color:var(--muted);line-height:1.5}
+.ai-key-note a,.set-desc a,.pub-note a{color:var(--accent)}
+@media (max-width:720px){.ai-brief{grid-template-columns:1fr}}
 .chip-row{display:flex;gap:8px;flex-wrap:wrap}
 .chip-row .chip-btn{background:var(--surface2);border:1px solid var(--border);color:var(--muted);font-size:.78rem;font-weight:700;padding:7px 13px;border-radius:99px;cursor:pointer;transition:.15s}
 .chip-row .chip-btn:hover,.chip-row .chip-btn.active{border-color:var(--primary);color:var(--text)}
@@ -455,6 +469,7 @@ body.light .bw-ai{background:linear-gradient(92deg,#7c3aed 0%,#a855f7 60%,#c084f
 /* ---------- Billing settings card ---------- */
 .bill-card{display:flex;flex-direction:column;gap:14px}
 .bill-rail{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.bill-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .bill-rail .plan-name{font-size:.95rem;font-weight:700;color:var(--text);letter-spacing:-.01em;
   white-space:normal;overflow:visible;text-overflow:unset;line-height:1.35}
 .bill-receipt{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-size:.82rem}

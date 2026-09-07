@@ -692,13 +692,16 @@ const App = (() => {
       renderEditor();
       refreshEntitlements();
       toast(r.source === 'ai' ? 'Section rewritten by the AI model ✦' : 'Section refreshed by the local engine ✦', true);
+      chatLastEdit = (typeof AiFollowup !== 'undefined')
+        ? AiFollowup.rememberEdit(chatLastEdit, { raw: 'Regenerate this section', targetType: sec.type, ops: [{ op: 'rewriteSection', type: sec.type }] })
+        : { raw: 'Regenerate this section', targetType: sec.type, ops: [] };
     } catch (e) {
       refundCredit();
       refreshEntitlements();
       console.error('AI section rewrite failed', e);
       toast('The section rewrite failed — your credit was refunded. Try again.', false);
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '✦ AI rewrite this section (1 credit)'; }
+      if (btn) { btn.disabled = false; btn.textContent = '✦ Regenerate this section (1 credit)'; }
     }
   }
 
@@ -997,8 +1000,13 @@ const App = (() => {
           const price = p.price === 0
             ? '<div class="pc-price">Free<small> forever</small></div>'
             : `<div class="pc-price">${PLANS.currency.symbol}${p.price}<small>/mo</small></div>`;
+          const stripeCustomer = !!(cloudProfile && cloudProfile.stripe_customer_id);
           const btn = p.price === 0
-            ? (pro ? '<button class="btn ghost small" data-down>Switch to Free</button>' : '<button class="btn ghost small" disabled>Current plan</button>')
+            ? (pro
+              ? (stripeCustomer
+                ? '<button class="btn ghost small" id="btnPricePortal">Manage billing</button>'
+                : '<button class="btn ghost small" data-down>Switch to Free</button>')
+              : '<button class="btn ghost small" disabled>Current plan</button>')
             : `<button class="btn ${p.popular ? 'primary' : 'ghost'} small" data-choose="${p.id}">${cur ? '✓ Current plan' : pro ? 'Switch to ' + p.name : 'Choose ' + p.name}</button>`;
           return `
           <div class="price-card${hot}">
@@ -1026,6 +1034,8 @@ const App = (() => {
     openModal('Upgrade PallettAI Studio', body, true);
     $$('[data-choose]').forEach((b) => b.onclick = () => checkoutFlow(b.dataset.choose));
     $$('[data-down]').forEach((b) => b.onclick = downgradePlan);
+    const pricePortal = $('#btnPricePortal');
+    if (pricePortal) pricePortal.onclick = openBillingPortalFlow;
     $('#licActivate').onclick = () => activateLicense($('#licKey').value);
     $('#licKey').onkeydown = (e) => { if (e.key === 'Enter') activateLicense($('#licKey').value); };
     // cloud-aware redemption: verifies against the registry when signed in
@@ -1061,6 +1071,19 @@ const App = (() => {
       };
     }
     $('#ccBack').onclick = openPricing;
+  }
+
+  async function openBillingPortalFlow() {
+    if (!(SUPABASE.isConfigured() && SUPABASE.signedIn())) {
+      return toast('Sign in to manage billing.', false);
+    }
+    const returnUrl = (typeof PlanReceipt !== 'undefined')
+      ? PlanReceipt.paidReturnUrl(location)
+      : 'https://pallettai.org/?paid=1';
+    const r = await SUPABASE.openBillingPortal(returnUrl);
+    if (!r.ok) return toast(r.msg || 'Billing portal is unavailable right now.', false);
+    window.open(r.url, '_blank', 'noopener,noreferrer');
+    toast('Stripe billing opened — come back here when you are done', true);
   }
 
   function startCheckoutWait(planName) {
@@ -2696,7 +2719,7 @@ const App = (() => {
         <input id="seEmblem" placeholder="https://… or icon URL" value="${esc(s.emblem || '')}"></div>
       <div class="field"><label>Image URL ${s.imageSource ? `· <span style="color:var(--accent)">from ${esc(s.imageSource)}</span>` : ''}</label>
         <input id="seImage" placeholder="https://… or leave empty for auto" value="${esc(s.image)}"></div>
-      <button class="btn ghost small" id="seAi" style="align-self:flex-start">✦ AI rewrite this section (1 credit)</button>
+      <button class="btn ghost small" id="seAi" style="align-self:flex-start">✦ Regenerate this section (1 credit)</button>
       ${DB.layoutsFor(s.type).length ? `
       <div class="field"><label>Design variant</label>
         <select id="seLayout">${DB.layoutsFor(s.type).map((v) => `<option value="${esc(v.id)}" ${(s.layout || (s.type === 'hero' ? (c.site.heroLayout || '') : '')) === v.id ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select>
@@ -3237,7 +3260,7 @@ const App = (() => {
 
       <div class="pub-card">
         <div class="pub-head"><span class="export-ico">▲</span><b>Netlify</b><span class="chip">Free · fast · custom domains</span></div>
-        <p class="pub-note">Get a free personal access token: <b>app.netlify.com → User settings → Applications → Personal access tokens</b> (create one with the default scopes). Paste it below.</p>
+        <p class="pub-note">Get a free personal access token at <a href="https://app.netlify.com/user/applications#personal-access-tokens" target="_blank" rel="noopener">Netlify → Personal access tokens</a> (default scopes). Once that token is entered, one-click publish to Netlify is enabled. Paste it below — it stays in this app only.</p>
         ${cred.netlifyToken
           ? `<p class="pub-saved">✓ Token saved${cred.netlifyUrl ? ' — last live at <a href="' + esc(cred.netlifyUrl) + '" target="_blank" rel="noopener">' + esc(cred.netlifyUrl.replace(/^https?:\/\//, '')) + '</a>' : ''}</p>`
           : '<p class="pub-saved" style="color:var(--danger)">No token yet — paste one to enable publishing.</p>'}
@@ -3250,7 +3273,7 @@ const App = (() => {
 
       <div class="pub-card">
         <div class="pub-head"><span class="export-ico">⚑</span><b>Neocities</b><span class="chip">Free · no ads</span></div>
-        <p class="pub-note">Create a free site at <b>neocities.org</b>, then enter its username + password once here (the password is never stored — only the session key).</p>
+        <p class="pub-note">Create a free site at <a href="https://neocities.org" target="_blank" rel="noopener">neocities.org</a>, then enter its username and password once here. Once signed in, one-click publish is enabled. The password is never stored — only the session key.</p>
         ${cred.neocitiesUser ? `<p class="pub-saved">✓ Signed in as <b>${esc(cred.neocitiesUser)}</b>${cred.neocitiesUrl ? ' — <a href="' + esc(cred.neocitiesUrl) + '" target="_blank" rel="noopener">' + esc(cred.neocitiesUrl.replace(/^https?:\/\//, '')) + '</a>' : ''}</p>` : ''}
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <input id="pubNeoUser" placeholder="Neocities username" value="${esc(cred.neocitiesUser || '')}" autocomplete="off" spellcheck="false">
@@ -3421,6 +3444,24 @@ const App = (() => {
           <input id="aiName" placeholder="Business name (optional — e.g. “Rustica”) — or just say it in the prompt" autocomplete="off" spellcheck="false" style="flex:1;min-width:200px;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font:inherit;font-size:.85rem">
           <input id="aiArea" placeholder="Town / area served (optional — e.g. “Leeds”) — powers local SEO" autocomplete="off" spellcheck="false" style="flex:1;min-width:200px;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font:inherit;font-size:.85rem">
         </div>
+        <div class="ai-brief">
+          <input id="aiOffer" placeholder="Offer in one line (e.g. “Sourdough daily, 48-hour dough”)" autocomplete="off">
+          <input id="aiCta" placeholder="Primary CTA (e.g. “Book a loaf”)" autocomplete="off">
+          <select id="aiVoice" title="Voice lock">
+            <option value="warm">Voice: warm</option>
+            <option value="premium">Voice: premium</option>
+            <option value="punchy">Voice: punchy</option>
+          </select>
+          <input id="aiProof1" placeholder="Proof 1" autocomplete="off">
+          <input id="aiProof2" placeholder="Proof 2" autocomplete="off">
+          <input id="aiProof3" placeholder="Proof 3" autocomplete="off">
+          <label class="ai-onepager"><input type="checkbox" id="aiOnePager"> Generate a one-page site</label>
+        </div>
+        <div class="ai-comps">
+          <input id="aiComp1" class="ai-in" placeholder="Competitor URL 1 (optional — structure only)" autocomplete="off" spellcheck="false">
+          <input id="aiComp2" class="ai-in" placeholder="Competitor URL 2 (optional)" autocomplete="off" spellcheck="false">
+          <input id="aiComp3" class="ai-in" placeholder="Competitor URL 3 (optional)" autocomplete="off" spellcheck="false">
+        </div>
         <input id="aiSiteUrl" class="ai-in" placeholder="Your current website URL (optional) — the AI opens it, keeps the brand, contact details, services & content, and rebuilds it better" autocomplete="off" spellcheck="false">
         <div class="ai-upload">
           <div class="ai-upload-head">
@@ -3440,6 +3481,10 @@ const App = (() => {
             <option value="ai">🎨 AI-generated art</option>
             <option value="none">No photos (clean, minimal)</option>
           </select>
+          <label class="ai-onepager ai-photo-grade" title="Optional. Soft palette blend on photos only — faces and food stay real.">
+            <input type="checkbox" id="aiPhotoGrade">
+            <span>Tint photos to the palette <small>off by default · not a filter</small></span>
+          </label>
         </div>
         <div class="ai-gen-actions">
           <button class="btn primary ai-run" id="aiRun" ${aiBusy ? 'disabled' : ''}>✦ Generate site</button>
@@ -3457,9 +3502,17 @@ const App = (() => {
           <button class="btn ghost" id="aiPickBtn" ${c ? '' : 'disabled'}>🖼 Pick & choose photos <small>(1 credit)</small></button>
           <button class="btn ghost" id="aiEnhance" ${c ? '' : 'disabled'}>✨ Enhance copy with AI <small>(1 credit)</small></button>
           <button class="btn ghost" id="aiRestyleBtn" ${c ? '' : 'disabled'}>🎭 AI restyle <small>(1 credit)</small></button>
+          <button class="btn ghost" id="aiShuffleLook" ${c ? '' : 'disabled'}>🎲 Shuffle look <small>same copy · 1 credit</small></button>
           <button class="btn ghost" id="aiLogoBtn" ${c ? '' : 'disabled'}>◆ AI logo <small>(free)</small></button>
           <button class="btn ghost" id="aiStudioBtn" ${c ? '' : 'disabled'}>🎨 Logo studio <small>(free)</small></button>
           <button class="btn ghost" id="aiAltBtn" ${c ? '' : 'disabled'}>🏷 Alt text for all images <small>(free)</small></button>
+          <div class="ai-translate">
+            <select id="aiLang" title="Translate the open site">${(typeof AiTranslate !== 'undefined' ? AiTranslate.LANGS : [{ id: 'en', name: 'English' }, { id: 'es', name: 'Spanish' }, { id: 'fr', name: 'French' }, { id: 'de', name: 'German' }, { id: 'it', name: 'Italian' }, { id: 'pt', name: 'Portuguese' }, { id: 'nl', name: 'Dutch' }, { id: 'pl', name: 'Polish' }]).map((l) => `<option value="${l.id}">${l.name}</option>`).join('')}</select>
+            <label class="ai-onepager"><input type="checkbox" id="aiTranslateName"> Translate the name</label>
+            <button class="btn ghost" id="btnTranslate" ${c ? '' : 'disabled'}>Translate site <small>(1 credit)</small></button>
+            <span class="ai-powered">${esc((c && c.site && c.site.translation && typeof AiTranslate !== 'undefined' && AiTranslate.poweredByLabel(c.site.translation.provider)) || 'Translations powered by DeepL')}</span>
+            <p class="ai-key-note">Once a DeepL API key is set on the registry, signed-in translates use DeepL. Until then, MyMemory runs with no key. <a href="https://www.deepl.com/pro-api" target="_blank" rel="noopener">Get a DeepL API key</a></p>
+          </div>
         </div>
         <div class="ai-quick">
           <h4 style="font-size:.8rem;color:var(--muted);margin:14px 0 4px">Starter prompts</h4>
@@ -3503,15 +3556,21 @@ const App = (() => {
     $('#aiPickBtn').onclick = aiPickPhotos;
     $('#aiEnhance').onclick = aiEnhance;
     $('#aiRestyleBtn').onclick = aiRestyle;
+    $('#aiShuffleLook').onclick = aiShuffleLook;
     $('#aiLogoBtn').onclick = aiLogoNow;
     $('#aiStudioBtn').onclick = () => { const cc = current(); if (!cc) return toast('Open a project first'); openLogoStudio(cc); };
     $('#aiAltBtn').onclick = aiAltNow;
+    const trBtn = $('#btnTranslate');
+    if (trBtn) trBtn.onclick = translateOpenSite;
 
     if (proj) {
       const res = $('#aiResult');
       res.hidden = false;
       const nicheTag = proj.aiNiche ? `<span class="chip" style="background:color-mix(in srgb,var(--accent) 16%,transparent);border-color:color-mix(in srgb,var(--accent) 40%,transparent)">🗂 ${esc(proj.aiNiche)} pack</span>` : '';
-      res.innerHTML = `<span>✦ “${esc(proj.site.name)}” generated from “${esc(lastAI.prompt.slice(0, 48))}${lastAI.prompt.length > 48 ? '…' : ''}”</span>${nicheTag}<button class="btn primary small" id="aiOpen">Open in Designer</button>`;
+      const studiedN = (proj.site && proj.site.studied && proj.site.studied.length) || 0;
+      const studiedTag = studiedN ? `<span class="chip">Studied ${studiedN} site${studiedN === 1 ? '' : 's'}</span>` : '';
+      const transTag = proj.site && proj.site.translation && typeof AiTranslate !== 'undefined' ? `<span class="chip">${esc(AiTranslate.poweredByLabel(proj.site.translation.provider))}</span>` : '';
+      res.innerHTML = `<span>✦ “${esc(proj.site.name)}” generated from “${esc(lastAI.prompt.slice(0, 48))}${lastAI.prompt.length > 48 ? '…' : ''}”</span>${nicheTag}${studiedTag}${transTag}<button class="btn primary small" id="aiOpen">Open in Designer</button>`;
       $('#aiOpen').onclick = () => { currentId = proj.id; selectedSec = null; switchView('designer'); };
     }
   }
@@ -3637,16 +3696,62 @@ const App = (() => {
   // ---------------- Design Direction Lab ----------------
   // Directions are lightweight, editable drafts. Only the chosen direction is
   // persisted as a project; exploration never creates duplicates in storage.
+  function collectAiBrief() {
+    const Brief = typeof AiBrief !== 'undefined' ? AiBrief : null;
+    const raw = {
+      name: ($('#aiName') && $('#aiName').value.trim()) || '',
+      area: ($('#aiArea') && $('#aiArea').value.trim()) || '',
+      offer: ($('#aiOffer') && $('#aiOffer').value.trim()) || '',
+      proofs: [
+        ($('#aiProof1') && $('#aiProof1').value.trim()) || '',
+        ($('#aiProof2') && $('#aiProof2').value.trim()) || '',
+        ($('#aiProof3') && $('#aiProof3').value.trim()) || ''
+      ],
+      cta: ($('#aiCta') && $('#aiCta').value.trim()) || '',
+      voice: ($('#aiVoice') && $('#aiVoice').value) || 'warm'
+    };
+    return Brief ? Brief.normalizeBrief(raw) : raw;
+  }
+
+  function competitorUrls() {
+    return ['aiComp1', 'aiComp2', 'aiComp3']
+      .map((id) => { const el = $('#' + id); return el ? el.value.trim() : ''; })
+      .filter(Boolean)
+      .slice(0, 3);
+  }
+
+  async function studyCompetitorUrls(urls) {
+    const studied = [];
+    for (const url of urls) {
+      if (!AI.isPublicFetchUrl || !AI.isPublicFetchUrl(url)) {
+        toast('Skipped a competitor URL that is not a public https address', false);
+        continue;
+      }
+      try {
+        const w = await AI.studySite(url, undefined, { timeoutMs: 8500 });
+        if (w && w.ok) studied.push({ url: w.url || url, brand: w.brand || '', services: w.services || [] });
+        else toast('Could not study ' + url.replace(/^https?:\/\//, '').slice(0, 40) + ' — skipped', false);
+      } catch (e) {
+        toast('Could not study ' + url.replace(/^https?:\/\//, '').slice(0, 40) + ' — skipped', false);
+      }
+    }
+    return studied;
+  }
+
   function directionOptions(website) {
     const name = ($('#aiName') && $('#aiName').value.trim()) || '';
     const area = ($('#aiArea') && $('#aiArea').value.trim()) || '';
     const packId = ($('#aiPack') && $('#aiPack').value) || '';
     const photoMode = ($('#aiPhoto') && $('#aiPhoto').value) || 'real';
+    const brief = collectAiBrief();
     return {
       layouts: ($('#aiFlavor') && $('#aiFlavor').value) === 'classic' ? 'classic' : 'auto',
       tier: isPro() ? 'pro' : 'free',
       name: name || undefined,
       area: area || undefined,
+      brief,
+      onePager: !!( $('#aiOnePager') && $('#aiOnePager').checked ),
+      photoGrade: !!( $('#aiPhotoGrade') && $('#aiPhotoGrade').checked ),
       website: website || undefined,
       packId,
       photoMode,
@@ -3836,11 +3941,23 @@ const App = (() => {
       const photoMode = ($('#aiPhoto') && $('#aiPhoto').value) || 'real';
       const bizName = ($('#aiName') && $('#aiName').value.trim()) || '';
       const bizArea = ($('#aiArea') && $('#aiArea').value.trim()) || '';
+      const brief = collectAiBrief();
+      const onePager = !!( $('#aiOnePager') && $('#aiOnePager').checked );
+      let studied = [];
+      const comps = competitorUrls();
+      if (comps.length) {
+        studied = await studyCompetitorUrls(comps);
+        if (!studied.length && comps.length) toast('No competitor URLs could be studied — generating from your brief', false);
+      }
       const p = AI.generateSite(prompt, {
         layouts: flavor === 'classic' ? 'classic' : 'auto',
         tier: isPro() ? 'pro' : 'free',
         name: bizName || undefined,
         area: bizArea || undefined,
+        brief: brief,
+        onePager: onePager,
+        photoGrade: !!( $('#aiPhotoGrade') && $('#aiPhotoGrade').checked ),
+        studied: studied.length ? studied : undefined,
         website: website || undefined
       });
       if (!p || !p.site) throw new Error('AI returned no project');
@@ -4125,6 +4242,63 @@ const App = (() => {
     }
   }
 
+  async function translateOpenSite() {
+    const c = current();
+    if (!c) return toast('Open a project first');
+    const T = typeof AiTranslate !== 'undefined' ? AiTranslate : null;
+    if (!T) return toast('Translation is not available in this build', false);
+    const lang = ($('#aiLang') && $('#aiLang').value) || 'en';
+    if (lang === 'en') {
+      histUndo();
+      return toast('Restored the previous English snapshot — not a second machine pass', true);
+    }
+    const translateName = !!( $('#aiTranslateName') && $('#aiTranslateName').checked );
+    const pairs = T.collectCopy(c, { translateName });
+    if (!pairs.length) return toast('Nothing to translate on this site', false);
+    if (!spendCredit()) return;
+    histCapture();
+    const btn = $('#btnTranslate');
+    if (btn) { btn.disabled = true; btn.textContent = 'Translating…'; }
+    try {
+      const texts = pairs.map((p) => p.text);
+      let provider = '';
+      let out = null;
+      if (SUPABASE.signedIn && SUPABASE.signedIn() && SUPABASE.translateSite) {
+        const r = await SUPABASE.translateSite(texts, lang.toUpperCase(), 'EN');
+        if (r && r.ok && Array.isArray(r.texts) && r.texts.length === texts.length && r.texts.every(Boolean)) {
+          out = r.texts;
+          provider = 'deepl';
+        }
+      }
+      if (!out) {
+        out = await T.translateViaMyMemory(texts, lang);
+        provider = 'mymemory';
+      }
+      if (!out || out.length !== texts.length || out.some((t) => !String(t || '').trim())) {
+        throw new Error('incomplete');
+      }
+      const next = T.applyCopy(c, pairs.map((p, i) => ({ path: p.path, text: out[i] })));
+      const i = projects.findIndex((p) => p.id === c.id);
+      if (i >= 0) {
+        next.site.lang = lang;
+        next.site.translation = { lang, provider, at: Date.now() };
+        next.updatedAt = Date.now();
+        projects[i] = next;
+        currentId = next.id;
+      }
+      saveProjects();
+      renderDesigner();
+      refreshEntitlements();
+      toast(T.poweredByLabel(provider), true);
+    } catch (e) {
+      refundCredit();
+      refreshEntitlements();
+      toast('Translation failed — nothing was changed. Try again.', false);
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = 'Translate site <small>(1 credit)</small>'; }
+    }
+  }
+
   async function aiRestyle() {
     const c = current();
     if (!c) return toast('Open a project first');
@@ -4135,6 +4309,18 @@ const App = (() => {
     touch(c);
     refreshEntitlements();
     toast('Restyled — ' + DB.getPalette(r.palette).name + ' · ' + DB.getFont(r.font).name + ' 🎭', true);
+  }
+
+  function aiShuffleLook() {
+    const c = current();
+    if (!c) return toast('Open a project first');
+    if (!spendCredit()) return;
+    histCapture();
+    const r = AI.shuffleLook(c, { tier: isPro() ? 'pro' : 'free' });
+    if (!r) return toast('Could not shuffle this look');
+    touch(c);
+    refreshEntitlements();
+    toast('Another look, same copy — ' + DB.getPalette(r.palette).name + ' · ' + DB.getFont(r.font).name + ' 🎲', true);
   }
 
   function aiLogoNow() {
@@ -5073,6 +5259,7 @@ const App = (() => {
     const receiptHtml = receiptRows.length
       ? `<dl class="bill-receipt">${receiptRows.map((row) => `<dt>${esc(row.label)}</dt><dd>${esc(row.value)}</dd>`).join('')}</dl>`
       : '';
+    const stripeCustomer = !!(cloudProfile && cloudProfile.stripe_customer_id);
     const billingWarn = (typeof PlanReceipt !== 'undefined' && cloudProfile)
       ? PlanReceipt.failureCopy(cloudProfile.billing_status)
       : '';
@@ -5144,7 +5331,10 @@ const App = (() => {
         <div class="bill-card">
           <div class="bill-rail">
             <span class="plan-name">${esc(reviewLabel || (plan.name + (plan.price ? ' · ' + PLANS.currency.symbol + plan.price + '/mo' : '')))}</span>
-            <button class="${pro ? 'btn ghost small' : 'plan-go'}" id="btnManagePlan">${pro ? 'View plans' : 'Upgrade'}</button>
+            <div class="bill-actions">
+              ${stripeCustomer ? '<button class="btn primary small" id="btnBillingPortal">Manage billing</button>' : ''}
+              <button class="${pro ? 'btn ghost small' : 'plan-go'}" id="btnManagePlan">${pro ? 'View plans' : 'Upgrade'}</button>
+            </div>
           </div>
           ${receiptHtml}
           ${billingWarn ? `<p class="bill-warn">${esc(billingWarn)}</p>` : ''}
@@ -5255,7 +5445,7 @@ const App = (() => {
         <p class="sub">Free sources: Picsum, RandomUser, Quotable, Google Fonts run keyless. Pixabay photo search uses your own free API key — stored only on this device.</p>
         <div class="set-row"><div><label>Enabled</label></div>
           <label class="switch"><input type="checkbox" id="setOnline" ${s.onlineEnabled === false ? '' : 'checked'}><span class="slider"></span></label></div>
-        <div class="set-row"><div><label>Pixabay API key</label><div class="set-desc">Optional — enables topic photo search in Database ▸ Online sources. Free key at <a href="https://pixabay.com/api/docs/" target="_blank" rel="noopener">pixabay.com/api/docs</a>.</div></div>
+        <div class="set-row"><div><label>Pixabay API key</label><div class="set-desc">Once your free API key is entered, topic photo search is enabled in Database ▸ Online sources. Stored only on this device. <a href="https://pixabay.com/api/docs/" target="_blank" rel="noopener">Get a Pixabay API key</a></div></div>
           <input type="text" id="setPixabayKey" value="${esc(s.pixabayKey || '')}" placeholder="e.g. 12345678-abcdef…" spellcheck="false" autocomplete="off"></div>
         <div class="set-row"><div><label>Request timeout (ms)</label></div><input type="number" id="setTimeout" value="${s.onlineTimeoutMs}" min="2000" max="30000" step="500"></div>
         <div class="set-row"><div><label>Clear fetched data cache</label><div class="set-desc">Forget previously fetched photos, people and quotes.</div></div>
@@ -5265,6 +5455,15 @@ const App = (() => {
       </div>
 `) +
       cards('studio', `
+      <div class="settings-card">
+        <h3>Keys & services</h3>
+        <p class="sub">Third-party keys never ship inside Studio. DeepL and Stripe live on the registry. Netlify, Neocities and Pixabay are yours, stored on this device.</p>
+        <div class="set-row keys-note"><div><label>DeepL translations</label><div class="set-desc">Once a DeepL API key is set on the registry, signed-in translates use DeepL. Until then, MyMemory runs with no key. The key is not entered in this app. <a href="https://www.deepl.com/pro-api" target="_blank" rel="noopener">Get a DeepL API key</a></div></div></div>
+        <div class="set-row keys-note"><div><label>Stripe billing</label><div class="set-desc">Once a restricted Stripe key is set on the registry, Manage billing opens the Customer Portal for this signed-in account. The key is not entered in this app. <a href="https://dashboard.stripe.com/apikeys" target="_blank" rel="noopener">Get a restricted key</a></div></div></div>
+        <div class="set-row keys-note"><div><label>Netlify publish</label><div class="set-desc">Once a personal access token is entered in Publish, one-click Netlify deploys work. <a href="https://app.netlify.com/user/applications#personal-access-tokens" target="_blank" rel="noopener">Get a Netlify token</a></div></div></div>
+        <div class="set-row keys-note"><div><label>Neocities publish</label><div class="set-desc">Once you sign in from Publish, one-click Neocities deploys work. <a href="https://neocities.org" target="_blank" rel="noopener">Create a Neocities site</a></div></div></div>
+        <div class="set-row keys-note"><div><label>Pixabay photos</label><div class="set-desc">Once your free API key is entered under Online data, topic photo search is enabled. Stored only on this device. <a href="https://pixabay.com/api/docs/" target="_blank" rel="noopener">Get a Pixabay API key</a></div></div></div>
+      </div>
       <div class="settings-card">
         <h3>Studio behaviour</h3>
         <p class="sub">How the app itself behaves on your machine.</p>
@@ -5297,6 +5496,7 @@ const App = (() => {
     set('#setCreditsTxt', (el) => { el.textContent = cred.limit === Infinity ? 'AI Studio: unlimited generations' : 'AI Studio: ' + cred.used + ' of ' + cred.limit + ' credits used'; });
     set('#creditsBar', (el) => { el.style.width = (cred.limit === Infinity ? 100 : Math.min(100, Math.round((cred.used / cred.limit) * 100))) + '%'; });
     set('#btnManagePlan', (el) => { el.onclick = openPricing; });
+    set('#btnBillingPortal', (el) => { el.onclick = openBillingPortalFlow; });
     on('#setTheme', 'change', (e) => { settings.theme = e.target.value; saveSettings(); });
     on('#setBrandFooter', 'change', (e) => { settings.brandFooter = e.target.checked; saveSettings(); renderPreview(); });
     on('#setBrandText', 'input', (e) => { settings.brandFooterText = e.target.value; saveSettings(); schedulePreview(); });
@@ -5492,6 +5692,7 @@ const App = (() => {
   // AI Copilot — chat editor (plain-English site edits)
   // ============================================================
   const chatState = { open: false, busy: false };
+  let chatLastEdit = { raw: '', targetType: '', ops: [] };
 
   function chatOpenPanel(open) {
     chatState.open = !!open && !!current();
@@ -5548,6 +5749,10 @@ const App = (() => {
     }
     out.push('Make the hero punchier', 'Add a testimonials section', 'Try a dark blue palette', 'Rounder corners');
     if (!c.site.logo) out.push('Generate an AI logo');
+    if (/^get started$/i.test(c.site.ctaText || '') || !(c.site.ctaText || '').trim()) out.unshift('Fix the weak CTA');
+    const hasMap = (c.site.sections || []).some((s) => s.type === 'map')
+      || (c.site.pages || []).some((pg) => (pg.sections || []).some((s) => s.type === 'map'));
+    if (c.site.area && !hasMap) out.unshift('Add a map for ' + c.site.area);
     return out.slice(0, 6);
   }
 
@@ -5564,12 +5769,22 @@ const App = (() => {
     $('#chatSend').textContent = '…';
     histCapture();
     try {
-      const plan = AI.chatPlan(current().site, text);
+      const plan = AI.chatPlan(current().site, text, chatLastEdit);
       const res = await chatExecute(plan.acts, text);
       if (res.reply) chatAdd('bot', esc(res.reply));
       if (res.summary.length) chatBotLine(res.summary.join('\n'));
       if (res.needsCredit) chatAdd('bot', '⚠️ ' + esc(res.needsCredit));
-      if (res.changed) chatFinalize(res.full);
+      if (res.changed) {
+        const targetAct = (plan.acts || []).find((a) => a.type || a.idx != null);
+        chatLastEdit = (typeof AiFollowup !== 'undefined')
+          ? AiFollowup.rememberEdit(chatLastEdit, {
+            raw: text,
+            targetType: (targetAct && targetAct.type) || chatLastEdit.targetType || '',
+            ops: plan.acts || []
+          })
+          : { raw: text, targetType: (targetAct && targetAct.type) || '', ops: plan.acts || [] };
+        chatFinalize(res.full);
+      }
       else if (!res.summary.length && !res.reply) chatAdd('bot', 'Hmm, I didn\'t quite catch that — try “make it luxury gold”, “delete the FAQ section” or “set my email to hello@example.com”.');
     } catch (err) {
       console.error('Copilot error', err);
@@ -5752,6 +5967,34 @@ const App = (() => {
           await AI.enhanceCopy(c, text, settings.onlineEnabled !== false);
           return { full: true };
         })();
+      }
+      case 'rewriteSection': {
+        const idx = act.idx != null ? act.idx : chatLastIdx(s, act.type);
+        const sec = s.sections[idx];
+        if (!sec) return { skipped: true, reason: 'that section is gone' };
+        return (async () => {
+          await AI.enhanceSection(sec, act.prompt || text, c, settings.onlineEnabled !== false);
+          return { full: true };
+        })();
+      }
+      case 'likeUrl': {
+        if (!act.url || (AI.isPublicFetchUrl && !AI.isPublicFetchUrl(act.url))) {
+          return { skipped: true, reason: 'that URL is not a public https address' };
+        }
+        return (async () => {
+          const w = await AI.studySite(act.url, undefined, { timeoutMs: 8500 }).catch(() => null);
+          if (!w || !w.ok) return { skipped: true, reason: 'could not open that site' };
+          AI.restyle(c, (w.brand || '') + ' ' + (w.tagline || ''), isPro() ? 'pro' : 'free');
+          return { full: true };
+        })();
+      }
+      case 'nicheExtras': {
+        if (!AI.applyNicheExtras(c, act.nicheId)) return { skipped: true, reason: 'that niche pack is not available' };
+        return { full: true };
+      }
+      case 'servicesPage': {
+        if (!AI.addServicesPage(c)) return { skipped: true, reason: 'add a Features section first' };
+        return { full: true };
       }
       case 'images': {
         return (async () => {

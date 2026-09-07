@@ -104,7 +104,12 @@ const SMOKES = [
   ['scripts/supabase-smoke.js', 'Supabase registry smoke'],
   ['scripts/streak-smoke.js', 'Daily streak smoke'],
   ['scripts/credit-smoke.js', 'AI credit smoke'],
-  ['scripts/ai-features-smoke.js', 'AI features smoke']
+  ['scripts/ai-features-smoke.js', 'AI features smoke'],
+  ['scripts/ai-brief-smoke.js', 'AI brief smoke'],
+  ['scripts/ai-niche-smoke.js', 'AI niche smoke'],
+  ['scripts/ai-followup-smoke.js', 'AI follow-up smoke'],
+  ['scripts/ai-translate-smoke.js', 'AI translate smoke'],
+  ['scripts/ai-fingerprint-smoke.js', 'AI fingerprint smoke']
 ];
 
 function runScript(args, label) {
@@ -234,6 +239,7 @@ function checkBuilder() {
   runScript(['scripts/payment-links-smoke.js'], 'Payment links smoke');
   runScript(['scripts/proplus-perks-smoke.js'], 'Pro+ perks smoke');
   runScript(['scripts/stripe-entitlement-smoke.js'], 'Stripe entitlement smoke');
+  runScript(['scripts/billing-portal-smoke.js'], 'Billing portal smoke');
   runScript(['scripts/registry-connect-smoke.js'], 'Registry connect smoke');
   runScript(['scripts/account-panel-smoke.js'], 'Account panel smoke');
   runScript(['scripts/plan-receipt-smoke.js'], 'Plan receipt smoke');
@@ -241,6 +247,7 @@ function checkBuilder() {
   runScript(['scripts/modal-focus-smoke.js'], 'Modal focus smoke');
   runScript(['scripts/studio-chrome-smoke.js'], 'Studio chrome smoke');
   runScript(['scripts/review-reward-smoke.js'], 'Review reward smoke');
+  runScript(['scripts/ai-studio-upgrade-smoke.js'], 'AI Studio upgrade smoke');
   await runSmokeSuites();
   checkZipLimits();
   checkBuilder();

@@ -4,3 +4,9 @@ project_id = "fjahxichioccknszuxhb"
 
 [functions.stripe-webhook]
 verify_jwt = false
+
+[functions.translate]
+verify_jwt = true
+
+[functions.billing-portal]
+verify_jwt = true

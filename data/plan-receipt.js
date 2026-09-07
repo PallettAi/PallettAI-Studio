@@ -83,5 +83,20 @@ function paidReturnUrl(loc) {
   return place.origin + path + (path.indexOf('?') === -1 ? '?paid=1' : '&paid=1');
 }
 
-const PlanReceipt = { billingStatusFromEvent, failureCopy, receiptLines, isPaidReturn, paidReturnUrl, formatDate };
+function portalReturnUrl(raw) {
+  const fallback = 'https://pallettai.org/?paid=1';
+  try {
+    const u = new URL(String(raw || ''));
+    const local = (u.hostname === 'localhost' || u.hostname === '127.0.0.1') && u.protocol === 'http:';
+    const site = (u.hostname === 'pallettai.org' || u.hostname === 'www.pallettai.org') && u.protocol === 'https:';
+    if (!local && !site) return fallback;
+    u.searchParams.set('paid', '1');
+    u.hash = '';
+    return u.toString();
+  } catch (_) {
+    return fallback;
+  }
+}
+
+const PlanReceipt = { billingStatusFromEvent, failureCopy, receiptLines, isPaidReturn, paidReturnUrl, portalReturnUrl, formatDate };
 if (typeof module !== 'undefined' && module.exports) module.exports = PlanReceipt;

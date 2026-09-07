@@ -3,3 +3,4 @@ dist/
 .freebuff/
 *.log
 .DS_Store
+supabase/.temp/
