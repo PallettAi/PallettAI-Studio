@@ -229,6 +229,18 @@ function checkBuilder() {
 // ============================================================
 (async () => {
   runScript(['scripts/security-hardening-smoke.js'], 'Security hardening smoke');
+  runScript(['scripts/templates-view-smoke.js'], 'Templates view smoke');
+  runScript(['scripts/streak-placement-smoke.js'], 'Streak placement smoke');
+  runScript(['scripts/payment-links-smoke.js'], 'Payment links smoke');
+  runScript(['scripts/proplus-perks-smoke.js'], 'Pro+ perks smoke');
+  runScript(['scripts/stripe-entitlement-smoke.js'], 'Stripe entitlement smoke');
+  runScript(['scripts/registry-connect-smoke.js'], 'Registry connect smoke');
+  runScript(['scripts/account-panel-smoke.js'], 'Account panel smoke');
+  runScript(['scripts/plan-receipt-smoke.js'], 'Plan receipt smoke');
+  runScript(['scripts/command-palette-smoke.js'], 'Command palette smoke');
+  runScript(['scripts/modal-focus-smoke.js'], 'Modal focus smoke');
+  runScript(['scripts/studio-chrome-smoke.js'], 'Studio chrome smoke');
+  runScript(['scripts/review-reward-smoke.js'], 'Review reward smoke');
   await runSmokeSuites();
   checkZipLimits();
   checkBuilder();

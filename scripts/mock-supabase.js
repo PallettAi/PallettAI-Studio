@@ -10,6 +10,7 @@
 //   POST /auth/v1/signup · /auth/v1/token?grant_type=password|refresh_token · /auth/v1/logout
 //   GET  /rest/v1/profiles · /rest/v1/referral_codes · /rest/v1/licenses · /rest/v1/credit_spends
 //   POST /rest/v1/rpc/redeem_code · /rest/v1/rpc/activate_license
+//        /rest/v1/rpc/apply_stripe_entitlement · /rest/v1/rpc/claim_review_reward
 //        /rest/v1/rpc/get_streak_state · /rest/v1/rpc/claim_daily_reward · /rest/v1/rpc/spin_wheel
 //        /rest/v1/rpc/get_credit_state · /rest/v1/rpc/spend_credit · /rest/v1/rpc/refund_credit
 // Test hooks (used by the smoke suites + manual UI testing):
@@ -23,6 +24,41 @@
 
 const http = require('http');
 const crypto = require('crypto');
+const path = require('path');
+const StripeEntitlement = require(path.join(__dirname, '..', 'supabase', 'functions', 'stripe-webhook', 'entitlement.js'));
+const ReviewReward = require(path.join(__dirname, '..', 'data', 'review-reward.js'));
+const reviewDb = { profiles: new Map(), rewards: new Map() };
+function syncReviewProfile(u) {
+  reviewDb.profiles.set(u.id, u.profile);
+}
+function claimReviewRewardRpc(u, payload) {
+  syncReviewProfile(u);
+  const r = ReviewReward.applyReviewClaim(reviewDb, {
+    accountId: u.id,
+    name: payload.p_name,
+    quote: payload.p_quote,
+    now: Date.now()
+  });
+  Object.assign(u.profile, reviewDb.profiles.get(u.id) || {});
+  return r;
+}
+const stripeEventIds = new Set();
+function applyStripeEntitlementRpc(payload) {
+  const db = StripeEntitlement.emptyDb();
+  db.events = stripeEventIds;
+  for (const user of users.values()) db.profiles.set(user.id, user.profile);
+  return StripeEntitlement.applyEntitlement(db, {
+    ignore: false,
+    eventId: payload.p_event_id,
+    eventType: payload.p_event_type,
+    paid: !!payload.p_paid,
+    accountId: payload.p_account_id || '',
+    plan: payload.p_plan || '',
+    customerId: payload.p_customer_id || '',
+    subscriptionId: payload.p_subscription_id || '',
+    expiresAt: payload.p_expires_at || null
+  });
+}
 
 const PORT = Number(process.env.MOCK_PORT || 54321);
 const DAY = 864e5;
@@ -57,7 +93,7 @@ function uid() { return crypto.randomUUID(); }
 function newUser(email, password) {
   const u = {
     id: uid(), email, password,
-    profile: { id: null, email, plan: 'free', plan_expires_at: null, trial_expires_at: null, created_at: new Date().toISOString() },
+    profile: { id: null, email, plan: 'free', plan_expires_at: null, trial_expires_at: null, stripe_customer_id: null, stripe_subscription_id: null, entitlement_source: null, billing_status: null, billing_status_at: null, last_stripe_event_type: null, review_proplus_until: null, review_claimed_at: null, created_at: new Date().toISOString() },
     code: { owner_id: null, code: genCode(), created_at: new Date().toISOString() },
     redemptions: [],
     // daily streak state (Part 3) — lazily created like the DB row
@@ -129,6 +165,7 @@ function activateLicense(u, pCode) {
   lic.activated_at = lic.activated_at || new Date().toISOString();
   u.profile.plan = lic.plan;
   u.profile.plan_expires_at = lic.expires_at ? new Date(lic.expires_at).toISOString() : null;
+  u.profile.entitlement_source = 'license';
   return { outcome: 'verified', plan: lic.plan, expiresAt: lic.expires_at ? new Date(lic.expires_at).toISOString() : null };
 }
 
@@ -249,7 +286,8 @@ function creditPayload(u) {
   const plan = ({ agency: 'proplus', pro: 'pro', proplus: 'proplus' }[String(u.profile.plan || '').toLowerCase()] || 'free');
   const planActive = (plan === 'pro' || plan === 'proplus') && (!u.profile.plan_expires_at || new Date(u.profile.plan_expires_at).getTime() > Date.now());
   const trialActive = !!u.profile.trial_expires_at && new Date(u.profile.trial_expires_at).getTime() > Date.now();
-  const unlimited = planActive || trialActive;
+  const reviewActive = !!u.profile.review_proplus_until && new Date(u.profile.review_proplus_until).getTime() > Date.now();
+  const unlimited = planActive || trialActive || reviewActive;
   const used = u.creditSpends.filter((s) => !s.refunded_at).reduce((n, x) => n + x.amount, 0);
   const base = 3; // mirrors PLANS free limits.aiCredits + schema.sql §21
   return {
@@ -286,7 +324,7 @@ function refundCredit(u, pRef) {
 const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'apikey, authorization, content-type');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
   const url = new URL(req.url, 'http://x');
@@ -323,6 +361,21 @@ const server = http.createServer((req, res) => {
       }
       return json(res, 400, { error_code: 'unsupported_grant_type', msg: 'unsupported grant_type' });
     }
+    if (req.method === 'POST' && p === '/auth/v1/recover') {
+      const email = String((payload && payload.email) || '').trim().toLowerCase();
+      const found = [...users.values()].find((x) => x.email === email);
+      if (!found) return json(res, 400, { error_code: 'user_not_found', msg: 'User not found' });
+      found.resetSent = true;
+      return json(res, 200, {});
+    }
+    if (req.method === 'PUT' && p === '/auth/v1/user') {
+      const authed = bearer(req);
+      if (!authed) return json(res, 401, { error_code: '401', msg: 'Invalid JWT' });
+      const next = String((payload && payload.password) || '');
+      if (next.length < 6) return json(res, 400, { error_code: 'weak_password', msg: 'Password must be at least 6 characters' });
+      authed.password = next;
+      return json(res, 200, { id: authed.id, email: authed.email });
+    }
     if (req.method === 'POST' && p === '/auth/v1/logout') {
       const u = bearer(req);
       if (u) tokens.forEach((v, k) => { if (v === u.id) tokens.delete(k); });
@@ -334,6 +387,10 @@ const server = http.createServer((req, res) => {
       const n = Number(url.searchParams.get('days') || 1);
       virtualNow += Math.max(1, n) * DAY_MS;
       return json(res, 200, { ok: true, today: mockDate() });
+    }
+
+    if (req.method === 'POST' && p === '/rest/v1/rpc/apply_stripe_entitlement') {
+      return json(res, 200, applyStripeEntitlementRpc(payload));
     }
 
     // ---- authenticated REST ----
@@ -407,6 +464,9 @@ const server = http.createServer((req, res) => {
     }
     if (req.method === 'POST' && p === '/rest/v1/rpc/refund_credit') {
       return json(res, 200, refundCredit(u, payload.p_ref));
+    }
+    if (req.method === 'POST' && p === '/rest/v1/rpc/claim_review_reward') {
+      return json(res, 200, claimReviewRewardRpc(u, payload));
     }
     return json(res, 404, { code: '404', message: 'not found' });
   });

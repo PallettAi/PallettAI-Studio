@@ -41,6 +41,23 @@ const SUPABASE = (() => {
 
   // ---------- configuration ----------
   const api = {
+    // Public anon key — same one already shipped on pallettai.org/ref.
+    // Safe to embed; RLS + revoked PUBLIC/anon grants protect the registry.
+    REGISTRY: {
+      url: 'https://fjahxichioccknszuxhb.supabase.co',
+      anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZqYWh4aWNoaW9jY2tuc3p1eGhiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg1MDk0MjUsImV4cCI6MjEwNDA4NTQyNX0.n1NMO7W5StuAAIxIZh2ZnMuM6qJqytKQaOUIav4aDm4'
+    },
+    isOfficialConfig(c) {
+      const cfg = c || loadCfg();
+      return !!(cfg && cfg.url === api.REGISTRY.url && cfg.anonKey === api.REGISTRY.anonKey);
+    },
+    connectOfficial() {
+      return api.setConfig(api.REGISTRY.url, api.REGISTRY.anonKey);
+    },
+    ensureOfficial() {
+      if (api.isOfficialConfig()) return { ok: true, already: true };
+      return api.connectOfficial();
+    },
     isConfigured() {
       const c = loadCfg();
       return !!(c && c.url && c.anonKey);
@@ -127,6 +144,35 @@ const SUPABASE = (() => {
         return r;
       }
     },
+    async resetPassword(email, options) {
+      try {
+        await _post('recover', { email: String(email || '').trim() }, options, TIMEOUTS.auth);
+        return { ok: true };
+      } catch (e) { return _err(e); }
+    },
+    async updatePassword(password, options) {
+      const s = loadSes();
+      if (!api.isConfigured() || !s) return { ok: false, msg: 'Sign in to change your password.' };
+      try {
+        const res = await _request(base() + '/auth/v1/user', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: anon(),
+            Authorization: 'Bearer ' + s.accessToken
+          },
+          body: JSON.stringify({ password: String(password || '') })
+        }, options, TIMEOUTS.auth);
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const e = new Error(j.msg || j.error_description || j.message || 'Could not update password.');
+          e.code = j.error_code || j.code || 'request_failed';
+          e.status = res.status;
+          throw e;
+        }
+        return { ok: true };
+      } catch (e) { return _err(e); }
+    },
     async signOut(options) {
       try {
         const s = loadSes();
@@ -193,6 +239,17 @@ const SUPABASE = (() => {
     // Redeem a referral code against the registry RPC.
     // Returns { ok, outcome, grantedDays, trialExpiresAt } — outcomes:
     //   verified | already-used | self-redeemed | not-found
+    async claimReviewReward(name, quote, options) {
+      const s = loadSes();
+      if (!api.isConfigured() || !s) return { ok: false, msg: 'Sign in to leave a review and claim 3 days of Pro+.' };
+      try {
+        const j = await _rpc('claim_review_reward', {
+          p_name: String(name || ''),
+          p_quote: String(quote || '')
+        }, options, TIMEOUTS.write);
+        return { ok: true, outcome: j.outcome || 'bad-input', days: j.days || 0, until: j.until || null, reason: j.reason || null };
+      } catch (e) { return _err(e); }
+    },
     async redeem(code, options) {
       const s = loadSes();
       if (!api.isConfigured() || !s) return { ok: false, msg: 'Sign in to verify codes against the cloud registry.' };

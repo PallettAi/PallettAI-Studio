@@ -1,7 +1,7 @@
 {
   "name": "pallettai-studio",
   "productName": "PallettAI Studio",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "Design and build fully functioning, animated websites for clients. Made by PallettAI.",
   "main": "main.js",
   "scripts": {

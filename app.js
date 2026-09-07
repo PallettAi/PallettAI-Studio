@@ -138,7 +138,6 @@ const App = (() => {
         // Project changes only affect dashboard metrics/activity; keep the
         // template library and import controls mounted during autosave bursts.
         renderDashOverview();
-        renderStreakWidget();
       }
     }, 400);
   }
@@ -153,7 +152,9 @@ const App = (() => {
     applyTheme();
   }
   function applyTheme() {
-    document.body.classList.toggle('light', settings.theme === 'light');
+    const systemLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+    const light = settings.theme === 'light' || (settings.theme === 'system' && systemLight);
+    document.body.classList.toggle('light', light);
     // bespoke session: accent colour, UI density, reduced motion
     document.documentElement.style.setProperty('--accent', settings.accent || DB.defaultSettings.accent);
     document.body.classList.toggle('ui-compact', settings.density === 'compact');
@@ -423,7 +424,16 @@ const App = (() => {
   // ---------------- plan / subscription ----------------
   const planState = () => PLANS.store.current();
   const isPro = () => PLANS.store.isPro();
-  const isProPlus = () => isPro() && PLANS.isProPlus(planState().plan);
+  const isProPlus = () => PLANS.store.isProPlus();
+  function reviewUntilMs() {
+    const stored = Number(planState().reviewProPlusUntil) || 0;
+    const cloud = cloudProfile && cloudProfile.review_proplus_until
+      ? Date.parse(cloudProfile.review_proplus_until) : 0;
+    return Math.max(stored, Number.isFinite(cloud) ? cloud : 0);
+  }
+  function reviewPlanLabel() {
+    return (typeof ReviewReward !== 'undefined') ? ReviewReward.reviewPlanLabel(reviewUntilMs()) : '';
+  }
 
   function requirePro() {
     if (isPro()) return true;
@@ -536,15 +546,23 @@ const App = (() => {
     const pill = $('#planPill');
     if (!pill) return;
     const pro = isPro();
-    pill.className = 'plan-pill' + (pro ? ' pro' : '');
     const trialD = PLANS.store.trialDaysLeft();
     const plan = PLANS.getPlan(p.plan);
-    const label = pro && p.plan === 'free' ? `PRO · ${trialD}d trial` : esc(plan.name.toUpperCase());
-    pill.innerHTML = `<span class="pill-dot"></span><span class="pill-txt">${label}</span><span class="pill-x">${pro ? '★' : '▸'}</span>`;
-    pill.title = pro && p.plan === 'free' ? 'Pro trial — ' + trialD + ' days left. Earn more with referrals.' : 'Manage plan';
+    const reviewLabel = reviewPlanLabel();
+    const reviewClock = (typeof ReviewReward !== 'undefined') ? ReviewReward.remainingClock(reviewUntilMs()) : '';
+    const reviewPlus = !!reviewLabel || (isProPlus() && p.plan !== 'proplus');
+    const trial = pro && p.plan === 'free' && !reviewPlus;
+    pill.className = 'plan-rail' + (pro ? ' is-pro' : '');
+    const name = pill.querySelector('.plan-name');
+    if (name) name.textContent = reviewClock ? ('Pro+ · ' + reviewClock) : (trial ? `Pro · ${trialD}d` : plan.name);
+    pill.title = reviewLabel || (trial ? `Pro trial — ${trialD} days left` : (pro ? 'Manage plan' : 'Upgrade plan'));
+    pill.setAttribute('aria-label', reviewLabel || (trial ? `Pro trial, ${trialD} days left` : (pro ? `${plan.name} plan` : 'Free plan, upgrade')));
     pill.onclick = openPricing;
     const up = $('#btnUpgrade');
-    if (up) up.hidden = pro;
+    if (up) {
+      up.hidden = pro;
+      up.textContent = 'Upgrade';
+    }
   }
   function refreshEntitlements() {
     renderPlanPill();
@@ -556,7 +574,7 @@ const App = (() => {
     if (currentView === 'ai') renderAI();
   }
   function exportSettings() {
-    return { ...settings, proExport: isPro(), plan: planState().plan };
+    return { ...settings, proExport: isProPlus(), plan: planState().plan };
   }
 
   // ---------------- undo / redo ----------------
@@ -845,6 +863,10 @@ const App = (() => {
 
   // ---------------- toast / modal ----------------
   let toastTimer = null;
+  let cloudProfile = null;
+  let checkoutWaitTimer = null;
+  let modalPrevFocus = null;
+  const cmdState = { open: false, index: 0, hits: [] };
   function toast(msg, ok) {
     const t = $('#appToast');
     t.textContent = msg;
@@ -854,11 +876,31 @@ const App = (() => {
     toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
   }
   function openModal(title, bodyHTML, wide) {
+    modalPrevFocus = document.activeElement;
     $('#modalTitle').textContent = title;
     $('#modalBody').innerHTML = bodyHTML;
     $('#modalBackdrop').querySelector('.modal-card').classList.toggle('wide', !!wide);
     $('#modalBackdrop').scrollTop = 0;
     $('#modalBackdrop').hidden = false;
+    requestAnimationFrame(() => {
+      const card = $('#modalBackdrop').querySelector('.modal-card');
+      const nodes = (typeof ModalFocus !== 'undefined') ? ModalFocus.listFocusable(card) : [];
+      const first = nodes[0] || $('#modalClose');
+      if (first && first.focus) first.focus();
+    });
+  }
+  function trapModalTab(e) {
+    if ($('#modalBackdrop').hidden || e.key !== 'Tab' || typeof ModalFocus === 'undefined') return;
+    const card = $('#modalBackdrop').querySelector('.modal-card');
+    const nodes = ModalFocus.listFocusable(card);
+    if (!nodes.length) return;
+    const i = nodes.indexOf(document.activeElement);
+    const atEdge = i < 0 || (!e.shiftKey && document.activeElement === nodes[nodes.length - 1])
+      || (e.shiftKey && document.activeElement === nodes[0]);
+    if (!atEdge) return;
+    e.preventDefault();
+    const next = ModalFocus.nextFocusIndex(i < 0 ? 0 : i, nodes.length, e.shiftKey);
+    nodes[next].focus();
   }
   function closeModal() {
     // Closing a live Direction Lab cancels the reservation. The async study
@@ -879,6 +921,69 @@ const App = (() => {
     // re-fired after close — e.g. a stray click on a hidden modal's "create"
     // button used to re-run the whole action, duplicating projects/pages.
     $('#modalBody').innerHTML = '';
+    if (checkoutWaitTimer) { clearInterval(checkoutWaitTimer); checkoutWaitTimer = null; }
+    if (modalPrevFocus && modalPrevFocus.focus) {
+      try { modalPrevFocus.focus(); } catch (e) {}
+    }
+    modalPrevFocus = null;
+  }
+
+  function openCmd() {
+    if (typeof CommandPalette === 'undefined') return;
+    cmdState.open = true;
+    const root = $('#cmdPalette');
+    if (root) root.hidden = false;
+    renderCmd('');
+    const inp = $('#cmdInput');
+    if (inp) { inp.value = ''; inp.focus(); }
+  }
+  function closeCmd() {
+    cmdState.open = false;
+    const root = $('#cmdPalette');
+    if (root) root.hidden = true;
+  }
+  function renderCmd(query) {
+    if (typeof CommandPalette === 'undefined') return;
+    cmdState.hits = CommandPalette.filterCommands(query);
+    cmdState.index = 0;
+    const list = $('#cmdList');
+    if (!list) return;
+    list.innerHTML = cmdState.hits.length
+      ? cmdState.hits.map((c, i) => `<li class="${i === 0 ? 'active' : ''}" data-cmd="${esc(c.id)}"><b>${esc(c.title)}</b><small>${esc(c.hint || '')}</small></li>`).join('')
+      : '<li class="empty">No matches</li>';
+    $$('#cmdList li[data-cmd]').forEach((el) => {
+      el.onmouseenter = () => {
+        cmdState.index = cmdState.hits.findIndex((c) => c.id === el.dataset.cmd);
+        paintCmd();
+      };
+      el.onclick = () => runCmd(el.dataset.cmd);
+    });
+  }
+  function paintCmd() {
+    $$('#cmdList li[data-cmd]').forEach((el, i) => el.classList.toggle('active', i === cmdState.index));
+  }
+  function moveCmd(delta) {
+    if (typeof CommandPalette === 'undefined' || !cmdState.hits.length) return;
+    cmdState.index = CommandPalette.nextIndex(cmdState.index, cmdState.hits.length, delta);
+    paintCmd();
+    const el = $$('#cmdList li[data-cmd]')[cmdState.index];
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+  }
+  function runCmd(id) {
+    const chosen = id || (cmdState.hits[cmdState.index] && cmdState.hits[cmdState.index].id);
+    const cmd = (typeof CommandPalette !== 'undefined' ? CommandPalette.COMMANDS : []).find((c) => c.id === chosen);
+    closeCmd();
+    if (!cmd) return;
+    if (cmd.tab) settingsTab = cmd.tab;
+    if (cmd.view) switchView(cmd.view);
+    if (cmd.action === 'upgrade') openPricing();
+    if (cmd.action === 'copilot') {
+      if (!current()) return toast('Open a project first');
+      switchView('designer');
+      chatOpenPanel(true);
+    }
+    if (cmd.action === 'export') openExportMenu();
+    if (cmd.action === 'tour') startTour();
   }
 
   // ---------------- plans / pricing ----------------
@@ -933,18 +1038,55 @@ const App = (() => {
     const signedIn = SUPABASE.isConfigured() && SUPABASE.signedIn();
     if (!signedIn) {
       openModal('Sign in to upgrade', `
-        <p style="color:var(--muted);line-height:1.55">Paid plans and license keys are verified on the cloud registry. Sign in from Settings, then activate a key issued by pallettai.org or redeem a referral code.</p>
+        <p style="color:var(--muted);line-height:1.55">Paid plans are billed through Stripe and unlocked with a registry license key. Sign in from Settings, then choose a plan or paste a key.</p>
         <button class="btn primary" id="goSettings">Open Settings</button>`, true);
       $('#goSettings').onclick = () => { closeModal(); settingsTab = 'account'; switchView('settings'); };
       return;
     }
+    const payUrl = PLANS.checkoutUrlForAccount(planId, (SUPABASE.session() || {}).uid);
     openModal('Upgrade — ' + plan.name, `
       <div class="checkout-form">
-        <div class="demo-note">Card checkout is not live yet. Activate a registry license key or redeem a referral code — nothing is unlocked locally.</div>
-        <div class="checkout-sum"><span>${plan.name} · billed ${plan.period}</span><b>${plan.price ? PLANS.currency.symbol + plan.price + '/mo' : 'Free'}</b></div>
+        <div class="demo-note">${payUrl
+          ? 'Pay on Stripe — the plan lands on this signed-in account, even if you use a different email at checkout. It unlocks after Stripe confirms the payment (come back to Studio). Failed or canceled payments do not unlock Pro.'
+          : 'Card checkout is not configured for this plan. Activate a registry license key or redeem a referral code — nothing is unlocked locally.'}</div>
+        <div class="checkout-sum"><span>${esc(plan.name)} · billed ${esc(plan.period)}</span><b>${plan.price ? PLANS.currency.symbol + plan.price + '/mo' : 'Free'}</b></div>
+        ${payUrl ? '<button class="btn primary" id="ccPay">Pay with Stripe</button>' : ''}
         <button class="btn ghost small" id="ccBack">← Back to plans</button>
       </div>`, true);
+    const payBtn = $('#ccPay');
+    if (payBtn && payUrl) {
+      payBtn.onclick = () => {
+        window.open(payUrl, '_blank', 'noopener,noreferrer');
+        startCheckoutWait(plan.name);
+      };
+    }
     $('#ccBack').onclick = openPricing;
+  }
+
+  function startCheckoutWait(planName) {
+    if (checkoutWaitTimer) { clearInterval(checkoutWaitTimer); checkoutWaitTimer = null; }
+    const returnUrl = (typeof PlanReceipt !== 'undefined')
+      ? PlanReceipt.paidReturnUrl(location)
+      : (location.origin + location.pathname + '?paid=1');
+    openModal('Waiting for Stripe', `
+      <p style="color:var(--muted);line-height:1.55">Finish paying in the Stripe tab, then come back here. We unlock <b>${esc(planName)}</b> on this signed-in account after Stripe confirms the payment.</p>
+      <p class="set-desc">If you set the Payment Link redirect, use ${esc(returnUrl)}</p>
+      <div class="acc-status" id="payWaitStatus">Unlocking after Stripe confirms the payment…</div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button class="btn primary" id="payWaitRefresh">Refresh plan</button>
+        <button class="btn ghost" id="payWaitClose">I’ll wait here</button>
+      </div>`);
+    const tick = async () => {
+      await syncCloud();
+      if (isPro()) {
+        if (checkoutWaitTimer) { clearInterval(checkoutWaitTimer); checkoutWaitTimer = null; }
+        closeModal();
+        toast(planName + ' is unlocked', true);
+      }
+    };
+    checkoutWaitTimer = setInterval(tick, 3000);
+    $('#payWaitRefresh').onclick = tick;
+    $('#payWaitClose').onclick = () => { closeModal(); };
   }
 
   // Activate a license key. Always verified against the registry and bound
@@ -1029,24 +1171,57 @@ const App = (() => {
     if (streakResult.status === 'rejected') console.warn('Cloud streak sync failed:', streakResult.reason);
     if (st && st.ok) {
       if (st.code && st.code.code) PLANS.store.setRefCode(st.code.code);
-      if (st.profile && st.profile.trial_expires_at) {
-        PLANS.store.applyTrialUntil(new Date(st.profile.trial_expires_at).getTime());
-      }
-      // account-bound license → plan follows the account across devices
-      if (st.license && st.license.code) {
+      const cloudPlan = PLANS.normalizePlan(st.profile && st.profile.plan);
+      const cloudExpires = st.profile && st.profile.plan_expires_at
+        ? new Date(st.profile.plan_expires_at).getTime() : null;
+      const cloudPaid = (cloudPlan === 'pro' || cloudPlan === 'proplus')
+        && (!cloudExpires || cloudExpires > Date.now());
+      const licensePaid = !!(st.license && st.license.code
+        && (!st.license.expires_at || new Date(st.license.expires_at).getTime() > Date.now()));
+      if (cloudPaid) {
+        PLANS.store.applyRegistryPlan({
+          plan: cloudPlan,
+          key: (st.license && st.license.code) || '',
+          expiresAt: cloudExpires
+        });
+      } else if (licensePaid) {
         PLANS.store.applyRegistryPlan({
           plan: st.license.plan || 'pro', key: st.license.code,
           expiresAt: st.license.expires_at ? new Date(st.license.expires_at).getTime() : null
         });
+      } else {
+        const trialAt = st.profile && st.profile.trial_expires_at
+          ? new Date(st.profile.trial_expires_at).getTime() : 0;
+        if (PLANS.store.current().source === 'registry' && !(trialAt > Date.now())) {
+          PLANS.store.downgrade();
+        }
+        if (trialAt > Date.now()) PLANS.store.applyTrialUntil(trialAt);
       }
+      const reviewUntil = st.profile && st.profile.review_proplus_until
+        ? new Date(st.profile.review_proplus_until).getTime() : 0;
+      if (reviewUntil > Date.now()) PLANS.store.applyReviewProPlus(reviewUntil);
       if (st.partial) console.warn('Cloud account sync completed partially:', st.warnings);
+      cloudProfile = st.profile || null;
+      announceBilling(cloudProfile);
     }
     refreshEntitlements();
   }
 
+  function announceBilling(profile) {
+    if (!profile || typeof PlanReceipt === 'undefined') return;
+    const copy = PlanReceipt.failureCopy(profile.billing_status);
+    if (!copy) return;
+    const key = [profile.id || '', profile.billing_status, profile.billing_status_at || ''].join(':');
+    try {
+      if (localStorage.getItem('pallettai.billing.notice') === key) return;
+      localStorage.setItem('pallettai.billing.notice', key);
+    } catch (e) {}
+    toast(copy, false);
+  }
+
   function downgradePlan() {
     openModal('Switch to the Free plan?', `
-      <p style="color:var(--muted)">You'll keep your projects and exported sites, but AI Studio credits, Pro templates, Pro suites and unbranded exports will lock again.</p>
+      <p style="color:var(--muted)">You'll keep your projects and exported sites, but AI Studio credits, Pro templates, Pro suites, unbranded exports and brand presets will lock again.</p>
       <div style="display:flex;gap:10px;margin-top:18px">
         <button class="btn danger small" id="modalDownYes">Switch to Free</button>
         <button class="btn ghost small" id="modalDownNo">Keep my plan</button>
@@ -1070,9 +1245,10 @@ const App = (() => {
     $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
     $$('.view').forEach((v) => v.classList.remove('active'));
     $('#view-' + name).classList.add('active');
-    const titles = { dashboard: 'Dashboard', designer: 'Designer', ai: 'AI Studio', suites: 'Upgrade Suites', database: 'Database', settings: 'Settings' };
+    const titles = { dashboard: 'Dashboard', templates: 'Templates', designer: 'Designer', ai: 'AI Studio', suites: 'Upgrade Suites', database: 'Database', settings: 'Settings' };
     $('#viewTitle').textContent = titles[name] || name;
     if (name === 'dashboard') renderDashboard();
+    if (name === 'templates') renderTemplates();
     if (name === 'designer') renderDesigner();
     if (name === 'ai') renderAI();
     if (name === 'suites') renderSuites();
@@ -1165,7 +1341,7 @@ const App = (() => {
   function noteStreakAction(kind) {
     if (!SUPABASE.isConfigured() || !SUPABASE.signedIn()) return;
     try { localStorage.setItem(STREAK.actKey, JSON.stringify({ d: new Date().toDateString(), k: kind || 'edit' })); } catch (e) { return; }
-    if (currentView === 'dashboard') renderStreakWidget(); // unlocks the claim button now
+    if (currentView === 'ai') renderStreakWidget(); // unlocks the claim button now
   }
 
   function adoptStreakState(r) {
@@ -1198,7 +1374,7 @@ const App = (() => {
       root.innerHTML = `
         <div class="streak-card">
           <div class="streak-head">
-            <span class="streak-ico">🔥</span>
+            <span class="streak-ico">✦</span>
             <div class="streak-titles">
               <b>Daily streak</b>
               <span class="streak-sub">Earn free AI credits every day you build — and a Day-7 prize wheel. Claims are verified on the cloud registry.</span>
@@ -1270,14 +1446,14 @@ const App = (() => {
     root.innerHTML = `
       <div class="streak-card">
         <div class="streak-head">
-          <span class="streak-ico">${claimed ? '✅' : '🔥'}</span>
+          <span class="streak-ico">✦</span>
           <div class="streak-titles">
             <b>Daily streak</b>
             <span class="streak-sub">${esc(sub)}</span>
           </div>
           <div class="streak-meta">
             ${shields ? `<span class="streak-shield" title="Streak shields protect your streak for one missed day (max 2).">⛨ ${shields}</span>` : ''}
-            ${streak ? `<span class="streak-best" title="Longest streak">🔥 ${streak}${best !== streak ? ' · best ' + best : ''}</span>` : ''}
+            ${streak ? `<span class="streak-best" title="Longest streak">✦ ${streak}${best !== streak ? ' · best ' + best : ''}</span>` : ''}
           </div>
         </div>
         <div class="streak-row">
@@ -1590,7 +1766,7 @@ const App = (() => {
       </div>`;
     // 1 — active projects (local, real)
     const pSub = !projects.length
-      ? 'Start a project from a template below'
+      ? 'Start a project from a template'
       : (editedWeek === projects.length
           ? 'Every project touched in the last 7 days'
           : editedWeek + ' of ' + projects.length + ' edited in the last 7 days');
@@ -1609,28 +1785,7 @@ const App = (() => {
       const bonus = s.bonusCredits || 0;
       return cred.used + ' used · ' + cred.limit + ' available' + (bonus ? ' · incl. ' + bonus + ' streak bonus' : '');
     })();
-    // 3 — daily streak (registry truth when signed in)
-    const st = STREAK.cache;
-    let sVal, sSub;
-    if (!signedIn) { sVal = '—'; sSub = 'Sign in to earn daily AI credits and spin the Day-7 wheel'; }
-    else if (!st || !st.ok) { sVal = '…'; sSub = 'Syncing your streak from the cloud registry'; }
-    else {
-      const cur = st.streak || 0;
-      const nd = st.nextCycle || 1;
-      const claimed = !!st.claimedToday;
-      const shield = st.shields ? ' · ⛨ ' + st.shields + ' shield' + (st.shields === 1 ? '' : 's') : '';
-      if (claimed) {
-        const d = st.cycleDay || 1;
-        sVal = (cur || d) + '<small>day streak</small>';
-        sSub = (st.wheelPending ? 'Day ' + d + ' claimed — wheel ready! 🎡' : 'Day ' + d + ' claimed ✓ — back tomorrow for Day ' + ((d % 7) + 1)) + shield;
-      } else {
-        sVal = cur > 0 ? cur + '<small>day streak</small>' : 'Day ' + nd;
-        sSub = (nd === 7
-          ? 'Complete Day 7 today to unlock the wheel 🎡'
-          : (st.restarting ? 'Streak reset — claim Day 1 to start a new one' : 'Claim Day ' + nd + ' for +' + (nd + 1) + ' bonus credits')) + shield;
-      }
-    }
-    // 4 — local studio data size (projects + autosave history, real bytes)
+    // 3 — local studio data size (projects + autosave history, real bytes)
     const totB = dashBytes();
     const st4 = !projects.length
       ? 'Nothing saved yet — projects stay on this device'
@@ -1638,7 +1793,6 @@ const App = (() => {
     stats.innerHTML =
       makeStat('sc-projects', 'Active projects', '📁', '<span>' + projects.length + '</span>', pSub, 'projects') +
       makeStat('sc-ai', 'AI credits', '✦', '<span>' + (pro ? '∞' : cred.left) + '</span><small>' + (pro ? 'unlimited' : 'left') + '</small>', cSub, 'ai') +
-      makeStat('sc-streak', 'Daily streak', '🔥', '<span>' + sVal + '</span>', sSub) +
       makeStat('sc-store', 'Local studio data', '💾', '<span>' + dashFmtBytes(totB) + '</span>', st4);
     $$('#dashStats .stat-card[data-go]').forEach((c) => c.onclick = () => {
       const go = c.dataset.go;
@@ -1704,11 +1858,30 @@ const App = (() => {
     $$('#dashInsight .act-item').forEach((el) => el.onclick = () => { currentId = el.dataset.open; switchView('designer'); });
   }
 
-  function renderDashboard() {
-    renderDashOverview();
-    renderStreakWidget();
-    if (SUPABASE.isConfigured() && SUPABASE.signedIn()) hydrateStreak();
-    $('#tplGrid').innerHTML = DB.templates.map((t) => {
+  function renderTemplateDoor() {
+    const door = $('#dashTemplates');
+    if (!door) return;
+    const total = DB.templates.length;
+    const proN = (PLANS.proTemplates || []).length;
+    const freeN = Math.max(0, total - proN);
+    const meta = $('#dashTemplatesMeta');
+    if (meta) meta.textContent = freeN + ' free and ' + proN + ' Pro starting points.';
+    const icons = $('#dashTemplatesIcons');
+    if (icons) {
+      icons.innerHTML = DB.templates.slice(0, 8).map((t) =>
+        `<span class="tpl-door-ico" title="${esc(t.name)}">${t.icon}</span>`
+      ).join('');
+    }
+    const go = () => switchView('templates');
+    const btn = $('#btnBrowseTemplates');
+    if (btn) btn.onclick = (e) => { e.stopPropagation(); go(); };
+    door.onclick = go;
+  }
+
+  function renderTemplates() {
+    const grid = $('#tplGrid');
+    if (!grid) return;
+    grid.innerHTML = DB.templates.map((t) => {
       const proTpl = PLANS.proTemplates.includes(t.id);
       const locked = proTpl && !isPro();
       return `
@@ -1725,7 +1898,7 @@ const App = (() => {
       </div>`;
     }).join('');
 
-    $$('[data-use]').forEach((b) => b.onclick = () => {
+    $$('#tplGrid [data-use]').forEach((b) => b.onclick = () => {
       const t = DB.getTemplate(b.dataset.use);
       if (PLANS.proTemplates.includes(t.id) && !isPro()) {
         openPricing();
@@ -1734,7 +1907,12 @@ const App = (() => {
       }
       createProject(t);
     });
-    $$('[data-prev]').forEach((b) => b.onclick = () => previewTemplate(DB.getTemplate(b.dataset.prev)));
+    $$('#tplGrid [data-prev]').forEach((b) => b.onclick = () => previewTemplate(DB.getTemplate(b.dataset.prev)));
+  }
+
+  function renderDashboard() {
+    renderDashOverview();
+    renderTemplateDoor();
 
     const grid = $('#projectsGrid');
     // renderDashboard re-runs on every save/refresh, so keep exactly one
@@ -1751,7 +1929,7 @@ const App = (() => {
     const importFile = $('#importFile');
     if (importFile) importFile.onchange = (e) => importProjectFile(e.target.files[0]);
     if (!projects.length) {
-      grid.innerHTML = '<div class="empty-state">No projects yet — start from a template above. ✨</div>';
+      grid.innerHTML = '<div class="empty-state">No projects yet — start from a template. ✨</div>';
       return;
     }
     grid.innerHTML = projects.map((p) => `
@@ -2805,7 +2983,7 @@ const App = (() => {
       <div style="display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow:auto">
         ${a.checks.map((i) => `<div class="diag-row diag-${esc(i.level)}"><div>${ic(i.level, i.fix)} ${esc(i.msg)}${i.fix ? `<br><small style="color:var(--muted)">Fix: ${esc(i.fix)}</small>` : ''}</div></div>`).join('')}
       </div>
-      <div class="set-desc" style="margin-top:12px">🔓 No lock-in: “${esc(name || '')}” is plain HTML/CSS/JS — you own it and can host it anywhere. No PallettAI runtime, cookies or account required on the exported site. robots.txt included${c.site.url ? ' + sitemap.xml ✓' : ' — set the Site URL to also receive sitemap.xml'}.</div>`);
+      <div class="set-desc" style="margin-top:12px">🔓 Sites are files, not tenants. “${esc(name || '')}” is plain HTML/CSS/JS — you own it and can host it anywhere. No PallettAI runtime, cookies or account required on the exported site. robots.txt included${c.site.url ? ' + sitemap.xml ✓' : ' — set the Site URL to also receive sitemap.xml'}.</div>`);
   }
 
   // ---------------- client handoff (ZIP) ----------------
@@ -2817,7 +2995,7 @@ const App = (() => {
     const skipQuality = !!(options && options.skipQuality);
     const pages = Builder.pages(c);
     openModal('⬇ Export & hand off', `
-      <p style="color:var(--muted);margin-bottom:14px">${esc(c.name)} — ${pages.length} page${pages.length === 1 ? '' : 's'}, ready to ship.</p>
+      <p style="color:var(--muted);margin-bottom:14px">${esc(c.name)} — ${pages.length} page${pages.length === 1 ? '' : 's'}, ready to ship. These are files, not tenants: plain HTML/CSS/JS you own, hostable anywhere without a PallettAI account.</p>
       <div class="export-cards">
         <button class="export-card" id="exDownload"><span class="export-ico">⬇</span><b>Download site</b><small>${pages.length === 1 ? 'Single self-contained .html file' : pages.length + ' pages as a .zip folder (index.html + more)'}</small></button>
         <button class="export-card" id="exHandoff"><span class="export-ico">🎁</span><b>Client handoff ZIP</b><small>Site + hosting guide + brand kit + optional invoice — hand to your client</small></button>
@@ -3229,6 +3407,8 @@ const App = (() => {
     const pill = $('#aiCreditPill');
     pill.className = 'pill' + (pro ? ' ok' : (cred.left <= 1 ? ' bad' : ''));
     pill.textContent = pro ? '∞ Pro credits' : cred.left + ' credit' + (cred.left === 1 ? '' : 's') + ' left';
+    renderStreakWidget();
+    if (SUPABASE.isConfigured() && SUPABASE.signedIn()) hydrateStreak();
     const c = current();
     const proj = lastAI ? projects.find((p) => p.id === lastAI.id) : null;
     const root = $('#aiRoot');
@@ -4870,65 +5050,120 @@ const App = (() => {
           return `<div class="rev-row"><b>${lbl}${r.source === 'cloud' ? ' ☁' : ''}</b><small>${new Date(r.at).toLocaleDateString()} ${new Date(r.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${grant}</small></div>`;
         }).join('')}</div>`
       : '<p class="sub" style="margin-top:10px">No redemptions yet — share your code and earn 7 Pro days every time a friend redeems it.</p>';
+    const registryHost = String((SUPABASE.REGISTRY && SUPABASE.REGISTRY.url) || '').replace(/^https?:\/\//, '');
+    const reviewUntil = reviewUntilMs();
+    const reviewLabel = reviewPlanLabel();
+    const reviewGiftOn = reviewUntil > Date.now();
+    const receiptSrc = (reviewGiftOn ? 'review' : '')
+      || (cloudProfile && cloudProfile.entitlement_source)
+      || (sub.source === 'registry' ? (sub.key ? 'license' : 'registry') : sub.source)
+      || (trialD > 0 ? 'trial' : '');
+    const receiptRows = (typeof PlanReceipt !== 'undefined')
+      ? PlanReceipt.receiptLines({
+          plan: plan.id,
+          source: receiptSrc,
+          reviewUntil: reviewGiftOn ? reviewUntil : 0,
+          expiresAt: (cloudProfile && cloudProfile.plan_expires_at) || sub.planExpiresAt || null,
+          billingStatus: cloudProfile && cloudProfile.billing_status,
+          lastEventType: cloudProfile && cloudProfile.last_stripe_event_type,
+          lastEventAt: cloudProfile && cloudProfile.billing_status_at,
+          trialDays: reviewGiftOn ? 0 : trialD
+        })
+      : [];
+    const receiptHtml = receiptRows.length
+      ? `<dl class="bill-receipt">${receiptRows.map((row) => `<dt>${esc(row.label)}</dt><dd>${esc(row.value)}</dd>`).join('')}</dl>`
+      : '';
+    const billingWarn = (typeof PlanReceipt !== 'undefined' && cloudProfile)
+      ? PlanReceipt.failureCopy(cloudProfile.billing_status)
+      : '';
     const accountCard = !cloudOn ? `
-      <div class="set-row"><div><label>Supabase project URL</label><div class="set-desc">From your Supabase project: Settings → API → Project URL.</div></div>
-        <input id="sbUrl" placeholder="https://xxxxxxxx.supabase.co" spellcheck="false"></div>
-      <div class="set-row"><div><label>Anon public key</label><div class="set-desc">Settings → API → anon public key. Safe to embed — database rules protect the data.</div></div>
-        <input id="sbKey" placeholder="eyJhbGciOi…" spellcheck="false"></div>
-      <div class="acc-row"><button class="btn primary small" id="btnAccSave">💾 Save & connect</button></div>
-      <div class="acc-status">Not connected — sign in after connecting the registry to redeem codes and activate keys. Run the one-file setup script (supabase/schema.sql) in your project, then paste the URL + key above. Full walkthrough in the README.</div>`
+      <div class="set-row"><div><label>PallettAI cloud registry</label><div class="set-desc">This app only connects to the official registry. The host cannot be changed.</div></div>
+        <code class="ref-code" id="sbHostLocked">${esc(registryHost)}</code></div>
+      <div class="acc-row"><button class="btn primary small" id="btnAccConnect">☁ Connect</button></div>
+      <div class="acc-status">Not connected — tap Connect, then create an account or sign in to upgrade.</div>`
       : !signedIn ? `
-      <div class="acc-row"><span class="acc-badge">☁ Connected · registry live</span><span class="conn-host">${esc(String((SUPABASE.getConfig() || {}).url || '').replace(/^https?:\/\//, ''))}</span></div>
+      <div class="acc-row"><span class="acc-badge">Ready to sign in</span><span class="conn-host">${esc(registryHost)}</span></div>
       <div class="set-row"><div><label>Email</label></div><input type="email" id="accEmail" placeholder="you@example.com" autocomplete="email"></div>
       <div class="set-row"><div><label>Password</label></div><input type="password" id="accPass" placeholder="min 6 characters" autocomplete="current-password"></div>
       <div class="acc-row">
         <button class="btn primary small" id="btnAccSubmit">Sign in</button>
         <button class="btn ghost small" id="btnAccToggle">Create a new account</button>
+        <button class="btn ghost small" id="btnForgot">Forgot password</button>
       </div>
-      <div class="acc-status" id="accStatus">Signed out — sign in to verify codes and sync your trial. The registry connection is locked so verification always stays on.</div>`
+      <div class="acc-status" id="accStatus">This is only a subscription login. After you sign in you can upgrade and we can check your plan. It is not used on client sites.</div>`
       : `
-      <div class="acc-row">
-        <span class="acc-badge">☁ Cloud registry · verified</span>
-        <b>${esc(ses.email)}</b>
-        <button class="btn ghost small" id="btnAccOut">Sign out</button>
-      </div>
-      <div class="set-row"><div><label>Your stable referral code</label><div class="set-desc">Minted when your account was created — it never changes. Every redemption is stamped on the registry.</div></div>
-        <code class="ref-code" id="myRefCode">${esc(myRef)}</code></div>
-      <div class="set-row"><div><label>Pro trial</label><div class="set-desc">Server-granted days, synced from the registry.</div></div>
-        <b>${trialD > 0 ? trialD + ' day' + (trialD === 1 ? '' : 's') + ' left' : (pro ? 'unlocked' : 'none — share your code to earn 7 days per friend')}</b></div>
-      <div class="acc-status">Your code, rewards and redemption history are verified server-side and follow you across devices.</div>`;
+      <div class="acc-signed">
+        <div class="acc-row">
+          <span class="acc-badge">Signed in</span>
+          <b>${esc(ses.email)}</b>
+          <button class="btn ghost small" id="btnAccOut">Sign out</button>
+        </div>
+        <div class="set-row"><div><label>Plan status</label><div class="set-desc">Read from the PallettAI registry for this account.</div></div>
+          <b>${esc(reviewLabel || (plan.name + (trialD > 0 ? ' · ' + trialD + ' trial day' + (trialD === 1 ? '' : 's') + ' left' : '')))}</b></div>
+        ${receiptHtml}
+        ${billingWarn ? `<p class="bill-warn">${esc(billingWarn)}</p>` : ''}
+        <div class="set-row"><div><label>Change password</label><div class="set-desc">Updates the password for this subscription login.</div></div>
+          <input type="password" id="accNewPass" placeholder="New password" autocomplete="new-password"></div>
+        <div class="set-row"><div><label>Confirm</label></div><input type="password" id="accNewPass2" placeholder="Confirm new password" autocomplete="new-password"></div>
+        <div class="acc-row"><button class="btn ghost small" id="btnChangePass">Change password</button></div>
+        <p class="acc-status">Payments, cancellations and license keys attach to this account. Come back here to confirm whether you are on Free, Pro or Pro+.</p>
+      </div>`;
+    const setIco = (inner) => `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+    const SET_ICO = {
+      account: setIco('<circle cx="10" cy="6.8" r="2.6"/><path d="M4.6 16.2c.7-3.1 2.6-4.6 5.4-4.6s4.7 1.5 5.4 4.6"/>'),
+      appearance: setIco('<path d="M10 3.2c2.6 3.1 5.2 5.4 5.2 8.1a5.2 5.2 0 1 1-10.4 0C4.8 8.6 7.4 6.3 10 3.2z"/><path d="M8.1 12.6h.01"/>'),
+      branding: setIco('<path d="M3.6 10.2V4.8A1.2 1.2 0 0 1 4.8 3.6h5.6L16.4 9.6 10 16 3.6 10.2z"/><circle cx="7.2" cy="7.2" r="1"/>'),
+      defaults: setIco('<path d="M3.6 6.6h12.8M3.6 13.4h12.8"/><circle cx="8" cy="6.6" r="1.55"/><circle cx="12.4" cy="13.4" r="1.55"/>'),
+      export: setIco('<path d="M4.2 13v2a1 1 0 0 0 1 1h9.6a1 1 0 0 0 1-1v-2"/><path d="M10 3.8v8.4M7 6.6l3-2.8 3 2.8"/>'),
+      online: setIco('<circle cx="10" cy="14.8" r="1.05" fill="currentColor" stroke="none"/><path d="M6.5 11.4a5 5 0 0 1 7 0M4.4 8.8a8 8 0 0 1 11.2 0"/>'),
+      studio: setIco('<circle cx="10" cy="10" r="2.2"/><path d="M10 3.2v1.6M10 15.2v1.6M3.2 10h1.6M15.2 10h1.6M5.2 5.2l1.1 1.1M13.7 13.7l1.1 1.1M14.8 5.2l-1.1 1.1M6.3 13.7l-1.1 1.1"/>'),
+      about: setIco('<circle cx="10" cy="10" r="6.4"/><path d="M10 9v5M10 6.2h.01"/>')
+    };
     const TABS = [
-      ['account', '👤 Account & billing'], ['appearance', '🎨 Appearance'], ['branding', '🏷️ Branding'],
-      ['defaults', '✨ Project defaults'], ['export', '📦 Export'], ['online', '📡 Online data'],
-      ['studio', '⚙️ Studio'], ['about', 'ℹ️ About']
+      ['account', 'Account & billing'], ['appearance', 'Appearance'], ['branding', 'Branding'],
+      ['defaults', 'Project defaults'], ['export', 'Export'], ['online', 'Online data'],
+      ['studio', 'Studio'], ['about', 'About']
     ];
     const cards = (name, html) => (settingsTab === name ? html : '');
     $('#settingsRoot').innerHTML =
-      `<div class="settings-tabs">${TABS.map(([id, label]) => `<button class="settings-tab ${settingsTab === id ? 'active' : ''}" data-set-tab="${id}">${label}</button>`).join('')}</div>` +
+      `<div class="settings-tabs">${TABS.map(([id, label]) => `<button class="settings-tab ${settingsTab === id ? 'active' : ''}" data-set-tab="${id}"><span class="set-ico" aria-hidden="true">${SET_ICO[id]}</span>${label}</button>`).join('')}</div>` +
       cards('account', `
       <div class="settings-card">
-        <h3>Account & cloud registry</h3>
-        <p class="sub">One stable referral code per account, verified server-side with a stamped redemption log — rewards follow you across devices. Sign in to redeem codes or activate a license key.</p>
+        <h3>Subscription account</h3>
+        <p class="sub">${signedIn
+          ? 'This login only manages your PallettAI Studio plan. We use it to take payment and to verify whether you are on Free, Pro or Pro+. It does not appear on sites you export for clients.'
+          : 'Create or sign in to the account that will own your plan. Use it only to upgrade and to verify your plan status — it is not used on exported client sites.'}</p>
         ${accountCard}
       </div>
 
       <div class="settings-card">
         <h3>Plan & billing</h3>
-        <p class="sub">Your PallettAI Studio subscription. License keys and referrals are verified on the cloud registry.</p>
-        <div class="plan-banner">
-          <div class="plan-badge ${pro ? '' : 'free'}"><span class="pb-ico">${pro ? '★' : '✦'}</span>${esc(plan.name)}</div>
-          <div class="plan-meta">
-            <span>${plan.name}${plan.price ? ' · ' + PLANS.currency.symbol + plan.price + '/mo' : (pro ? ' · free, powered by an earned Pro trial' : ' · free forever')}</span>
-            ${pro && plan.id === 'free' ? `<span class="trial-chip">★ Pro trial · ${trialD} day${trialD === 1 ? '' : 's'} left — earn more by referring</span>` : ''}
-            <span id="setCreditsTxt"></span>
-            ${sub.key ? `<span>License: ${esc(sub.key)}${sub.source === 'registry' ? ' ☁' : ''}${sub.planExpiresAt ? ' · until ' + new Date(sub.planExpiresAt).toLocaleDateString() : ''}</span>` : ''}
+        <p class="sub">${signedIn
+          ? 'Plan status for ' + esc(ses.email) + '. Upgrade, a license key or a referral changes what this account is allowed to use.'
+          : 'Sign in to the subscription account above, then upgrade. That is how we know which plan to give you.'}</p>
+        <div class="bill-card">
+          <div class="bill-rail">
+            <span class="plan-name">${esc(reviewLabel || (plan.name + (plan.price ? ' · ' + PLANS.currency.symbol + plan.price + '/mo' : '')))}</span>
+            <button class="${pro ? 'btn ghost small' : 'plan-go'}" id="btnManagePlan">${pro ? 'View plans' : 'Upgrade'}</button>
           </div>
-          <div style="margin-left:auto;display:flex;gap:8px">
-            <button class="btn primary small" id="btnManagePlan">${pro ? 'Manage plan' : '✦ Upgrade'}</button>
-            ${pro ? '<button class="btn ghost small" id="btnDowngrade">Switch to Free</button>' : ''}
-          </div>
+          ${receiptHtml}
+          ${billingWarn ? `<p class="bill-warn">${esc(billingWarn)}</p>` : ''}
+          <span id="setCreditsTxt" class="set-desc"></span>
+          <div class="credits-bar" title="AI Studio credits used"><span id="creditsBar" style="width:0%"></span></div>
         </div>
-        <div class="credits-bar" title="AI Studio credits used"><span id="creditsBar" style="width:0%"></span></div>
+      </div>
+
+      <div class="settings-card">
+        <h3>Leave a review</h3>
+        ${!signedIn
+          ? '<p class="sub">Sign in above, then leave one short testimonial — we give that account 3 days of Pro+. You can only claim this once.</p>'
+          : (cloudProfile && cloudProfile.review_claimed_at)
+            ? '<p class="sub">You already claimed this. Thank you — one review per account.</p>'
+            : `<p class="sub">Write a short testimonial about Studio. We unlock <b>3 days of Pro+</b> on this account, one time only.</p>
+        <div class="set-row"><div><label>Your name</label></div><input type="text" id="revName" maxlength="80" placeholder="Name or studio" autocomplete="name"></div>
+        <div class="set-row"><div><label>Testimonial</label><div class="set-desc">At least 40 characters. What did Studio help you ship?</div></div>
+          <textarea id="revQuote" maxlength="800" rows="4" placeholder="PallettAI Studio let me…"></textarea></div>
+        <div class="acc-row"><button class="btn primary small" id="btnReviewClaim">Submit review — claim 3 days of Pro+</button></div>`}
       </div>
 
       <div class="settings-card">
@@ -4945,8 +5180,6 @@ const App = (() => {
           <div style="display:flex;gap:8px;align-items:center"><code class="ref-code" id="myRefCode">${esc(myRef)}</code><button class="btn ghost small" id="btnCopyRef">🔗 Copy invite link</button></div></div>
         <div class="set-row"><div><label>Invite link</label><div class="set-desc">https://pallettai.org/ref/… — redeemable here or in the upgrade modal.</div></div>
           <input id="refLink" readonly value="https://pallettai.org/ref/${esc(myRef.replace('REF-', ''))}"></div>
-        <div class="set-row"><div><label>Try it — demo</label><div class="set-desc">Simulates a friend redeeming your code and adds your 7-day reward now (single-machine demo).</div></div>
-          <button class="btn primary small" id="btnSimRef">🎁 Simulate a friend redeeming</button></div>
         <h4 style="margin:16px 0 4px">Redemption history</h4>`}
         ${refHistoryHtml}
       </div>
@@ -4955,8 +5188,8 @@ const App = (() => {
       <div class="settings-card">
         <h3>Appearance</h3>
         <p class="sub">How PallettAI Studio looks on your machine.</p>
-        <div class="set-row"><div><label>Theme</label><div class="set-desc">Dark or light studio UI.</div></div>
-          <select id="setTheme"><option value="dark" ${s.theme === 'dark' ? 'selected' : ''}>Dark</option><option value="light" ${s.theme === 'light' ? 'selected' : ''}>Light</option></select></div>
+        <div class="set-row"><div><label>Theme</label><div class="set-desc">Dark, light, or follow the operating system.</div></div>
+          <select id="setTheme"><option value="dark" ${s.theme === 'dark' ? 'selected' : ''}>Dark</option><option value="light" ${s.theme === 'light' ? 'selected' : ''}>Light</option><option value="system" ${s.theme === 'system' ? 'selected' : ''}>System</option></select></div>
         <div class="set-row"><div><label>Accent colour</label><div class="set-desc">The highlight colour across the whole studio UI.</div></div>
           <div style="display:flex;gap:8px;align-items:center">
             <input type="color" id="setAccent" value="${esc(s.accent || '#22d3ee')}" title="Pick any colour" style="width:44px;height:32px;padding:2px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;cursor:pointer">
@@ -5064,7 +5297,6 @@ const App = (() => {
     set('#setCreditsTxt', (el) => { el.textContent = cred.limit === Infinity ? 'AI Studio: unlimited generations' : 'AI Studio: ' + cred.used + ' of ' + cred.limit + ' credits used'; });
     set('#creditsBar', (el) => { el.style.width = (cred.limit === Infinity ? 100 : Math.min(100, Math.round((cred.used / cred.limit) * 100))) + '%'; });
     set('#btnManagePlan', (el) => { el.onclick = openPricing; });
-    set('#btnDowngrade', (el) => { el.onclick = downgradePlan; });
     on('#setTheme', 'change', (e) => { settings.theme = e.target.value; saveSettings(); });
     on('#setBrandFooter', 'change', (e) => { settings.brandFooter = e.target.checked; saveSettings(); renderPreview(); });
     on('#setBrandText', 'input', (e) => { settings.brandFooterText = e.target.value; saveSettings(); schedulePreview(); });
@@ -5112,15 +5344,15 @@ const App = (() => {
       toast('Settings reset to defaults ↺', true);
     });
     // account & cloud registry
-    const accSave = $('#btnAccSave');
-    if (accSave) accSave.onclick = () => {
+    const accConnect = $('#btnAccConnect');
+    if (accConnect) accConnect.onclick = () => {
       try {
-        const r = SUPABASE.setConfig($('#sbUrl').value, $('#sbKey').value);
+        const r = SUPABASE.connectOfficial();
         if (!r.ok) return toast(r.msg, false);
-        accSave.disabled = true;
-        accSave.textContent = 'Connecting…';
+        accConnect.disabled = true;
+        accConnect.textContent = 'Connecting…';
         setTimeout(() => renderSettings(), 250);
-        toast('Connected to the cloud registry ☁ — create your account below', true);
+        toast('Connected to the PallettAI registry ☁ — sign in or create an account', true);
       } catch (e) {
         toast('Could not connect: ' + ((e && e.message) || e), false);
       }
@@ -5144,6 +5376,7 @@ const App = (() => {
         return;
       }
       await syncCloud();
+      refreshEntitlements();
       renderSettings();
       toast('Signed in as ' + (r.email || email) + ' ☁', true);
     };
@@ -5173,8 +5406,63 @@ const App = (() => {
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, fallback);
       else fallback();
     };
-    const simRef = $('#btnSimRef');
-    if (simRef) simRef.onclick = () => applyReferralCode(myRef);
+    const forgot = $('#btnForgot');
+    if (forgot) forgot.onclick = async () => {
+      const email = ($('#accEmail') && $('#accEmail').value.trim()) || '';
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('Enter your email first, then tap Forgot password.', false);
+      const r = await SUPABASE.resetPassword(email);
+      if (!r.ok) return toast(r.msg, false);
+      const st = $('#accStatus');
+      if (st) st.textContent = 'Password reset email sent to ' + email + ' — open the link to choose a new password.';
+      toast('Reset email sent — check your inbox', true);
+    };
+    const changePass = $('#btnChangePass');
+    if (changePass) changePass.onclick = async () => {
+      const a = ($('#accNewPass') && $('#accNewPass').value) || '';
+      const b = ($('#accNewPass2') && $('#accNewPass2').value) || '';
+      if (a.length < 6) return toast('Password must be at least 6 characters', false);
+      if (a !== b) return toast('Passwords do not match', false);
+      const r = await SUPABASE.updatePassword(a);
+      if (!r.ok) return toast(r.msg, false);
+      if ($('#accNewPass')) $('#accNewPass').value = '';
+      if ($('#accNewPass2')) $('#accNewPass2').value = '';
+      toast('Password updated', true);
+    };
+    const reviewBtn = $('#btnReviewClaim');
+    if (reviewBtn) reviewBtn.onclick = async () => {
+      const name = ($('#revName') && $('#revName').value) || '';
+      const quote = ($('#revQuote') && $('#revQuote').value) || '';
+      const clean = (typeof ReviewReward !== 'undefined')
+        ? ReviewReward.normalizeClaim({ name, quote })
+        : { ok: name.trim().length >= 2 && quote.trim().length >= 40, name, quote };
+      if (!clean.ok) {
+        return toast(clean.reason === 'name' ? 'Add your name.' : 'Write a bit more — at least 40 characters.', false);
+      }
+      if (reviewBtn.disabled) return;
+      reviewBtn.disabled = true;
+      reviewBtn.textContent = 'Submitting…';
+      const r = await SUPABASE.claimReviewReward(clean.name, clean.quote);
+      reviewBtn.disabled = false;
+      reviewBtn.textContent = 'Submit review — claim 3 days of Pro+';
+      if (!r.ok) return toast(r.msg, false);
+      if (r.outcome === 'already-claimed') return toast('This account already claimed the review gift.', false);
+      if (r.outcome === 'already-paid') {
+        if (cloudProfile) cloudProfile.review_claimed_at = new Date().toISOString();
+        renderSettings();
+        return toast('Thanks — you are already on a paid plan. This claim is used.', true);
+      }
+      if (r.outcome === 'granted') {
+        if (r.until) PLANS.store.applyReviewProPlus(new Date(r.until).getTime());
+        if (cloudProfile) {
+          cloudProfile.review_claimed_at = new Date().toISOString();
+          cloudProfile.review_proplus_until = r.until;
+        }
+        refreshEntitlements();
+        renderSettings();
+        return toast('Review saved — 3 days of Pro+ are unlocked on this account.', true);
+      }
+      toast('Could not save the review. Try a longer testimonial.', false);
+    };
   }
 
   // ---------------- seed sample project on first run ----------------
@@ -5497,9 +5785,9 @@ const App = (() => {
   function openBrandPresets() {
     const c = current();
     if (!c) return toast('Open a project first', false);
-    if (!isPro()) {
+    if (!isProPlus()) {
       openPricing();
-      return toast('Reusable brand presets are a Pro feature 🔒', false);
+      return toast('Reusable brand presets are a Pro+ feature 🔒', false);
     }
     const render = () => {
       const currentPalette = DB.getPalette(c.site.palette) || DB.palettes[0] || { name: 'Default palette' };
@@ -5628,9 +5916,9 @@ const App = (() => {
       body: 'Design fully functioning, animated websites for your clients — from blank idea to a live link on the internet. Everything here is free to explore; Pro unlocks premium fonts, layouts, live-data widgets and unlimited projects.'
     },
     {
-      sel: '#tplGrid', icon: '🏠',
+      sel: '#dashTemplates', icon: '▤',
       title: 'Start from a template',
-      body: '17 client-ready templates — startups, weddings, cafés, law firms, podcasts, real estate and more. Hit ＋ Start to open one in the Designer, or 👁 Preview to see it live first.'
+      body: 'The catalog lives on Templates — startups, weddings, cafés, law firms, podcasts, real estate and more. Open it to Preview a look, then hit ＋ Start to take it into the Designer.'
     },
     {
       sel: '[data-view="designer"]', icon: '🎨',
@@ -5655,12 +5943,12 @@ const App = (() => {
     {
       sel: '#planPill', icon: '💎',
       title: 'Plans & referrals',
-      body: 'Free keeps the core tools. Pro (£9/mo) unlocks premium fonts, 6 extra layouts, 3 more databases, Data Widgets and unbranded exports. Pro+ (£19/mo) adds white-label client handoff documents. Refer a friend to earn 7 free Pro days — your code lives in Settings.'
+      body: 'Free keeps the core tools. Pro (£9/mo) unlocks premium fonts, 6 extra layouts, 3 more databases and Data Widgets. Pro+ (£19/mo) adds unbranded exports, reusable brand presets and a white-label client handoff. Refer a friend to earn 7 free Pro days — your code lives in Settings.'
     },
     {
       sel: null, icon: '🚀',
       title: 'Ready to build?',
-      body: 'Head to the AI Studio and describe your first client site — or pick a template on the Dashboard. Export, hand off or publish whenever you like from the Designer toolbar.'
+      body: 'Head to the AI Studio and describe your first client site — or pick a template from Templates. Export, hand off or publish whenever you like from the Designer toolbar.'
     }
   ];
   function startTour() {
@@ -5763,15 +6051,31 @@ const App = (() => {
     loadCustomPalettes();
     await hydrateBrandPresets();
     seed();
-    $('#btnNewProject').onclick = () => { switchView('dashboard'); $('#tplGrid').scrollIntoView({ behavior: 'smooth' }); };
+    $('#btnNewProject').onclick = () => switchView('templates');
     $('#btnAiGo').onclick = () => switchView('ai');
-    $('#btnUpgrade').onclick = openPricing;
+    const upgradeBtn = $('#btnUpgrade');
+    if (upgradeBtn) upgradeBtn.onclick = openPricing;
     const btnTour = $('#btnTour');
     if (btnTour) btnTour.onclick = startTour;
     renderPlanPill();
     $$('.nav-item').forEach((b) => b.onclick = () => switchView(b.dataset.view));
     $('#modalClose').onclick = closeModal;
     $('#modalBackdrop').onclick = (e) => { if (e.target === $('#modalBackdrop')) closeModal(); };
+    $('#modalBackdrop').addEventListener('keydown', trapModalTab);
+    if ($('#cmdInput')) $('#cmdInput').oninput = (e) => renderCmd(e.target.value);
+    if ($('#cmdScrim')) $('#cmdScrim').onclick = closeCmd;
+    if (window.matchMedia) {
+      const mq = window.matchMedia('(prefers-color-scheme: light)');
+      const onSys = () => { if (settings.theme === 'system') applyTheme(); };
+      if (mq.addEventListener) mq.addEventListener('change', onSys);
+      else if (mq.addListener) mq.addListener(onSys);
+    }
+    if (typeof PlanReceipt !== 'undefined' && PlanReceipt.isPaidReturn(location.search)) {
+      try { history.replaceState({}, '', location.pathname + (location.hash || '')); } catch (e) {}
+      syncCloud().then(() => {
+        toast(isPro() ? 'Payment received — plan unlocked' : 'Payment received — unlocking…', true);
+      }).catch(() => {});
+    }
     // ---- copilot chat bindings ----
     $('#chatClose').onclick = () => chatOpenPanel(false);
     $('#chatSend').onclick = chatSend;
@@ -5781,7 +6085,21 @@ const App = (() => {
       if (b) histUndo();
     });
     addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { closeModal(); chatOpenPanel(false); }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        cmdState.open ? closeCmd() : openCmd();
+        return;
+      }
+      if (cmdState.open) {
+        if (e.key === 'Escape') { e.preventDefault(); closeCmd(); return; }
+        if (e.key === 'ArrowDown') { e.preventDefault(); moveCmd(1); return; }
+        if (e.key === 'ArrowUp') { e.preventDefault(); moveCmd(-1); return; }
+        if (e.key === 'Enter') { e.preventDefault(); runCmd(); return; }
+      }
+      if (e.key === 'Escape') {
+        if (!$('#modalBackdrop').hidden) { closeModal(); e.preventDefault(); return; }
+        chatOpenPanel(false);
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && current()) {
         e.preventDefault();
         if (e.shiftKey) histRedo(); else histUndo();
@@ -5799,6 +6117,7 @@ const App = (() => {
     switchView('dashboard');
     // first visit: offer the 2-minute guided tour after the UI settles
     try { if (!localStorage.getItem(TOUR_KEY)) setTimeout(startTour, 700); } catch (e) {}
+    SUPABASE.ensureOfficial();
     // restore a persisted cloud session (if configured) and sync account
     // state (stable code + server-granted trial + streak) in the background
     SUPABASE.restoreSession().then((ok) => {
@@ -5814,15 +6133,16 @@ const App = (() => {
     console.log('%c◆ PallettAI Studio', 'color:#7c5cff;font-weight:bold;font-size:14px');
     // Best-effort flush of debounced IndexedDB writes when the window closes.
     window.addEventListener('pagehide', () => { try { AppStore.flush().catch(() => {}); } catch (e) {} });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) syncCloud();
+    });
 
     // ---- native desktop (Electron) menu bridge ----
     if (window.pallettai && typeof window.pallettai.onMenu === 'function') {
       window.pallettai.onMenu((action) => {
         if (action === 'save') { saveProjects(); try { AppStore.flush(); } catch (e) {} return; }
         if (action === 'new-project') {
-          switchView('dashboard');
-          const g = $('#tplGrid');
-          if (g) setTimeout(() => g.scrollIntoView({ behavior: 'smooth' }), 60);
+          switchView('templates');
           return;
         }
         const nav = $$('.nav-item').find((b) => b.dataset.view === action);

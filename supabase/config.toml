@@ -1,0 +1,6 @@
+# Only the webhook function is configured here. JWT is off because Stripe
+# calls this URL; apply_stripe_entitlement stays service_role-only.
+project_id = "fjahxichioccknszuxhb"
+
+[functions.stripe-webhook]
+verify_jwt = false

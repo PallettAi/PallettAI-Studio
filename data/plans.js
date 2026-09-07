@@ -40,22 +40,24 @@ const PLANS = {
         '3 extra online databases (CoinGecko, GitHub, Frankfurter + Wikipedia)',
         'Unlimited AI Studio generations',
         'AI image generation',
-        'Unbranded exports (no studio badge)',
-        'Reusable brand presets — save up to 12 visual systems across projects',
         'Priority support'
       ],
-      limits: { projects: Infinity, sectionsPerSite: Infinity, aiCredits: Infinity }
+      limits: { projects: Infinity, sectionsPerSite: Infinity, aiCredits: Infinity },
+      checkoutUrl: 'https://buy.stripe.com/fZu3co2pDesB7wyfWL2B20m'
     },
     {
       id: 'proplus', name: 'Pro+', price: 19, period: 'month', popular: false,
       tagline: 'For professionals delivering polished client work.',
       features: [
         'Everything in Pro',
+        'Unbranded exports (no studio badge)',
+        'Reusable brand presets — save up to 12 visual systems across projects',
         'White-label client handoff ZIP',
         'No PallettAI attribution in the hosting guide or brand kit',
         'A polished delivery pack for every client project'
       ],
-      limits: { projects: Infinity, sectionsPerSite: Infinity, aiCredits: Infinity }
+      limits: { projects: Infinity, sectionsPerSite: Infinity, aiCredits: Infinity },
+      checkoutUrl: 'https://buy.stripe.com/4gM4gsggtfwFcQS11R2B20l'
     }
   ],
 
@@ -86,6 +88,29 @@ const PLANS = {
   getPlan(id) {
     const normalized = this.normalizePlan(id);
     return this.plans.find((p) => p.id === normalized) || this.plans[0];
+  },
+  isStripePaymentLink(url) {
+    try {
+      const parsed = new URL(String(url || ''));
+      if (parsed.protocol !== 'https:') return false;
+      if (parsed.hostname !== 'buy.stripe.com') return false;
+      if (parsed.username || parsed.password) return false;
+      return /^\/[A-Za-z0-9]+$/.test(parsed.pathname);
+    } catch (_) {
+      return false;
+    }
+  },
+  getCheckoutUrl(planId) {
+    const url = (this.getPlan(planId) || {}).checkoutUrl;
+    return this.isStripePaymentLink(url) ? url : '';
+  },
+  checkoutUrlForAccount(planId, accountId) {
+    const base = this.getCheckoutUrl(planId);
+    const uid = String(accountId || '');
+    if (!base || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uid)) return '';
+    const parsed = new URL(base);
+    parsed.searchParams.set('client_reference_id', uid);
+    return parsed.toString();
   },
 
   // ---------- License keys ----------
@@ -119,6 +144,7 @@ const PLANS = {
         creditsSpends: [],  // ledger: refs + statuses for server-mirrored AI spends
         bonusCredits: 0,    // server-tracked bonus AI credits (daily streak rewards)
         trialProUntil: 0,   // free-plan users with earned Pro trial days (referrals)
+        reviewProPlusUntil: 0, // one-time testimonial gift (3 days of Pro+)
         refCode: null,      // this install's referral code, e.g. REF-XXXXXX
         referrals: [],      // redemption history
         updatedAt: Date.now()
@@ -177,7 +203,21 @@ const PLANS = {
         }
         return true;
       }
-      return (s.trialProUntil || 0) > Date.now();
+      return (s.trialProUntil || 0) > Date.now() || (s.reviewProPlusUntil || 0) > Date.now();
+    },
+    isProPlus() {
+      if ((this.load().reviewProPlusUntil || 0) > Date.now()) return true;
+      return this.isPro() && PLANS.isProPlus(this.load().plan);
+    },
+    applyReviewProPlus(untilMs) {
+      const s = this.load();
+      const t = Number(untilMs) || 0;
+      if (t > Date.now()) {
+        s.reviewProPlusUntil = Math.max(s.reviewProPlusUntil || 0, t);
+        s.updatedAt = Date.now();
+        this.save(s);
+      }
+      return s.reviewProPlusUntil || 0;
     },
     // Whole Pro days left on an earned trial (0 when on a paid plan or no trial)
     trialDaysLeft() {

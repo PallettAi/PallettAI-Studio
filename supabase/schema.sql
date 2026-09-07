@@ -5,6 +5,8 @@
 --
 -- HOW TO USE: open your Supabase project → SQL Editor →
 -- New query → paste this ENTIRE file → Run.
+-- If "Leave a review" says the function is missing, do not
+-- re-run this file. Run supabase/review-reward.sql alone.
 -- ============================================================
 
 -- ---------- 1. Profiles: one row per auth user ----------
@@ -239,6 +241,9 @@ create policy "owner sees own license" on public.licenses
 -- Account-bound entitlement state (synced to every device the user signs into)
 alter table public.profiles add column if not exists plan text not null default 'free';
 alter table public.profiles add column if not exists plan_expires_at timestamptz;
+alter table public.profiles add column if not exists stripe_customer_id text;
+alter table public.profiles add column if not exists stripe_subscription_id text;
+alter table public.profiles add column if not exists entitlement_source text;
 alter table public.profiles drop constraint if exists profiles_plan_check;
 update public.profiles set plan = 'proplus' where plan = 'agency';
 alter table public.profiles add constraint profiles_plan_check check (plan in ('free','pro','proplus'));
@@ -279,7 +284,10 @@ begin
   update public.licenses set owner_id = auth.uid(), activated_at = coalesce(activated_at, now())
   where id = v_lic.id;
 
-  update public.profiles set plan = v_lic.plan, plan_expires_at = v_lic.expires_at
+  update public.profiles set
+    plan = v_lic.plan,
+    plan_expires_at = v_lic.expires_at,
+    entitlement_source = 'license'
   where id = auth.uid();
 
   return jsonb_build_object('outcome', 'verified', 'plan', v_lic.plan, 'expiresAt', v_lic.expires_at);
@@ -702,7 +710,8 @@ begin
   v_unlimited :=
     (v_prof.plan in ('pro','proplus')
        and (v_prof.plan_expires_at is null or v_prof.plan_expires_at > now()))
-    or (v_prof.trial_expires_at is not null and v_prof.trial_expires_at > now());
+    or (v_prof.trial_expires_at is not null and v_prof.trial_expires_at > now())
+    or (v_prof.review_proplus_until is not null and v_prof.review_proplus_until > now());
 
   return jsonb_build_object(
     'ok', true,
@@ -821,3 +830,222 @@ revoke all on table
   public.wheel_spins, public.credit_spends
 from anon, public;
 revoke usage on schema public from anon;
+
+-- ============================================================
+-- PART 5 — Stripe entitlements (Payment Links → profiles)
+-- Webhook verifies the Stripe signature in Edge Function
+-- stripe-webhook, then this RPC writes the plan. Email is
+-- ignored: the account is client_reference_id or a stored
+-- Stripe customer/subscription id. Re-run is idempotent.
+-- ============================================================
+
+alter table public.profiles add column if not exists stripe_customer_id text;
+alter table public.profiles add column if not exists stripe_subscription_id text;
+alter table public.profiles add column if not exists entitlement_source text;
+alter table public.profiles add column if not exists billing_status text;
+alter table public.profiles add column if not exists billing_status_at timestamptz;
+alter table public.profiles add column if not exists last_stripe_event_type text;
+
+create unique index if not exists profiles_stripe_customer_id_uidx
+  on public.profiles (stripe_customer_id) where stripe_customer_id is not null;
+create unique index if not exists profiles_stripe_subscription_id_uidx
+  on public.profiles (stripe_subscription_id) where stripe_subscription_id is not null;
+
+create table if not exists public.stripe_events (
+  id text primary key,
+  type text not null default '',
+  outcome text,
+  created_at timestamptz not null default now()
+);
+alter table public.stripe_events enable row level security;
+
+create or replace function public.apply_stripe_entitlement(
+  p_event_id text,
+  p_event_type text,
+  p_paid boolean,
+  p_account_id uuid,
+  p_plan text,
+  p_customer_id text,
+  p_subscription_id text,
+  p_expires_at timestamptz
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_prof public.profiles%rowtype;
+  v_plan text;
+  v_event text := trim(coalesce(p_event_id, ''));
+begin
+  if length(v_event) < 4 then
+    return jsonb_build_object('outcome', 'bad-event');
+  end if;
+
+  insert into public.stripe_events (id, type)
+  values (v_event, coalesce(p_event_type, ''))
+  on conflict (id) do nothing;
+  if not found then
+    return jsonb_build_object('outcome', 'duplicate');
+  end if;
+
+  if p_account_id is not null then
+    select * into v_prof from public.profiles where id = p_account_id;
+  end if;
+  if v_prof.id is null and coalesce(p_subscription_id, '') <> '' then
+    select * into v_prof from public.profiles where stripe_subscription_id = p_subscription_id;
+  end if;
+  if v_prof.id is null and coalesce(p_customer_id, '') <> '' then
+    select * into v_prof from public.profiles where stripe_customer_id = p_customer_id;
+  end if;
+
+  if v_prof.id is null then
+    update public.stripe_events set outcome = 'no-account' where id = v_event;
+    return jsonb_build_object('outcome', 'no-account');
+  end if;
+
+  if p_paid then
+    v_plan := lower(trim(coalesce(p_plan, '')));
+    if v_plan not in ('pro', 'proplus') then
+      v_plan := case when v_prof.plan in ('pro', 'proplus') then v_prof.plan else '' end;
+    end if;
+    if v_plan not in ('pro', 'proplus') then
+      update public.stripe_events set outcome = 'bad-plan' where id = v_event;
+      return jsonb_build_object('outcome', 'bad-plan');
+    end if;
+
+    update public.profiles set
+      plan = v_plan,
+      plan_expires_at = coalesce(p_expires_at, plan_expires_at),
+      stripe_customer_id = coalesce(nullif(p_customer_id, ''), stripe_customer_id),
+      stripe_subscription_id = coalesce(nullif(p_subscription_id, ''), stripe_subscription_id),
+      entitlement_source = 'stripe',
+      billing_status = 'ok',
+      billing_status_at = now(),
+      last_stripe_event_type = coalesce(p_event_type, '')
+    where id = v_prof.id;
+
+    update public.stripe_events set outcome = 'granted' where id = v_event;
+    return jsonb_build_object('outcome', 'granted', 'plan', v_plan, 'accountId', v_prof.id);
+  end if;
+
+  if v_prof.entitlement_source = 'license' then
+    update public.stripe_events set outcome = 'kept-license' where id = v_event;
+    return jsonb_build_object('outcome', 'kept-license', 'accountId', v_prof.id);
+  end if;
+
+  if v_prof.entitlement_source = 'stripe'
+     or (coalesce(p_subscription_id, '') <> '' and v_prof.stripe_subscription_id = p_subscription_id) then
+    update public.profiles set
+      plan = 'free',
+      plan_expires_at = null,
+      stripe_subscription_id = null,
+      entitlement_source = null,
+      billing_status = case
+        when coalesce(p_event_type, '') ilike '%expired%' then 'expired'
+        when coalesce(p_event_type, '') ilike '%paused%' then 'paused'
+        when coalesce(p_event_type, '') ilike '%deleted%'
+          or coalesce(p_event_type, '') ilike '%canceled%' then 'canceled'
+        when coalesce(p_event_type, '') ilike '%action_required%' then 'action_required'
+        when coalesce(p_event_type, '') ilike '%failed%' then 'failed'
+        when coalesce(p_event_type, '') ilike '%unpaid%' then 'unpaid'
+        else 'past_due'
+      end,
+      billing_status_at = now(),
+      last_stripe_event_type = coalesce(p_event_type, '')
+    where id = v_prof.id;
+    update public.stripe_events set outcome = 'revoked' where id = v_event;
+    return jsonb_build_object('outcome', 'revoked', 'accountId', v_prof.id);
+  end if;
+
+  update public.stripe_events set outcome = 'ignored' where id = v_event;
+  return jsonb_build_object('outcome', 'ignored', 'accountId', v_prof.id);
+end $$;
+
+revoke all on function public.apply_stripe_entitlement(text, text, boolean, uuid, text, text, text, timestamptz)
+  from public, anon, authenticated;
+grant execute on function public.apply_stripe_entitlement(text, text, boolean, uuid, text, text, text, timestamptz)
+  to service_role;
+
+revoke all on table public.stripe_events from anon, public;
+
+-- ============================================================
+-- PART 6 — One-time review reward (3 days of Pro+)
+-- A signed-in account can leave one testimonial and receive
+-- three days of Pro+. The unique owner_id row is the lock:
+-- a second call cannot insert and cannot extend the gift.
+-- ============================================================
+
+alter table public.profiles add column if not exists review_proplus_until timestamptz;
+alter table public.profiles add column if not exists review_claimed_at timestamptz;
+
+create table if not exists public.review_rewards (
+  owner_id uuid primary key references auth.users (id) on delete cascade,
+  display_name text not null,
+  quote text not null,
+  created_at timestamptz not null default now()
+);
+alter table public.review_rewards enable row level security;
+
+drop policy if exists "own review reward" on public.review_rewards;
+create policy "own review reward" on public.review_rewards
+  for select using (auth.uid() = owner_id);
+
+create or replace function public.claim_review_reward(p_name text, p_quote text)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_name text := left(btrim(regexp_replace(coalesce(p_name, ''), '\s+', ' ', 'g')), 80);
+  v_quote text := left(btrim(regexp_replace(coalesce(p_quote, ''), '\s+', ' ', 'g')), 800);
+  v_prof public.profiles%rowtype;
+  v_until timestamptz;
+  v_paid boolean;
+begin
+  if auth.uid() is null then
+    return jsonb_build_object('outcome', 'not-signed-in');
+  end if;
+
+  perform pg_advisory_xact_lock(hashtext('pallettai.review:' || auth.uid()::text)::bigint);
+
+  if length(v_name) < 2 then
+    return jsonb_build_object('outcome', 'bad-input', 'reason', 'name');
+  end if;
+  if length(v_quote) < 40 then
+    return jsonb_build_object('outcome', 'bad-input', 'reason', 'quote');
+  end if;
+
+  select * into v_prof from public.profiles where id = auth.uid();
+  if v_prof.id is null then
+    return jsonb_build_object('outcome', 'no-account');
+  end if;
+
+  if v_prof.review_claimed_at is not null
+     or exists (select 1 from public.review_rewards where owner_id = auth.uid()) then
+    return jsonb_build_object('outcome', 'already-claimed');
+  end if;
+
+  insert into public.review_rewards (owner_id, display_name, quote)
+  values (auth.uid(), v_name, v_quote);
+
+  v_paid := v_prof.entitlement_source in ('stripe', 'license')
+    and v_prof.plan in ('pro', 'proplus')
+    and (v_prof.plan_expires_at is null or v_prof.plan_expires_at > now());
+
+  update public.profiles set review_claimed_at = now()
+  where id = auth.uid();
+
+  if v_paid then
+    return jsonb_build_object('outcome', 'already-paid', 'days', 0);
+  end if;
+
+  v_until := now() + interval '3 days';
+  update public.profiles set review_proplus_until = v_until
+  where id = auth.uid();
+
+  return jsonb_build_object('outcome', 'granted', 'days', 3, 'until', v_until);
+end $$;
+
+revoke all on function public.claim_review_reward(text, text) from public, anon;
+grant execute on function public.claim_review_reward(text, text) to authenticated;
+
+revoke all on table public.review_rewards from anon, public;
+grant select on table public.review_rewards to authenticated;
+
+notify pgrst, 'reload schema';
