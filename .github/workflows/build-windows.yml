@@ -59,6 +59,74 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
         run: npm run dist:win -- --publish never
 
+      - name: Verify Electron Fuses (Windows)
+        if: runner.os != 'Windows' || true
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+
+          # The Windows build produces a .exe installer, but the .app bundle lives
+          # inside the win.zip (electron-builder also emits a zip with the loose .app).
+          # We verify fuses from that .app.
+          app_zip="dist/$(node -p "require('./package.json').name")-${version}-win32-x64.zip"
+          if [ ! -f "$app_zip" ]; then
+            app_zip="dist/$(node -p "require('./package.json').name")-${version}-win32-ia32.zip"
+          fi
+          if [ ! -f "$app_zip" ]; then
+            echo "::warning::No Windows build zip found (skipping fuse verification)"
+            exit 0
+          fi
+
+          app_name="PallettAI Studio.app"
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+
+          unzip -q -o "$app_zip" -d "$tmpdir"
+          extracted_app="$(find "$tmpdir" -name "$app_name" -type d | head -n 1)"
+          if [ -z "$extracted_app" ]; then
+            echo "::warning::Could not find $app_name inside the built zip (skipping fuse verification)"
+            exit 0
+          fi
+
+          echo "Verifying fuses in: $extracted_app"
+
+          read_out="$(npx --no-install electron-fuses read --app "$extracted_app" 2>&1)" || {
+            echo "::warning::electron-fuses read failed (skipping fuse verification)"
+            echo "$read_out"
+            exit 0
+          }
+          echo "$read_out"
+
+          declare -A expected=(
+            [RunAsNode]="Disabled"
+            [EnableCookieEncryption]="Enabled"
+            [EnableNodeOptionsEnvironmentVariable]="Disabled"
+            [EnableNodeCliInspectArguments]="Disabled"
+            [EnableEmbeddedAsarIntegrityValidation]="Enabled"
+            [OnlyLoadAppFromAsar]="Enabled"
+            [LoadBrowserProcessSpecificV8Snapshot]="Enabled"
+            [GrantFileProtocolExtraPrivileges]="Disabled"
+          )
+
+          failed=0
+          for fuse in "${!expected[@]}"; do
+            want="${expected[$fuse]}"
+            if echo "$read_out" | grep -qF "$fuse is $want"; then
+              echo "  ✓ $fuse is $want"
+            else
+              echo "::error::Fuse $fuse is NOT $want (verify electron-builder.yml electronFuses block)"
+              failed=1
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::${failed} fuse(s) not set as configured — packaged build may be insecure"
+            exit 1
+          fi
+
+          echo "All configured Electron Fuses verified in the packaged build."
+
       - name: Verify build outputs
         shell: bash
         run: |

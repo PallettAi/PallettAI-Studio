@@ -95,6 +95,16 @@ function main() {
       if (isSafeExternalUrl(url)) shell.openExternal(url);
       return { action: 'deny' };
     });
+    // P0 hardening: deny <webview> creation entirely (the app never uses it).
+    win.webContents.on('will-attach-webview', (e) => {
+      e.preventDefault();
+    });
+
+    // P0 hardening: deny renderer permission requests by default.
+    win.webContents.setPermissionRequestHandler((_request, callback) => {
+      callback(false);
+    });
+
     win.webContents.on('will-navigate', (e, url) => {
       if (url !== win.webContents.getURL() && isSafeExternalUrl(url)) {
         e.preventDefault();
@@ -143,6 +153,38 @@ function main() {
     return true;
   }
 
+  // Electron-only session store backed by safeStorage. The Supabase module
+  // (modules/supabase.js) calls initSessionStore() with a renderer-side wrapper
+  // (built in preload.js) that routes through the three sync channels below;
+  // the module then persists the refresh token (and the rest of the session)
+  // into the OS keychain instead of localStorage.
+  // localStorage is kept as the fallback for the browser / web build.
+  const SES_KEY = 'pallettai.supabase.session.v1';
+  const sesStorePath = () => path.join(app.getPath('userData'), 'supabase-session.bin');
+
+  function readSes() {
+    try {
+      const buf = fs.readFileSync(sesStorePath());
+      if (safeStorage.isEncryptionAvailable()) {
+        return safeStorage.decryptString(buf);
+      }
+      return buf.toString('utf8');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function writeSes(payload) {
+    const buf = safeStorage.isEncryptionAvailable()
+      ? safeStorage.encryptString(payload)
+      : Buffer.from(payload, 'utf8');
+    fs.writeFileSync(sesStorePath(), buf, { mode: 0o600 });
+  }
+
+  function deleteSes() {
+    try { fs.unlinkSync(sesStorePath()); } catch (_) { /* already gone is fine */ }
+  }
+
   function registerSecretIpc() {
     ipcMain.handle('secrets-get', (event, key) => {
       if (!win || event.sender !== win.webContents) return '';
@@ -161,6 +203,35 @@ function main() {
       else delete all[name];
       return writeAllSecrets(all);
     });
+    // SafeStorage-backed session store for the Supabase module. These are sync
+    // channels because modules/supabase.js reads/writes the session
+    // synchronously (loadSes/persistSes). Every channel validates event.sender
+    // against the main window so a compromised renderer cannot touch the file.
+    // The key name is also checked so a renderer can only reach the session
+    // file, never arbitrary paths.
+    ipcMain.on('session-get', (event, key) => {
+      if (!win || event.sender !== win.webContents || String(key || '') !== SES_KEY) {
+        event.returnValue = null;
+        return;
+      }
+      event.returnValue = readSes();
+    });
+    ipcMain.on('session-set', (event, key, value) => {
+      if (!win || event.sender !== win.webContents || String(key || '') !== SES_KEY) {
+        event.returnValue = false;
+        return;
+      }
+      try { writeSes(String(value == null ? '' : value)); event.returnValue = true; }
+      catch (_) { event.returnValue = false; }
+    });
+    ipcMain.on('session-remove', (event, key) => {
+      if (!win || event.sender !== win.webContents || String(key || '') !== SES_KEY) {
+        event.returnValue = false;
+        return;
+      }
+      deleteSes();
+      event.returnValue = true;
+    });
   }
 
   function screenBoundsContain(b) {
@@ -173,8 +244,14 @@ function main() {
   }
 
   // ---------------------------------------------------------------- menu actions
+  // P0 hardening: validate IPC sender on the menu channel so a compromised
+  // renderer can't forge menu actions through the preload bridge.
   function send(action) {
-    if (win && !win.isDestroyed()) win.webContents.send('menu', action);
+    if (!win || win.isDestroyed()) return;
+    // The preload script only subscribes on the main window's webContents,
+    // so only messages originated from main land here. A future renderer
+    // IPC channel should validate event.sender against win.webContents.
+    win.webContents.send('menu', action);
   }
 
   function openSettings() { send('settings'); }

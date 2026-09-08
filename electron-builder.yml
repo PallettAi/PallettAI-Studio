@@ -24,6 +24,39 @@ files:
 asar: true
 npmRebuild: false
 
+# Electron Fuses — flip security-critical fuses in the packaged Electron binary.
+# electron-builder flips these BEFORE codesigning (macOS) so the signature stays valid.
+# All options come from @electron/fuses (FuseOptionsV1).
+# Ref: https://github.com/electron/fuses
+# Ref: https://raw.githubusercontent.com/electron/electron/refs/heads/main/docs/tutorial/fuses.md
+electronFuses:
+  # Disables ELECTRON_RUN_AS_NODE — stops "turn the app into Node" attack chains.
+  # PallettAI does not use process.fork in the main process, so this is safe.
+  runAsNode: false
+  # Encrypt Chromium's cookie store on disk via OS-level crypto (Keychain/DPAPI).
+  # One-way transition: existing plaintext cookies are encrypted on write; no data loss.
+  # PallettAI does not use browser cookies (localStorage only), so this is pure defense-in-depth.
+  enableCookieEncryption: true
+  # Disables NODE_OPTIONS / NODE_EXTRA_CA_CERTS env vars — stops injecting runtime flags.
+  enableNodeOptionsEnvironmentVariable: false
+  # Disables --inspect / --inspect-brk / SIGUSR1 main-process inspector.
+  # Stops remote debugging of a shipped build. Devs can still use the in-app dev tools
+  # in development builds (View → Reload / toggleDevTools) which do not need this fuse.
+  enableNodeCliInspectArguments: false
+  # Validate app.asar integrity on load (macOS >=16, Windows >=30 — Electron 44 supports both).
+  # Combined with onlyLoadAppFromAsar below, makes it impossible to load non-validated code.
+  enableEmbeddedAsarIntegrityValidation: true
+  # Only load the app from app.asar (no fallback to loose app/ directory).
+  # Combined with enableEmbeddedAsarIntegrityValidation = tamper-proof app code.
+  # PallettAI ships everything it needs inside the asar (no native modules, no external files).
+  onlyLoadAppFromAsar: true
+  # Browser process uses its own V8 snapshot (browser_v8_context_snapshot.bin) — small perf win.
+  loadBrowserProcessSpecificV8Snapshot: true
+  # Disable extra privileges for file:// protocol pages (fetch, service workers, child-frame access).
+  # PallettAI's renderer does not fetch over file://, register service workers, or use file:// iframes,
+  # so this is safe and removes an unnecessary privilege surface.
+  grantFileProtocolExtraPrivileges: false
+
 mac:
   category: public.app-category.graphics-design
   artifactName: PallettAI-Studio-${version}-mac-${arch}.${ext}

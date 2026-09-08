@@ -19,15 +19,37 @@ const SUPABASE = (() => {
   };
   const inflightReads = new Map();
 
+  // The refresh token (and, by extension, the whole session) is a bearer secret
+  // for the registry. In the Electron build it lives in safeStorage (OS-backed
+  // encryption — Keychain on macOS, DPAPI on Windows, libsecret on Linux) rather
+  // than in localStorage, so a local file-read or XSS-in-renderer cannot exfiltrate
+  // it. localStorage is still the storage medium in the browser / web build, where
+  // we have no safeStorage. The API below is the same shape either way.
+  let sesStore = null; // set by initSessionStore() — null means "use localStorage"
+
   function loadCfg() {
     try { return JSON.parse(localStorage.getItem(CFG_KEY) || 'null'); } catch (e) { return null; }
   }
   function loadSes() {
-    try { return JSON.parse(localStorage.getItem(SES_KEY) || 'null'); } catch (e) { return null; }
+    if (!sesStore) {
+      try { return JSON.parse(localStorage.getItem(SES_KEY) || 'null'); } catch (e) { return null; }
+    }
+    try {
+      const raw = sesStore.get(SES_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) { return null; }
   }
   function persistSes(s) {
-    if (s) localStorage.setItem(SES_KEY, JSON.stringify(s));
-    else localStorage.removeItem(SES_KEY);
+    if (!sesStore) {
+      if (s) localStorage.setItem(SES_KEY, JSON.stringify(s));
+      else localStorage.removeItem(SES_KEY);
+      return;
+    }
+    try {
+      if (s) sesStore.set(SES_KEY, JSON.stringify(s));
+      else sesStore.remove(SES_KEY);
+    } catch (e) { /* storage error is non-fatal — the session still lives in memory via loadSes() until the next persistence */ }
   }
 
   function base() {
@@ -527,6 +549,34 @@ const SUPABASE = (() => {
     }
     return { ok: false, msg: e.message || 'Cloud registry error.' };
   }
+
+  // Electron-only: swap the session storage backend from localStorage to
+  // safeStorage. Keep the localStorage key path as a web-mode fallback so the
+  // same module still works in a browser build. Call once, early, from preload
+  // (after contextIsolation is set up) or from main via a one-shot IPC.
+  //
+  // The store is per-process and OS-encrypted, so it survives a normal app
+  // restart but not a full uninstall / profile wipe (same lifecycle as the
+  // publish-secrets.bin path in main.js).
+  api.initSessionStore = function (store) {
+    if (!store || typeof store.get !== 'function' || typeof store.set !== 'function' || typeof store.remove !== 'function') {
+      return false;
+    }
+    sesStore = store;
+    // Migrate any session that already exists in localStorage into safeStorage,
+    // then clear the localStorage copy so the secret is not written twice.
+    try {
+      const existing = (typeof localStorage !== 'undefined' && localStorage.getItem(SES_KEY)) || null;
+      if (existing) {
+        try {
+          JSON.parse(existing); // validate shape quickly
+          sesStore.set(SES_KEY, existing);
+          if (typeof localStorage !== 'undefined') localStorage.removeItem(SES_KEY);
+        } catch (e) { /* unparseable leftover — leave it; safeStorage stays empty */ }
+      }
+    } catch (e) { /* localStorage may be unavailable in some contexts */ }
+    return true;
+  };
 
   return api;
 })();

@@ -2121,18 +2121,28 @@ const App = (() => {
     $('#modalDelNo').onclick = closeModal;
   }
 
+  // Shared empty-state hero: circular icon chip + title + explanation + actions.
+  function emptyStateHtml(o) {
+    return `<div class="empty-hero${o.compact ? ' compact' : ''}">
+      <div class="eh-ico" aria-hidden="true">${o.icon}</div>
+      <h3>${o.title}</h3>
+      ${o.desc ? `<p>${o.desc}</p>` : ''}
+      ${o.actions ? `<div class="eh-actions">${o.actions}</div>` : ''}
+    </div>`;
+  }
+
   // ---------------- designer ----------------
   let previewTimer = null;
   function renderDesigner() {
     const c = current();
     if (!c) {
-      $('#designerRoot').innerHTML = `
-        <div class="panel" style="grid-column:1/-1;align-items:center;padding:60px;text-align:center">
-          <div style="font-size:3rem">🎨</div>
-          <h3 style="margin:12px 0 6px;color:var(--text);letter-spacing:0;text-transform:none;font-size:1.2rem">No project open</h3>
-          <p style="color:var(--muted);margin-bottom:18px">Open a project from the dashboard to start designing.</p>
-          <button class="btn primary" onclick="App.go('dashboard')">Go to Dashboard</button>
-        </div>`;
+      $('#designerRoot').innerHTML = emptyStateHtml({
+        icon: '🎨',
+        title: 'No project open',
+        desc: 'Open a project from the dashboard to start designing — or generate a fresh site with AI and it opens straight in the Designer.',
+        actions: `<button class="btn primary" onclick="App.go('dashboard')">Go to Dashboard</button>
+                  <button class="btn ghost" onclick="App.go('ai')">✦ Generate with AI</button>`
+      });
       return;
     }
     const pal = DB.getPalette(c.site.palette);
@@ -3338,13 +3348,12 @@ const App = (() => {
     const c = current();
     const grid = $('#suitesGrid');
     if (!c) {
-      grid.innerHTML = `
-        <div class="panel" style="grid-column:1/-1;align-items:center;padding:60px;text-align:center">
-          <div style="font-size:3rem">🧩</div>
-          <h3 style="margin:12px 0 6px;color:var(--text);letter-spacing:0;text-transform:none;font-size:1.2rem">Open a project to install suites</h3>
-          <p style="color:var(--muted);margin-bottom:18px">Suites upgrade a finished site — blog, shop, animations, SEO and more.</p>
-          <button class="btn primary" onclick="App.go('dashboard')">Go to Dashboard</button>
-        </div>`;
+      grid.innerHTML = emptyStateHtml({
+        icon: '🧩',
+        title: 'Open a project to install suites',
+        desc: 'Suites upgrade a finished site — blog, shop, animations, SEO and more.',
+        actions: `<button class="btn primary" onclick="App.go('dashboard')">Go to Dashboard</button>`
+      });
       return;
     }
     grid.innerHTML = DB.suites.map((s) => {
@@ -3494,9 +3503,16 @@ const App = (() => {
         <div class="ai-result" id="aiResult" hidden></div>
       </div>
       <div class="ai-card">
-        <h3>Quick magic${c ? ' on “' + esc(c.site.name) + '”' : ''}</h3>
-        <p class="sub">Upgrade a finished site without touching the design.</p>
-        <div class="ai-actions">
+        ${c ? `
+        <h3>Quick magic${' on “' + esc(c.site.name) + '”'}</h3>
+        <p class="sub">Upgrade a finished site without touching the design.</p>`
+        : emptyStateHtml({
+            icon: '✨',
+            title: 'No project open',
+            desc: 'Quick magic upgrades an open site — photos, copy, restyle, translation. Generate a site above, or open one from the dashboard.',
+            actions: `<button class="btn primary" onclick="App.go('dashboard')">Go to Dashboard</button>`
+          })}
+        <div class="ai-actions"${c ? '' : ' hidden'}>
           <button class="btn ghost" id="aiImagesReal" ${c ? '' : 'disabled'}>📷 Topic-matched real photos <small>(1 credit)</small></button>
           <button class="btn ghost" id="aiImagesAi" ${c ? '' : 'disabled'}>🎨 AI-generated images <small>(1 credit)</small></button>
           <button class="btn ghost" id="aiPickBtn" ${c ? '' : 'disabled'}>🖼 Pick & choose photos <small>(1 credit)</small></button>
@@ -3514,7 +3530,7 @@ const App = (() => {
             <p class="ai-key-note">Once a DeepL API key is set on the registry, signed-in translates use DeepL. Until then, MyMemory runs with no key. <a href="https://www.deepl.com/pro-api" target="_blank" rel="noopener">Get a DeepL API key</a></p>
           </div>
         </div>
-        <div class="ai-quick">
+        <div class="ai-quick"${c ? '' : ' hidden'}>
           <h4 style="font-size:.8rem;color:var(--muted);margin:14px 0 4px">Starter prompts</h4>
           <ul id="aiQuickList"></ul>
         </div>
@@ -4870,10 +4886,12 @@ const App = (() => {
         clearTimeout(iconTimer);
         iconSearchSerial++;
         if (iconSearchController) { try { iconSearchController.abort(); } catch (e) {} iconSearchController = null; }
-        $('#dbList').innerHTML = q ? '<div class="empty-state">Type at least 2 characters to search Iconify.</div>' : '<div class="empty-state">Search 100k+ free icons from Iconify — try “coffee”, “rocket”, “heart”, “leaf”…</div>';
+        $('#dbList').innerHTML = q
+          ? emptyStateHtml({ icon: '🔍', title: 'Almost there', desc: 'Type at least 2 characters to search Iconify.' })
+          : emptyStateHtml({ icon: '🔎', title: 'Search 100k+ free icons', desc: 'Iconify is one search away — try “coffee”, “rocket”, “heart” or “leaf” and click an icon to set it as a section emblem.', compact: true });
         return;
       }
-      $('#dbList').innerHTML = '<div class="empty-state">Searching Iconify…</div>';
+      $('#dbList').innerHTML = emptyStateHtml({ icon: '⏳', title: 'Searching Iconify…', compact: true });
       clearTimeout(iconTimer);
       const serial = ++iconSearchSerial;
       if (iconSearchController) { try { iconSearchController.abort(); } catch (e) {} }
@@ -4888,7 +4906,7 @@ const App = (() => {
           if (serial !== iconSearchSerial) return;
           const icons = (data.icons || []).slice(0, 48);
           if (!icons.length) {
-            $('#dbList').innerHTML = '<div class="empty-state">No icons match “' + esc(q) + '”. Try another word.</div>';
+            $('#dbList').innerHTML = emptyStateHtml({ icon: '🫥', title: 'No icons match “' + esc(q) + '”', desc: 'Try a simpler word — “shop”, “food”, “star” — or browse a synonym.', compact: true });
             return;
           }
           $('#dbList').innerHTML = `
@@ -4901,7 +4919,7 @@ const App = (() => {
 
         } catch (e) {
           if (serial !== iconSearchSerial || (e && e.code === 'request_cancelled')) return;
-          $('#dbList').innerHTML = '<div class="empty-state">Iconify is unreachable — check your connection.</div>';
+          $('#dbList').innerHTML = emptyStateHtml({ icon: '📡', title: 'Iconify is unreachable', desc: 'Check your connection and try again — your library is unaffected.', compact: true });
         } finally {
           if (iconSearchController === controller) iconSearchController = null;
         }
@@ -4967,7 +4985,7 @@ const App = (() => {
         </div>`);
       });
     }
-    $('#dbList').innerHTML = items.join('') || '<div class="empty-state">No matches in the library.</div>';
+    $('#dbList').innerHTML = items.join('') || emptyStateHtml({ icon: '🗂', title: 'No matches in the library', desc: 'Try a shorter search — or browse the tabs above for the full collection.', compact: true });
 
     if (dbTab === 'palettes') {
       // WCAG contrast badges on every palette card
@@ -6361,6 +6379,16 @@ const App = (() => {
     // first visit: offer the 2-minute guided tour after the UI settles
     try { if (!localStorage.getItem(TOUR_KEY)) setTimeout(startTour, 700); } catch (e) {}
     SUPABASE.ensureOfficial();
+    // Electron-only: move the Supabase session (refresh token) out of
+    // localStorage and into the OS keystore via safeStorage. The browser build
+    // has no preload, so window.pallettai is absent and the module keeps using
+    // localStorage (no behavior change there).
+    try {
+      if (window.pallettai && typeof window.pallettai.sessionStore === 'function') {
+        const store = window.pallettai.sessionStore();
+        if (store) SUPABASE.initSessionStore(store);
+      }
+    } catch (e) { /* browser build, or preload not ready — keep localStorage */ }
     // restore a persisted cloud session (if configured) and sync account
     // state (stable code + server-granted trial + streak) in the background
     SUPABASE.restoreSession().then((ok) => {

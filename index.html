@@ -15,13 +15,41 @@
   - Remote <script> is still denied except the three analytics/chat hosts a
     generated site itself may embed; eval/Function-constructor usage is
     denied (verified: the codebase uses none).
-  - img/connect/https and frame-src https: are intentionally broad because
-    this is a design tool: users insert arbitrary remote images, study
-    arbitrary sites, configure arbitrary Supabase projects / form endpoints,
-    and embed arbitrary booking/video pages. object-src 'none' plus the
-    script restrictions are where the real hardening lives.
+  - img-src and connect-src are fully enumerated to the hosts the app's own
+    widgets actually use — no bare `https:` fallback. Before adding a new
+    online widget, add its host here or the preview breaks (test in web
+    mode: `npm run web`). connect-src hosts: picsum, randomuser, quotable,
+    coingecko, github, frankfurter, wikipedia, open-meteo, geocoding-open-
+    meteo, iconify, mymemory, pollinations (image+text), commons wikimedia,
+    openverse, pixabay, allorigins (CORS proxy), netlify, neocities, plus
+    `https://*.supabase.co` for the user-configured Supabase project (the
+    core cloud registry feature). Self-hosted Supabase on a custom domain
+    is an uncatched edge case — a such a user would see "registry
+    unreachable".
+  - connect-src has NO `https:` fallback on purpose. The only renderer
+    activity that would need it is a site's own *Custom JS* (advanced)
+    making a `fetch()` to a host the app doesn't know about — that fetch is
+    blocked in preview by the CSP (the live site, served by the owner with
+    their own CSP, is unaffected). Every other fetch the app does is to one
+    of the enumerated widget hosts above. If you add a new widget that
+    fetches from a new host, add it here or the preview breaks.
+  - frame-src allows the embed providers the app generates itself
+    (google/maps, youtube, vimeo, spotify, calendly, coverr) PLUS bare
+    https: for the Universal Embed / booking sections, where the USER pastes
+    an arbitrary HTTPS embed URL that no policy can enumerate. Dropping the
+    https: fallback there would break a core feature; the real iframe
+    hardening is object-src 'none' + script-src (an embedded page's own
+    script is gated by its own host CSP once served live).
+  - form-action 'self' https: is intentionally broad: exported sites POST
+    contact forms to endpoints the SITE OWNER chooses (Formspree, Web3Forms,
+    a custom webhook) — the owner's server, not ours. Keep it broad so a
+    user-chosen endpoint always works; the owner is responsible for their
+    own endpoint's abuse surface.
+  - media-src allows coverr.co because the Video section can emit a direct
+    <video src> to a coverr.co/s3/mp4/... clip. Non-Coverr video URLs are
+    not rendered as <video> by the builder, so they need no allowance here.
 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://plausible.io https://www.googletagmanager.com https://embed.tawk.to; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; media-src 'self' data: blob: https:; connect-src 'self' https:; frame-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self' https:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://plausible.io https://www.googletagmanager.com https://embed.tawk.to; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https://picsum.photos https://i.pravatar.cc https://api.dicebear.com https://api.iconify.design https://image.pollinations.ai https://loremflickr.com https://upload.wikimedia.org; font-src 'self' data: https://fonts.gstatic.com; media-src 'self' data: blob: https://coverr.co; connect-src 'self' https://picsum.photos https://randomuser.me https://api.quotable.io https://api.coingecko.com https://api.github.com https://api.frankfurter.app https://en.wikipedia.org https://api.open-meteo.com https://geocoding-api.open-meteo.com https://api.iconify.design https://api.mymemory.translated.net https://image.pollinations.ai https://text.pollinations.ai https://commons.wikimedia.org https://api.openverse.org https://pixabay.com https://api.allorigins.win https://api.netlify.com https://neocities.org https://*.supabase.co; frame-src 'self' https://www.google.com https://maps.google.com https://player.vimeo.com https://www.youtube.com https://open.spotify.com https://calendly.com https://coverr.co https:; object-src 'none'; base-uri 'self'; form-action 'self' https:">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'><defs><linearGradient id='g' x1='0' y1='1' x2='1' y2='0'><stop stop-color='%23a06bff'/><stop offset='1' stop-color='%23e0c7ff'/></linearGradient></defs><path d='M14 40c5-14 9-14 14 0s9 14 14 0 9-14 14 0' stroke='url(%23g)' stroke-width='4' stroke-linecap='round'/><path d='M20 52V13h14c10 0 16 6 16 15s-6 15-16 15h-7' stroke='%23ffffff' stroke-width='5.5' stroke-linejoin='round'/><circle cx='14' cy='52' r='2.5' fill='%23a06bff'/><circle cx='56' cy='52' r='2.5' fill='%23e0c7ff'/></svg>">
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -37,7 +65,7 @@
     </div>
 
     <nav class="side-nav" id="sideNav">
-      <button class="nav-item active" data-view="dashboard"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.4 9.2 10 3.6l6.6 5.6V16a1 1 0 0 1-1 1h-3.5v-4.3H7.9V17H4.4a1 1 0 0 1-1-1V9.2z"/></svg></span>Dashboard</button>
+      <button class="nav-item nav-home-btn active" data-view="dashboard" title="Home" aria-label="Home"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.4 9.2 10 3.6l6.6 5.6V16a1 1 0 0 1-1 1h-3.5v-4.3H7.9V17H4.4a1 1 0 0 1-1-1V9.2z"/></svg></span>Dashboard</button>
       <button class="nav-item" data-view="templates"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1.1"/><rect x="11.2" y="3.2" width="5.6" height="5.6" rx="1.1"/><rect x="3.2" y="11.2" width="5.6" height="5.6" rx="1.1"/><rect x="11.2" y="11.2" width="5.6" height="5.6" rx="1.1"/></svg></span>Templates</button>
       <button class="nav-item" data-view="designer"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.8 13.2 5.6a1.5 1.5 0 0 1 2.1 0l.1.1a1.5 1.5 0 0 1 0 2.1L6.2 17H4v-2.2z"/><path d="M12.2 6.6l2.2 2.2"/></svg></span>Designer</button>
       <button class="nav-item" data-view="ai"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 2.2 11.1 7 16 8.1 11.1 9.2 10 14l-1.1-4.8L4 8.1 8.9 7 10 2.2zm5.4 9.2.7 2.4 2.4.7-2.4.7-.7 2.4-.7-2.4-2.4-.7 2.4-.7.7-2.4z"/></svg></span>AI Studio</button>

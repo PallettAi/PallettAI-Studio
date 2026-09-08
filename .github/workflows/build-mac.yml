@@ -51,7 +51,7 @@ jobs:
           set -euo pipefail
           for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
             if [ -z "${!name:-}" ]; then
-              echo "Missing required Actions secret: $name"
+              echo "::error::Missing required Actions secret: $name"
               exit 1
             fi
           done
@@ -86,6 +86,78 @@ jobs:
             }
           done
           echo "Built PallettAI Studio ${version} for arm64 and x64; updater manifest matches artifacts"
+
+      - name: Verify Electron Fuses (macOS)
+        if: runner.os != 'macOS' || true
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+
+          # Find the .app inside the built .zip (handles arm64 vs x64 zip name).
+          app_zip="dist/PallettAI-Studio-${version}-mac-arm64.zip"
+          if [ ! -f "$app_zip" ]; then
+            app_zip="dist/PallettAI-Studio-${version}-mac-x64.zip"
+          fi
+          if [ ! -f "$app_zip" ]; then
+            echo "::error::No macOS build zip found (arm64 nor x64)"
+            exit 1
+          fi
+
+          app_name="PallettAI Studio.app"
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+
+          unzip -q -o "$app_zip" -d "$tmpdir"
+          extracted_app="$(find "$tmpdir" -name "$app_name" -type d | head -n 1)"
+          if [ -z "$extracted_app" ]; then
+            echo "::error::Could not find $app_name inside the built zip"
+            exit 1
+          fi
+
+          echo "Verifying fuses in: $extracted_app"
+
+          # electron-fuses read prints one line per fuse, e.g.
+          #   "  RunAsNode is Disabled"
+          #   "  EnableCookieEncryption is Enabled"
+          #   ... (plus a cosmetic "  undefined is Enabled" for any unset key)
+          read_out="$(npx --no-install electron-fuses read --app "$extracted_app" 2>&1)" || {
+            echo "::error::electron-fuses read failed"
+            echo "$read_out"
+            exit 1
+          }
+          echo "$read_out"
+
+          # The 8 fuses we configured in electron-builder.yml (electronFuses block).
+          # Each must appear as "<Label> is <Enabled/Disabled>" in the read output.
+          declare -A expected=(
+            [RunAsNode]="Disabled"
+            [EnableCookieEncryption]="Enabled"
+            [EnableNodeOptionsEnvironmentVariable]="Disabled"
+            [EnableNodeCliInspectArguments]="Disabled"
+            [EnableEmbeddedAsarIntegrityValidation]="Enabled"
+            [OnlyLoadAppFromAsar]="Enabled"
+            [LoadBrowserProcessSpecificV8Snapshot]="Enabled"
+            [GrantFileProtocolExtraPrivileges]="Disabled"
+          )
+
+          failed=0
+          for fuse in "${!expected[@]}"; do
+            want="${expected[$fuse]}"
+            if echo "$read_out" | grep -qF "$fuse is $want"; then
+              echo "  ✓ $fuse is $want"
+            else
+              echo "::error::Fuse $fuse is NOT $want (verify electron-builder.yml electronFuses block)"
+              failed=1
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::${failed} fuse(s) not set as configured — packaged build may be insecure"
+            exit 1
+          fi
+
+          echo "All configured Electron Fuses verified in the packaged build."
 
       - name: Create stable download aliases
         shell: bash

@@ -428,6 +428,8 @@ body.light .bw-ai{background:linear-gradient(92deg,#7c3aed 0%,#a855f7 60%,#c084f
 .ai-result{background:var(--surface2);border:1px solid var(--primary);border-radius:12px;padding:14px 16px;font-size:.86rem;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .ai-result .btn{margin-left:auto}
 .ai-actions{display:flex;flex-direction:column;gap:10px}
+.ai-actions[hidden]{display:none}
+.ai-quick[hidden]{display:none}
 .ai-actions .btn{justify-content:center}
 .ai-quick li{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:.82rem;color:var(--muted);padding:9px 0;border-bottom:1px solid var(--border)}
 .ai-quick li:last-child{border-bottom:none}
@@ -1160,7 +1162,82 @@ body.light .toast{background:rgba(255,255,255,.94)}
   .db-tabs,.settings-tabs{width:100%;overflow-x:auto}
   .core-tools{margin-bottom:28px}
 }
+/* ---------- Empty states ----------
+   Shared hero for "nothing here yet" moments: circular icon chip (the
+   sidebar's chip language), title, one-line explanation, actions. */
+.empty-hero{
+  grid-column:1/-1;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;
+  padding:64px 28px;
+  border:1px dashed rgba(194,150,255,.22);
+  border-radius:16px;
+  background:linear-gradient(145deg,rgba(255,255,255,.03),rgba(255,255,255,.008) 60%),rgba(15,12,23,.6);
+}
+.empty-hero .eh-ico{
+  width:56px;height:56px;
+  display:inline-flex;align-items:center;justify-content:center;
+  border-radius:50%;
+  background:rgba(124,92,255,.16);
+  border:1px solid rgba(192,132,252,.3);
+  box-shadow:0 0 18px rgba(139,92,246,.16),inset 0 1px 0 rgba(255,255,255,.1);
+  font-size:1.5rem;line-height:1;
+  margin-bottom:16px;
+}
+.empty-hero h3{margin:0 0 8px;font-size:1.05rem;font-weight:750;letter-spacing:-.02em;color:var(--text)}
+.empty-hero p{margin:0 0 18px;max-width:420px;font-size:.86rem;line-height:1.55;color:var(--muted)}
+.empty-hero .eh-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.empty-hero.compact{padding:36px 22px}
+.empty-hero.compact .eh-ico{width:44px;height:44px;font-size:1.15rem;margin-bottom:12px}
+.empty-hero.compact h3{font-size:.95rem}
+.empty-hero.compact p{margin-bottom:0}
+body.light .empty-hero{
+  border-color:rgba(124,92,255,.25);
+  background:linear-gradient(145deg,rgba(255,255,255,.85),rgba(248,245,253,.6));
+}
+body.light .empty-hero .eh-ico{
+  background:rgba(124,92,255,.1);
+  border-color:rgba(124,92,255,.28);
+  box-shadow:0 0 14px rgba(109,40,217,.08);
+}
+body.light .empty-hero p{color:#5b5470}
+
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important;scroll-behavior:auto!important}
 }
-CSS
+
+/* ---------- Sidebar nav: circular icon chips ----------
+   Every nav row now uses the home-button design: a transparent
+   circular chip around the icon plus a plain text label, so the home
+   row no longer stands out. Active = tinted ring on the chip rather
+   than a full gradient pill. */
+.nav-item .nav-ico{
+  width:32px;height:32px;
+  border:1px solid transparent;
+  border-radius:50%;
+  background:transparent;
+}
+.nav-item:hover{background:transparent;transform:none;border-color:transparent}
+.nav-item:hover .nav-ico{
+  background:rgba(168,85,247,.14);
+  border-color:rgba(192,132,252,.28);
+}
+.nav-item.active{background:transparent;box-shadow:none;color:#fff;border-color:transparent}
+.nav-item.active .nav-ico{
+  background:rgba(124,92,255,.2);
+  border-color:rgba(192,132,252,.45);
+  box-shadow:0 0 14px rgba(139,92,246,.22),inset 0 1px 0 rgba(255,255,255,.14);
+}
+body.light .nav-item:hover .nav-ico{
+  background:rgba(124,92,255,.1);
+  border-color:rgba(124,92,255,.3);
+}
+body.light .nav-item.active{color:#3d2a63}
+body.light .nav-item.active .nav-ico{
+  background:rgba(124,92,255,.16);
+  border-color:rgba(124,92,255,.42);
+  box-shadow:0 0 12px rgba(109,40,217,.15);
+}
+@media(max-width:760px){
+  .nav-item .nav-ico{width:28px;height:28px}
+}

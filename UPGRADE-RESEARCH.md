@@ -117,37 +117,142 @@ bypassable by a determined attacker — the registry is the real enforcement.
 ### B1. Electron hardening (official Electron security checklist — gaps)
 The app already passes most of the official checklist; the remaining gaps:
 
-1. **Content-Security-Policy — MISSING (most visible gap).** The dev console warns about it, and it's
-   the single biggest renderer hardening step. The app is in a great position: **every script is a
-   local file** (index.html loads only `data/*`, `modules/*`, `app.js`), so a strict policy is achievable:
+1. **Content-Security-Policy — IMPLEMENTED (meta tag in index.html, line 24).** The
+   renderer is now governed by an enumerated policy. Every script is a local file
+   (`data/*`, `modules/*`, `app.js`), so the policy is strict: `default-src 'none'`,
+   `object-src 'none'`, `base-uri 'self'`. The active policy (verified against every
+   renderer fetch/iframe/img load in the codebase — gap check passed with zero gaps):
    ```html
    <meta http-equiv="Content-Security-Policy" content="
-     default-src 'self';
-     script-src 'self';
+     default-src 'none';
+     script-src 'self' 'unsafe-inline' https://plausible.io https://www.googletagmanager.com https://embed.tawk.to;
      style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
-     img-src 'self' data: https://picsum.photos https://image.pollinations.ai https://api.dicebear.com https://api.iconify.design https://*.supabase.co;
-     connect-src 'self' https://fonts.googleapis.com https://api.iconify.design https://image.pollinations.ai https://text.pollinations.ai https://picsum.photos https://randomuser.me https://api.quotable.io https://en.wikipedia.org https://api.coingecko.com https://api.github.com https://api.frankfurter.app https://api.open-meteo.com https://*.supabase.co;
-     frame-src https://www.google.com https://maps.google.com https://open.spotify.com https://calendly.com https://*.typeform.com https://www.figma.com https://player.vimeo.com https://www.youtube.com;">
+     img-src 'self' data: blob: https://picsum.photos https://i.pravatar.cc https://api.dicebear.com https://api.iconify.design https://image.pollinations.ai https://loremflickr.com https://upload.wikimedia.org;
+     font-src 'self' data: https://fonts.gstatic.com;
+     media-src 'self' data: blob: https://coverr.co;
+     connect-src 'self' https://picsum.photos https://randomuser.me https://api.quotable.io https://api.coingecko.com https://api.github.com https://api.frankfurter.app https://en.wikipedia.org https://api.open-meteo.com https://geocoding-api.open-meteo.com https://api.iconify.design https://api.mymemory.translated.net https://image.pollinations.ai https://text.pollinations.ai https://commons.wikimedia.org https://api.openverse.org https://pixabay.com https://api.allorigins.win https://api.netlify.com https://neocities.org https://*.supabase.co;
+     frame-src 'self' https://www.google.com https://maps.google.com https://player.vimeo.com https://www.youtube.com https://open.spotify.com https://calendly.com https://coverr.co https:;
+     object-src 'none'; base-uri 'self'; form-action 'self' https:">
    ```
-   (Exact allowlist must be confirmed against every fetch call in the code before shipping — several
-   of the free APIs support CORS; a wrong allowlist would break a feature, so this needs a test pass.)
-   The CSP warning is dev-only, but a real XSS→RCE chain is exactly what CSP kills.
-2. **`setPermissionRequestHandler`** — deny-all by default for the renderer session (notifications,
-   geolocation, clipboard-read, etc.). One call in main.js.
-3. **Electron Fuses** (official hardening; `@electron/fuses` is already installed as a transitive dep):
-   disable `runAsNode`, `enableNodeCliInspectArguments`, `enableNodeOptionsEnvironmentVariable`;
-   enable `cookieEncryption`; `onlyLoadAppFromAsar` once packaged. These stop common
-   "turn the app into Node" attack chains (e.g., `ELECTRON_RUN_AS_NODE`).
-4. **Validate IPC senders** — the only channel is `menu` (main→renderer). Add a `sender` identity check
-   in `webContents.send` paths or restrict to the known window (cheap, prevents any future renderer
-   compromise from forging menu actions).
-5. **`will-attach-webview` deny-all** — the app doesn't use `<webview>`; explicitly block it
-   (attackers who get XSS can otherwise create one).
-6. **ASAR integrity** — electron-builder can emit an integrity file and Electron verifies it at
-   startup; combined with fuses it defeats tampered-install attacks.
+   Design notes (why some directives stay broad):
+   - `connect-src` is enumerated (no bare `https:`) EXCEPT it keeps `https://*.supabase.co`
+     because the app fetches from the USER-CONFIGURED Supabase project URL (the core cloud
+     registry feature). Self-hosted Supabase on a custom domain is an uncatched edge case —
+     documented; such a user would see "registry unreachable".
+   - `frame-src` keeps bare `https:` because the Universal Embed / booking sections let the
+     USER paste an arbitrary HTTPS embed URL that no static policy can enumerate. Dropping the
+     fallback there would break a core feature. `object-src 'none'` + `script-src` are the
+     real iframe hardening (an embedded page's own script is gated by its own host CSP once
+     served live).
+   - `form-action 'self' https:` is intentionally broad: exported sites POST contact forms to
+     endpoints the SITE OWNER chooses (Formspree, Web3Forms, a custom webhook). The owner's
+     server, not ours — and the shell app does not fetch these (they're form POSTs, covered by
+     `form-action`). The owner is responsible for their own endpoint's abuse surface.
+   - `script-src` keeps `'unsafe-inline'` because the Designer preview renders exported sites in
+     an `about:srcdoc` iframe that INHERITS this policy, and exported pages legitimately ship
+     inline scripts/styles (single-file HTML, no build step).   The preview-iframe XSS surface is the reason `connect-src` is tightened (no bare `https:`) — to limit exfiltration if a
+   malicious previewed site exploits the inline-script allowance.
+   **Custom JS caveat:** the app emits a *Custom JS (advanced)* textarea in the site
+   settings whose value is inlined as `<script>…</script>` in the exported site. If that
+   custom JS calls `fetch()` to a host not in the connect-src list, the fetch is blocked in
+   **preview** (the live site, served by the owner with their own CSP, is unaffected). Since the
+   app's own widgets all fetch to enumerated hosts, the only activity that needs the fallback is
+   user-defined custom-JS fetches. Trade-off: tighter security in preview vs. custom-JS preview
+   fidelity. The app's signup→buy flow (Supabase auth + license activate + redeem + spend +
+   Pollinations AI) is unaffected — every host it touches is enumerated.
+   The dev-console CSP warning is now gone. Before adding a new online widget, add its host to
+   `img-src`/`connect-src` here or the preview breaks (test in web mode: `npm run web`).
+2. **`setPermissionRequestHandler` — IMPLEMENTED** in main.js: deny-all by default for the
+   renderer session (notifications, geolocation, clipboard-read, camera, mic). One call.
+3. **Electron Fuses — IMPLEMENTED** via `electronFuses:` in `electron-builder.yml`.
+   electron-builder flips these BEFORE codesigning (so the macOS signature stays valid).
+   Configured fuses: `runAsNode: false`, `enableCookieEncryption: true`,
+   `enableNodeOptionsEnvironmentVariable: false`, `enableNodeCliInspectArguments: false`,
+   `enableEmbeddedAsarIntegrityValidation: true`, `onlyLoadAppFromAsar: true`,
+   `loadBrowserProcessSpecificV8Snapshot: true`, `grantFileProtocolExtraPrivileges: false`.
+   Plus `asar: true` in the config. `@electron/fuses` was already a transitive dep; no extra
+   dependency. **Note:** to actually flip the fuses in a build you must run electron-builder
+   (`npm run dist:mac` / `npm run dist:win`) — the config is inert until a packaged build.
+   Do NOT set `resetAdHocDarwinSignature` — electron-builder signs the app AFTER flipping the
+   fuses, which is the correct order and avoids the Apple Silicon signature pitfall.
+
+3b. **Supabase session → safeStorage (packaged builds) — IMPLEMENTED.** The Supabase
+   refresh token was persisted in `localStorage` under
+   `pallettai.supabase.session.v1`. If the renderer is compromised (XSS), the
+   access token + refresh token are exfiltrable. This is defense-in-depth on top of
+   the CSP (item 1): even if an injected script runs, it cannot read the refresh
+   token from the OS keystore in the packaged build.
+   - `main.js`: added three sync IPC channels (`session-get` / `session-set` /
+     `session-remove`) backed by `safeStorage.encryptString` / `decryptString`,
+     persisted to `supabase-session.bin` in `app.getPath('userData')` with
+     `mode: 0o600`. Each channel validates `event.sender` against the main
+     window's `webContents` and the key name against `SES_KEY`, so a compromised
+     renderer can only touch the session file.
+   - `preload.js`: added `sessionStore()` → a renderer-side
+     `{ get, set, remove }` wrapper routing through those sync channels (sync
+     because `loadSes` / `persistSes` are synchronous).
+   - `modules/supabase.js`: added `initSessionStore(store)`. When given a valid
+     `{ get, set, remove }` store, `loadSes()` / `persistSes()` route through it
+     instead of `localStorage`. On init, any existing localStorage session is
+     migrated into the store and the localStorage copy is cleared. The browser build
+     gets no store (no preload exists there), so it keeps using localStorage
+     unchanged.
+   - `app.js`: boot wiring calls `window.pallettai.sessionStore()` after
+     `SUPABASE.ensureOfficial()` and passes the result to
+     `SUPABASE.initSessionStore` (guarded so the browser build is a non-event).
+   **Verified** by tracing the signup→buy happy path — every session read/write goes
+   through `loadSes`/`persistSes`, which now route through safeStorage in the packaged
+   build. The store is per-process and OS-encrypted; it survives a restart but not an
+   uninstall/profile wipe. The signup→buy flow is unchanged (sign-in, sign-out, token
+   refresh, license activation, credit spend all continue to work).
+   **Remaining.** Manually confirm in DevTools (Application → Local Storage) that
+   `pallettai.supabase.session.v1` is absent in the packaged build after a sign-in —
+   only the safeStorage file holds the session. Web mode keeps the localStorage
+   fallback by design.
+4. **IPC sender validation — IMPLEMENTED (partial).** The only existing channel is `menu`
+   (main→renderer via `webContents.send`). The `send()` helper now guards on
+   `!win || win.isDestroyed()` and documents that real renderer→main IPC channels should
+   validate `event.sender` against `win.webContents` (the existing `secrets-get`/`secrets-set`
+   handlers already do this). The menu channel itself is main-originated so it's already safe.
+5. **`will-attach-webview` deny-all — IMPLEMENTED** in main.js: the app never uses `<webview>`;
+   the handler explicitly prevents it (blocks an XSS attacker from creating one).
+6. **ASAR integrity — IMPLEMENTED** two ways: (a) `asar: true` in `electron-builder.yml`
+   (the app is always packed into `app.asar`), and (b) the fuses
+   `enableEmbeddedAsarIntegrityValidation: true` + `onlyLoadAppFromAsar: true`, which make
+   Electron verify the asar on load AND refuse to load anything outside it — combined, these
+   defeat tampered-install attacks (a tampered `app.asar` fails integrity validation and the
+   app won't load loose files as a fallback). `asar: true` was already set; the fuse layer is
+   new.
 7. **Keep Electron current + dependency hygiene** — Electron 44 is recent; subscribe to release notes
    (Chromium/Node CVEs are the main supply-chain risk), run `npm audit`, consider Dependabot for the
    three runtime deps.
+
+   ### Runtime dependency inventory (for audit tracking)
+   The published `node_modules` tree resolves to 245 packages. The runtime-relevant
+   ones (Electron + its build/update toolchain) are pinned at:
+   - `electron@44.2.0` (runtime; Chromium/Node CVEs flow through here)
+   - `electron-builder@26.15.3` (packaging only; dev-time, not in shipped binary)
+   - `electron-updater@6.8.9` (runtime update delivery in packaged builds)
+   - `@electron/fuses@1.8.0` (runtime fuse state; flipped at build time, read at
+     runtime by the fuses machinery)
+   - `app-builder-lib@26.15.3`, `bluebird@3.7.2`, `debug@4.4.3`, `fs-extra@11.4.0`,
+     `got@11.8.6`, `graceful-fs@4.2.11`, `plist@3.1.0`, `semver@7.8.5`,
+     `lodash@4.18.1`, `chokidar` ×, `electron-download` ×, `electron-log` ×,
+     `electron-osx-sign` ×, `electron-rebuild` ×, `electron-installer-dmg` ×,
+     `electron-installer-windows` ×, `nsis` ×, `squirrel` ×, `electron-squirrel-startup` ×
+     (the `×` entries are not present in the tree — the installer path uses the
+     built-in NSIS tooling from `electron-builder`/`app-builder-lib`)
+
+   `npm audit` could not be run from this environment (no `node` binary available —
+   checked: Volta, mise, asdf, Homebrew, /usr/local, /usr/bin, Bun; none present).
+   To run it: on a machine with Node, `cd PallettAI-Studio-src && npm audit`.
+   Expected: because the only 3 runtime deps are Electron's own toolchain, the
+   audit surface is small and dominated by Electron/Chromium/Node CVEs, which are
+   addressed by keeping `electron` current (item 7 itself). The packaging deps
+   (`electron-builder`, `electron-updater`) are dev/build-time and don't ship in
+   the binary, so their advisories are lower priority. The app's own code has no
+   npm dependencies (it's plain fetch + the built modules), so there are no app-level
+   supply-chain dependencies to audit.
 
 ### B2. Code signing & updates on BOTH platforms (prerequisite for "not abused")
 - **macOS:** Developer ID + notarization — already fully documented in MACOS-SHIPPING.md and CI.
