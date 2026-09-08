@@ -328,7 +328,10 @@ function main() {
   }
 
   function closeStartupWindow() {
-    if (startupWindow && !startupWindow.isDestroyed()) startupWindow.close();
+    // destroy() (not close()): the splash is created with closable: false, and
+    // close() "has the same effect as the user clicking the close button" —
+    // which is disabled — so close() silently no-ops and strands the window.
+    if (startupWindow && !startupWindow.isDestroyed()) startupWindow.destroy();
     startupWindow = null;
     startupWindowReady = false;
   }
