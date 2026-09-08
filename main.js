@@ -78,17 +78,30 @@ function main() {
     }
     win = new BrowserWindow(opts);
 
-    win.once('ready-to-show', () => {
+    // Reveal the main window — and dismiss the startup splash — on the first of:
+    // ready-to-show (first paint), did-finish-load (content ready), or a 6s
+    // fallback timer. Relying on ready-to-show alone let the splash strand when
+    // that event was delayed (e.g. software-GL rendering), trapping an
+    // always-on-top, non-closable window over a usable app.
+    let revealed = false;
+    let revealTimer = null;
+    function revealMainWindow() {
+      if (revealed || !win || win.isDestroyed()) return;
+      revealed = true;
+      if (revealTimer) { clearTimeout(revealTimer); revealTimer = null; }
       if (prev.isMaximized) win.maximize();
       closeStartupWindow();
       win.show();
-    });
+    }
+    win.once('ready-to-show', revealMainWindow);
+    win.webContents.once('did-finish-load', revealMainWindow);
 
     win.on('resize', scheduleSaveState);
     win.on('move', scheduleSaveState);
     win.on('close', () => { clearTimeout(stateTimer); saveState(); });
 
     win.loadFile('index.html');
+    revealTimer = setTimeout(revealMainWindow, 6000);
 
     // External links always open in the system browser, never inside the app.
     win.webContents.setWindowOpenHandler(({ url }) => {
