@@ -1137,6 +1137,16 @@ const AI = (() => {
     try { if (typeof require === 'function') return require('../data/ai-fingerprint.js'); } catch (e) { /* classic script */ }
     return null;
   }
+  function photoLib() {
+    if (typeof AiPhotos !== 'undefined') return AiPhotos;
+    try { if (typeof require === 'function') return require('../data/ai-photos.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
+  function composeLib() {
+    if (typeof AiCompose !== 'undefined') return AiCompose;
+    try { if (typeof require === 'function') return require('../data/ai-compose.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
   function aaPaletteIds(ids) {
     const list = Array.isArray(ids) ? ids : [];
     const ok = list.filter((pid) => {
@@ -1158,8 +1168,10 @@ const AI = (() => {
   }
   function voiceFrom(brief, extra) {
     const lib = briefLib();
-    if (!lib) return { tone: (brief && brief.voice) || 'warm', banned: [] };
-    return lib.normalizeVoice(Object.assign({ tone: brief && brief.voice }, extra || {}));
+    const stock = ['seamless', 'unleash', 'elevate', 'next-gen', 'world-class', 'cutting-edge'];
+    const extraBanned = ((extra && extra.banned) || []).concat(stock);
+    if (!lib) return { tone: (brief && brief.voice) || 'warm', banned: extraBanned };
+    return lib.normalizeVoice({ tone: brief && brief.voice, banned: extraBanned });
   }
 
   // ----- prompt → concrete subject + scene -----
@@ -2075,10 +2087,14 @@ const AI = (() => {
   // shared copy bank — used by generateSite, sampleSection and enhanceSection
   function copyBank(type, brand, focus) {
     const fillS = (str) => String(str || '').replace(/\{brand\}/g, brand).replace(/\{focus\}/g, focus);
+    const aboutFull = fillS(type.about || '{brand} is here for {focus}.');
+    const heroText = aboutFull.length > 220 ? aboutFull.slice(0, 220).replace(/\s+\S*$/, '') + '…' : aboutFull;
     return {
-      hero: { title: '', subtitle: fillS(pick(type.taglines, 0)), text: fillS('We\'re {brand} — and we\'d love to help you with {focus} that makes a difference.'), animation: 'zoom-in' },
+      hero: { title: '', subtitle: fillS(pick(type.taglines, 0)), text: heroText, animation: 'zoom-in' },
       about: { title: type.aboutTitle, text: fillS(type.about), items: [
-        { icon: '✓', title: 'Certified & experienced team' }, { icon: '✓', title: 'Transparent, honest pricing' }, { icon: '✓', title: 'Local support that answers' }
+        { icon: '✓', title: (focus || 'The work') + ', done properly' },
+        { icon: '✓', title: 'Quoted before we start' },
+        { icon: '✓', title: 'We answer the phone' }
       ], animation: 'slide-left' },
       features: { title: 'Why ' + brand, subtitle: 'The things our clients mention first.', items: type.features.map((it) => ({ ...it })), animation: 'fade-up' },
       stats: { title: 'By the numbers', items: type.stats.map((it) => ({ ...it })), animation: 'fade-up' },
@@ -2278,6 +2294,9 @@ const AI = (() => {
       if (bank.cta.text) bank.cta.text = speak(bank.cta.text, voice);
     }
     bank.hero = { ...bank.hero, subtitle: tagline };
+    if (area && bank.about && Array.isArray(bank.about.items) && bank.about.items[1]) {
+      bank.about.items[1] = { icon: '✓', title: 'Based in ' + area };
+    }
     const S = (name) => {
       let preset = bank[name] || {};
       // creative mode: hand sections the catalog layouts that suit the business
@@ -2323,7 +2342,7 @@ const AI = (() => {
     // (schema type flips to LocalBusiness automatically on export).
     const desc = fill('We\'re {brand} — helping you with {focus}, done properly.', brand, focus)
       + (area ? ' We proudly serve ' + area + ' and the surrounding areas.' : '');
-    const eyebrow = 'Welcome to ' + brand + (area ? ' · ' + area : '');
+    const eyebrow = area || focus || '';
     if (area) {
       const fSec = sections.find((x) => x.type === 'faq');
       if (fSec && Array.isArray(fSec.items)) {
@@ -2345,7 +2364,9 @@ const AI = (() => {
       name: brand + ' — Website',
       templateId: 'ai:' + type.id,
       aiType: type.id,
-      aiScenes: (niche && niche.scenes) || subj.scenes || TYPE_SCENES[type.id] || TYPE_SCENES.generic,
+      aiScenes: (photoLib() && photoLib().expandScenes)
+        ? photoLib().expandScenes((niche && niche.scenes) || subj.scenes || TYPE_SCENES[type.id] || TYPE_SCENES.generic)
+        : ((niche && niche.scenes) || subj.scenes || TYPE_SCENES[type.id] || TYPE_SCENES.generic),
       aiSubject: focus,
       aiNiche: niche ? niche.name : '',
       aiNicheId: niche ? niche.id : '',
@@ -2379,6 +2400,19 @@ const AI = (() => {
       }
     };
     if (filled && !onePager) splitPages(project, niche, area);
+    const Composer = composeLib();
+    if (Composer && Composer.applyCompose) {
+      Composer.applyCompose(project, {
+        typeId: type.id,
+        nicheId: niche && niche.id,
+        seed,
+        onePager,
+        layouts: opts.layouts,
+        photoMode: (opts && opts.photoMode) || 'real'
+      });
+    }
+    if (!project.site.logo) logo(project);
+    project.site.photoPass = { status: 'pending', placed: { hero: false, about: false, gallery: 0 } };
     return project;
   }
 
@@ -2584,6 +2618,7 @@ const AI = (() => {
     if (!sections.length) add('no-sections', 'error', 'The site has no sections.', 'Add a hero and contact section.');
     const hero = sections.find((x) => x && x.type === 'hero');
     if (!hero) add('no-hero', 'error', 'The home page has no hero section.', 'Add a hero so visitors immediately understand the site.');
+    if (hero && !String(hero.image || '').trim()) add('missing-photos', 'warn', 'The hero has no photo yet.', 'Drop a photo on the hero, or run topic-matched photos.', false);
     if (!String(s.email || '').trim() && !String(s.phone || '').trim()) add('no-contact', 'warn', 'No email or phone is set.', 'Add at least one direct contact method in Site identity.', false);
     if (!String(s.metaDescription || '').trim()) add('meta-description', 'warn', 'No meta description is set.', 'Generate a concise description from the site copy.', true);
     else if (String(s.metaDescription).trim().length < 50 || String(s.metaDescription).trim().length > 160) add('meta-description-length', 'info', 'The meta description is ' + String(s.metaDescription).trim().length + ' characters.', 'Aim for roughly 50–160 characters.', false);
@@ -2866,7 +2901,7 @@ const AI = (() => {
   // ============================================================
   const photoCache = {};
   const photoFlights = new Map();
-  const photoJson = async (url, ms = 8000, signal) => {
+  const photoJson = async (url, ms = 2500, signal) => {
     const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     let timer = null;
     let removeAbort = null;
@@ -2908,15 +2943,15 @@ const AI = (() => {
     return Object.values(out).some((value) => value !== '' && value !== false) ? out : null;
   };
 
-  async function openverseCandidates(q, w = 1400) {
-    const key = 'ov_' + String(q) + '_' + w;
+  async function openverseCandidates(q, w = 1400, page = 1) {
+    const key = 'ov_' + String(q) + '_' + w + '_' + page;
     if (photoCache[key]) return photoCache[key];
     if (photoFlights.has(key)) return photoFlights.get(key);
     const flight = (async () => {
       let out = [];
       try {
         if (typeof ONLINE === 'undefined' || !ONLINE.fetchOpenverseImages) return [];
-        const rows = await ONLINE.fetchOpenverseImages(q, 1, 14, { commercial: true });
+        const rows = await ONLINE.fetchOpenverseImages(q, page, 14, { commercial: true });
         out = (rows || []).filter((row) => row && row.url).map((row) => ({
           url: row.url,
           w: row.width,
@@ -3011,12 +3046,13 @@ const AI = (() => {
     });
     for (const step of sceneSteps(q)) {
       // Openverse is the primary source: it gives us licence-aware results
-      // rather than only a usable bitmap URL.
-      add(await openverseCandidates(step, w || 800));
+      // rather than only a usable bitmap URL. Page 2 avoids first-result stock.
+      add(await openverseCandidates(step, w || 800, 1));
+      add(await openverseCandidates(step, w || 800, 2));
       if (out.length < (max || 8)) add(await commonsCandidates(step, w || 800));
-      if (out.length >= (max || 8)) break;
+      if (out.length >= (max || 20)) break;
     }
-    return out.slice(0, max || 8);
+    return out.slice(0, max || 20);
   }
   async function mapLimit(items, limit, worker) {
     const out = new Array(items.length);
@@ -3036,14 +3072,24 @@ const AI = (() => {
   async function bestReal(q, seed, opts = {}) {
     if (!q) return null;
     const online = opts.online !== false;
+    const Photos = photoLib();
+    const usedUrls = opts.usedUrls || [];
+    const usedTitles = opts.usedTitles || [];
+    const slot = opts.slot || 'hero';
     if (online) {
-      const cands = await gatherSceneCands(q, opts.w || 1400, opts.max || 14, { online: true });
-      const n = cands.length;
+      const cands = await gatherSceneCands(q, opts.w || 1400, opts.max || 20, { online: true });
+      const ranked = Photos
+        ? Photos.rank(cands, { slot, usedUrls, usedTitles })
+        : cands;
+      const n = ranked.length;
       if (n) {
-        const start = Math.abs(seed || 1) % n;
-        for (let i = 0; i < Math.min(n, 6); i++) {
-          const c = cands[(start + i) % n];
-          if (opts.validate === false || await loadImage(c.url, 8000)) {
+        const start = Photos && Photos.pick ? 0 : (Math.abs(seed || 1) % n);
+        const ordered = Photos && Photos.pick
+          ? ranked
+          : ranked.slice(start).concat(ranked.slice(0, start));
+        for (let i = 0; i < Math.min(ordered.length, 8); i++) {
+          const c = ordered[i];
+          if (opts.validate === false || await loadImage(c.url, 2500)) {
             return { url: c.url, src: c.src || 'Openverse', meta: cleanImageMeta(c.meta) };
           }
         }
@@ -3058,7 +3104,7 @@ const AI = (() => {
           const start = Math.abs(seed || 1) % count;
           for (let i = 0; i < Math.min(count, 4); i++) {
             const c = px[(start + i) % count];
-            if (opts.validate === false || await loadImage(c.url, 8000)) {
+            if (opts.validate === false || await loadImage(c.url, 2500)) {
               return { url: c.url, src: c.src || 'Pixabay', meta: cleanImageMeta(c.meta) };
             }
           }
@@ -3066,7 +3112,7 @@ const AI = (() => {
       }
     }
     const lf = loremUrl(q, opts.w || 1400, opts.h || 900, seed);
-    if (opts.validate !== false && !(await loadImage(lf, 9000))) return null;
+    if (opts.validate !== false && !(await loadImage(lf, 2500))) return null;
     return { url: lf, src: 'Flickr via LoremFlickr', meta: null };
   }
 
@@ -3094,7 +3140,15 @@ const AI = (() => {
     const online = opts.online !== false;
     const s = project.site;
     const type = detectType(prompt || project.site.name);
-    const scenes = project.aiScenes || TYPE_SCENES[type.id] || TYPE_SCENES.generic;
+    const Photos = photoLib();
+    const rawScenes = project.aiScenes || TYPE_SCENES[type.id] || TYPE_SCENES.generic;
+    const scenes = Photos && Photos.expandScenes ? Photos.expandScenes(rawScenes) : rawScenes;
+    const queryFor = (key, index, seed) => {
+      if (Photos && Photos.sceneQuery) return Photos.sceneQuery(rawScenes, key === 'gallery' ? 'gallery' : key, index, seed);
+      const v = scenes[key] || scenes.hero;
+      if (Array.isArray(v)) return v[Math.abs((index || 0)) % v.length] || v[0];
+      return v || 'photo';
+    };
     const out = { hero: false, about: false, gallery: 0, source };
     const hero = s.sections.find((x) => x.type === 'hero');
     const about = s.sections.find((x) => x.type === 'about');
@@ -3151,47 +3205,56 @@ const AI = (() => {
     if (source === 'none') return out;
     const seedB = (s.fingerprint && s.fingerprint.seed) || hash(String(prompt || '') + ' ' + s.name);
     const base = imageBase(prompt, type.id);
+    const usedUrls = [];
+    const usedTitles = [];
+    Object.keys(filled).forEach((key) => {
+      const slot = slots.find((x) => x.key === key);
+      if (slot && slot.sec && slot.sec.image) usedUrls.push(slot.sec.image);
+    });
+    const slotKind = (key) => (key === 'about' ? 'about' : (String(key).indexOf('gal') === 0 ? 'gallery' : 'hero'));
+    const remember = (r) => {
+      if (r && r.url) usedUrls.push(r.url);
+      if (r && r.meta && r.meta.title) usedTitles.push(r.meta.title);
+    };
     const tryAI = async (slot, q, seed) => {
       const url = imageUrl(q, slot.w, slot.h, seed);
-      if (await loadImage(url)) { put(slot.sec, url, 'AI', null); return true; }
+      if (await loadImage(url, 2500)) { put(slot.sec, url, 'AI', null); return true; }
       return false;
     };
     const tryReal = async (slot, q, seed) => {
-      const r = await bestReal(q, seed, { w: slot.w, h: slot.h, online, validate: online });
-      if (r) { put(slot.sec, r.url, r.src, r.meta); return true; }
+      const r = await bestReal(q, seed, {
+        w: slot.w, h: slot.h, online, validate: online,
+        slot: slotKind(slot.key), usedUrls, usedTitles
+      });
+      if (r) { put(slot.sec, r.url, r.src, r.meta); remember(r); return true; }
       return false;
     };
     const fallback = source === 'ai' ? tryAI : tryReal;
 
     const roleResults = await Promise.all([
-      heroSlot && !filled.hero ? fallback(heroSlot, scenes.hero || 'hero', seedB) : Promise.resolve(false),
-      aboutSlot && !filled.about ? fallback(aboutSlot, scenes.about || scenes.hero || 'about', seedB + 7) : Promise.resolve(false)
+      heroSlot && !filled.hero ? fallback(heroSlot, queryFor('hero', 0, seedB), seedB) : Promise.resolve(false),
+      aboutSlot && !filled.about ? fallback(aboutSlot, queryFor('about', 0, seedB + 7), seedB + 7) : Promise.resolve(false)
     ]);
     if (heroSlot && !filled.hero && roleResults[0]) { out.hero = true; filled.hero = true; }
     if (aboutSlot && !filled.about && roleResults[1]) { out.about = true; filled.about = true; }
     if (gal && Array.isArray(gal.items)) {
-      let commons = source === 'ai' ? [] : await gatherSceneCands(scenes.gallery || 'gallery', 800, 10, { online });
       const galleryIndexes = gal.items.slice(0, 6).map((it, i) => ({ it, i })).filter((x) => x.it && !filled['gal' + x.i]);
-      const galleryResults = await mapLimit(galleryIndexes, 3, async ({ it, i }) => {
+      for (const { it, i } of galleryIndexes) {
         if (source === 'ai') {
           const cap = it.text || 'detail';
-          return (await tryAI({ sec: it, w: 640, h: 480 }, base + ', ' + cap, 31 + i * 7)) ? { i } : null;
+          if (await tryAI({ sec: it, w: 640, h: 480, key: 'gal' + i }, base + ', ' + cap, 31 + i * 7)) {
+            out.gallery++; filled['gal' + i] = true;
+          }
+          continue;
         }
-        // real: one Commons query feeds every tile so the wall stays on-topic
-        const cN = commons.length;
-        let url = null, src = 'Web', meta = null;
-        if (cN) {
-          const c = commons[(seedB + i * 3 + 5) % cN];
-          if (!online || await loadImage(c.url, 8000)) { url = c.url; src = c.src; meta = c.meta; }
+        const q = queryFor('gallery', i, seedB);
+        if (await tryReal({ sec: it, w: 720, h: 540, key: 'gal' + i }, q, seedB + i * 11)) {
+          out.gallery++; filled['gal' + i] = true;
         }
-        if (!url) {
-          const lf = loremUrl(scenes.gallery || 'gallery', 720, 540, seedB + i + 9);
-          if (!online || await loadImage(lf, 8000)) { url = lf; src = 'Flickr via LoremFlickr'; }
-        }
-        if (url) { it.image = url; it.imageSource = src; it.imageMeta = cleanImageMeta(meta); return { i }; }
-        return null;
-      });
-      galleryResults.filter(Boolean).forEach(({ i }) => { out.gallery++; filled['gal' + i] = true; });
+      }
+    }
+    if (s.photoPass) {
+      s.photoPass = { status: (out.hero || out.about || out.gallery) ? 'done' : 'failed', placed: { hero: out.hero, about: out.about, gallery: out.gallery } };
     }
     return out;
   }
@@ -3209,7 +3272,10 @@ const AI = (() => {
     const s = (project && project.site) || {};
     const raw = String(opts.prompt || '').trim() || (s.name || '') + ' ' + (s.tagline || '');
     const type = detectType(raw);
-    const scenes = Object.assign({}, TYPE_SCENES[type.id] || TYPE_SCENES.generic || {}, project.aiScenes || {});
+    const Photos = photoLib();
+    const rawScenes = Object.assign({}, TYPE_SCENES[type.id] || TYPE_SCENES.generic || {}, project.aiScenes || {});
+    const scenes = Photos && Photos.expandScenes ? Photos.expandScenes(rawScenes) : rawScenes;
+    const queryFor = (key, i) => (Photos && Photos.sceneQuery) ? Photos.sceneQuery(rawScenes, key, i, 0) : (Array.isArray(scenes[key]) ? scenes[key][0] : scenes[key]);
     const hero = (s.sections || []).find((x) => x.type === 'hero');
     const about = (s.sections || []).find((x) => x.type === 'about');
     const gal = (s.sections || []).find((x) => x.type === 'gallery');
@@ -3223,10 +3289,10 @@ const AI = (() => {
         pool: [], cands: [], picked: null, pickedSrc: '', pickedMeta: null, changed: false
       });
     };
-    addSlot('hero', 'Hero photo', hero, scenes.hero, 1600, 900);
-    addSlot('about', 'About image', about, scenes.about || scenes.hero, 960, 800);
+    addSlot('hero', 'Hero photo', hero, queryFor('hero', 0), 1600, 900);
+    addSlot('about', 'About image', about, queryFor('about', 0), 960, 800);
     if (gal && Array.isArray(gal.items)) {
-      gal.items.slice(0, 6).forEach((it, i) => addSlot('gal' + i, (gal.items.length > 1 ? 'Gallery photo ' + (i + 1) : 'Gallery photo'), it, scenes.gallery, 720, 540));
+      gal.items.slice(0, 6).forEach((it, i) => addSlot('gal' + i, (gal.items.length > 1 ? 'Gallery photo ' + (i + 1) : 'Gallery photo'), it, queryFor('gallery', i), 720, 540));
     }
     // current photos already in use on OTHER slots (so we never offer a
     // duplicate that would make two slots identical by accident)
@@ -3236,11 +3302,14 @@ const AI = (() => {
       let pool = [];
       if (online) {
         try {
-          const cands = await gatherSceneCands(slot.scene, Math.max(640, slot.w), 10, { online });
-          pool = cands.map((c) => ({ url: c.url, src: c.src, meta: cleanImageMeta(c.meta) }));
+          const cands = await gatherSceneCands(slot.scene, Math.max(640, slot.w), 20, { online });
+          pool = cands.map((c) => ({ url: c.url, src: c.src, w: c.w, h: c.h, title: c.title, meta: cleanImageMeta(c.meta) }));
         } catch (e) { pool = []; }
+        if (Photos && Photos.rank) {
+          const kind = slot.key === 'about' ? 'about' : (String(slot.key).indexOf('gal') === 0 ? 'gallery' : 'hero');
+          pool = Photos.rank(pool, { slot: kind, usedUrls: Array.from(used) });
+        }
         if (pool.length < 2) {
-          // top up with LoremFlickr tagged photos (live Flickr results)
           for (let l = 0; l < 3; l++) {
             pool.push({ url: loremUrl(slot.scene, slot.w, slot.h, 911 + l + Math.abs(hash(slot.key + slot.scene)) % 997), src: 'Flickr via LoremFlickr' });
           }
@@ -3905,13 +3974,15 @@ const AI = (() => {
 
   function randomLogoSpec(project) {
     const pal = DB.getPalette(project.site.palette);
+    const seed = (project.site && project.site.fingerprint && project.site.fingerprint.seed)
+      || hash((project.site && project.site.name) || 'logo');
     return {
-      style: LOGO_STYLES[Math.abs(hash(project.site.name || 'logo') + Date.now()) % LOGO_STYLES.length].id,
-      shape: LOGO_SHAPES[Math.abs(hash(project.site.name || 's') + Date.now() / 3) % LOGO_SHAPES.length],
+      style: LOGO_STYLES[Math.abs(seed) % LOGO_STYLES.length].id,
+      shape: LOGO_SHAPES[Math.abs(seed + 17) % LOGO_SHAPES.length],
       font: project.site.font || 'inter',
       colors: [pal.primary, pal.accent],
       text: project.site.name,
-      seed: Math.floor(Math.random() * 9999)
+      seed
     };
   }
 

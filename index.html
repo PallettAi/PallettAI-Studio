@@ -51,6 +51,9 @@
 -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://plausible.io https://www.googletagmanager.com https://embed.tawk.to; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https://picsum.photos https://i.pravatar.cc https://api.dicebear.com https://api.iconify.design https://image.pollinations.ai https://loremflickr.com https://upload.wikimedia.org; font-src 'self' data: https://fonts.gstatic.com; media-src 'self' data: blob: https://coverr.co; connect-src 'self' https://picsum.photos https://randomuser.me https://api.quotable.io https://api.coingecko.com https://api.github.com https://api.frankfurter.app https://en.wikipedia.org https://api.open-meteo.com https://geocoding-api.open-meteo.com https://api.iconify.design https://api.mymemory.translated.net https://image.pollinations.ai https://text.pollinations.ai https://commons.wikimedia.org https://api.openverse.org https://pixabay.com https://api.allorigins.win https://api.netlify.com https://neocities.org https://*.supabase.co; frame-src 'self' https://www.google.com https://maps.google.com https://player.vimeo.com https://www.youtube.com https://open.spotify.com https://calendly.com https://coverr.co https:; object-src 'none'; base-uri 'self'; form-action 'self' https:">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'><defs><linearGradient id='g' x1='0' y1='1' x2='1' y2='0'><stop stop-color='%23a06bff'/><stop offset='1' stop-color='%23e0c7ff'/></linearGradient></defs><path d='M14 40c5-14 9-14 14 0s9 14 14 0 9-14 14 0' stroke='url(%23g)' stroke-width='4' stroke-linecap='round'/><path d='M20 52V13h14c10 0 16 6 16 15s-6 15-16 15h-7' stroke='%23ffffff' stroke-width='5.5' stroke-linejoin='round'/><circle cx='14' cy='52' r='2.5' fill='%23a06bff'/><circle cx='56' cy='52' r='2.5' fill='%23e0c7ff'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -65,13 +68,14 @@
     </div>
 
     <nav class="side-nav" id="sideNav">
-      <button class="nav-item nav-home-btn active" data-view="dashboard" title="Home" aria-label="Home"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.4 9.2 10 3.6l6.6 5.6V16a1 1 0 0 1-1 1h-3.5v-4.3H7.9V17H4.4a1 1 0 0 1-1-1V9.2z"/></svg></span>Dashboard</button>
-      <button class="nav-item" data-view="templates"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1.1"/><rect x="11.2" y="3.2" width="5.6" height="5.6" rx="1.1"/><rect x="3.2" y="11.2" width="5.6" height="5.6" rx="1.1"/><rect x="11.2" y="11.2" width="5.6" height="5.6" rx="1.1"/></svg></span>Templates</button>
-      <button class="nav-item" data-view="designer"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.8 13.2 5.6a1.5 1.5 0 0 1 2.1 0l.1.1a1.5 1.5 0 0 1 0 2.1L6.2 17H4v-2.2z"/><path d="M12.2 6.6l2.2 2.2"/></svg></span>Designer</button>
-      <button class="nav-item" data-view="ai"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 2.2 11.1 7 16 8.1 11.1 9.2 10 14l-1.1-4.8L4 8.1 8.9 7 10 2.2zm5.4 9.2.7 2.4 2.4.7-2.4.7-.7 2.4-.7-2.4-2.4-.7 2.4-.7.7-2.4z"/></svg></span>AI Studio</button>
-      <button class="nav-item" data-view="suites"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.6 3.6 16 6.2v5.2l-4.4 2.6L7.2 11.4V6.2L11.6 3.6z"/><path d="M7.2 6.2 4 8.1v5.1l4.3 2.6 3.3-1.9"/><path d="M16 6.2 12.8 8"/></svg></span>Upgrade Suites</button>
-      <button class="nav-item" data-view="database"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="10" cy="5.2" rx="6.2" ry="2.4"/><path d="M3.8 5.2v9.6c0 1.3 2.8 2.4 6.2 2.4s6.2-1.1 6.2-2.4V5.2"/><path d="M3.8 10c0 1.3 2.8 2.4 6.2 2.4s6.2-1.1 6.2-2.4"/></svg></span>Database</button>
-      <button class="nav-item" data-view="settings"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.2"/><path d="M10 3.2v1.6M10 15.2v1.6M3.2 10h1.6M15.2 10h1.6M5.2 5.2l1.1 1.1M13.7 13.7l1.1 1.1M14.8 5.2l-1.1 1.1M6.3 13.7l-1.1 1.1"/></svg></span>Settings</button>
+      <button class="nav-item nav-home-btn active" data-view="dashboard" title="Home" aria-label="Home"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.4 9.2 10 3.6l6.6 5.6V16a1 1 0 0 1-1 1h-3.5v-4.3H7.9V17H4.4a1 1 0 0 1-1-1V9.2z"/></svg></span><span class="nav-label">Dashboard</span></button>
+      <button class="nav-item" data-view="templates"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1"/><rect x="11.2" y="3.2" width="5.6" height="5.6" rx="1"/><rect x="3.2" y="11.2" width="5.6" height="5.6" rx="1"/><rect x="11.2" y="11.2" width="5.6" height="5.6" rx="1"/></svg></span><span class="nav-label">Templates</span></button>
+      <button class="nav-item" data-view="designer"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.8 13.2 5.6a1.5 1.5 0 0 1 2.1 0l.1.1a1.5 1.5 0 0 1 0 2.1L6.2 17H4v-2.2z"/><path d="M12.2 6.6l2.2 2.2"/></svg></span><span class="nav-label">Designer</span></button>
+      <button class="nav-item" data-view="ai"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.8l.85 3.7 3.7.85-3.7.85L10 11.9l-.85-3.7-3.7-.85 3.7-.85L10 2.8z"/></svg></span><span class="nav-label">AI Studio</span></button>
+      <button class="nav-item" data-view="suites"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.6 3.6 16 6.2v5.2l-4.4 2.6L7.2 11.4V6.2L11.6 3.6z"/><path d="M7.2 6.2 4 8.1v5.1l4.3 2.6 3.3-1.9"/><path d="M16 6.2 12.8 8"/></svg></span><span class="nav-label">Upgrade Suites</span></button>
+      <button class="nav-item" data-view="database"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="10" cy="5.2" rx="6.2" ry="2.4"/><path d="M3.8 5.2v9.6c0 1.3 2.8 2.4 6.2 2.4s6.2-1.1 6.2-2.4V5.2"/><path d="M3.8 10c0 1.3 2.8 2.4 6.2 2.4s6.2-1.1 6.2-2.4"/></svg></span><span class="nav-label">Database</span></button>
+      <button class="nav-item" data-view="qr" title="QR Codes"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="3.2" width="5.2" height="5.2" rx="1"/><rect x="11.6" y="3.2" width="5.2" height="5.2" rx="1"/><rect x="3.2" y="11.6" width="5.2" height="5.2" rx="1"/></svg></span><span class="nav-label">QR Codes</span></button>
+      <button class="nav-item" data-view="settings"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.2"/><path d="M10 3.2v1.6M10 15.2v1.6M3.2 10h1.6M15.2 10h1.6M5.2 5.2l1.1 1.1M13.7 13.7l1.1 1.1M14.8 5.2l-1.1 1.1M6.3 13.7l-1.1 1.1"/></svg></span><span class="nav-label">Settings</span></button>
     </nav>
 
     <div class="plan-box" id="planBox">
@@ -83,7 +87,7 @@
 
     <div class="side-foot">
       <div class="made-by">Made by <strong>PallettAI</strong></div>
-      <a class="site-link" href="https://pallettai.org" target="_blank" rel="noopener">pallettai.org ↗</a>
+      <a class="site-link" href="https://pallettai.org" target="_blank" rel="noopener">pallettai.org</a>
     </div>
   </aside>
 
@@ -101,29 +105,24 @@
 
     <!-- Dashboard -->
     <section class="view active" id="view-dashboard">
-      <div class="dash-hero">
-        <h2>Design stunning, fully functional websites for your clients.</h2>
-        <p>Start a project, open the Designer, or generate a site with AI — then upgrade it with Suites and export a live site.</p>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <button class="btn primary" id="btnNewProject">＋ New project</button>
-          <button class="btn ghost" id="btnAiGo">✦ Generate with AI</button>
-          <button class="btn ghost" id="btnTour" title="A 2-minute guided tour of the studio">🧭 Quick tour</button>
-        </div>
+      <div class="job-tray" id="jobTray"></div>
+      <div class="dash-actions">
+        <button class="btn primary" id="btnNewProject">New project</button>
+        <button class="btn secondary" id="btnAiGo">Generate</button>
+        <button class="btn ghost" id="btnTour" title="A short walkthrough of the studio">Tour</button>
       </div>
-      <div class="core-tools" id="coreTools"></div>
-      <div class="dash-stats" id="dashStats"></div>
+      <div class="metrics-strip" id="dashStats"></div>
       <article class="tpl-door" id="dashTemplates">
         <div class="tpl-door-copy">
-          <span class="eyebrow">Templates</span>
-          <h3>Start from a template</h3>
-          <p id="dashTemplatesMeta">Client-ready starting points for the sites you ship.</p>
+          <h3>Templates</h3>
+          <p id="dashTemplatesMeta">Finished layouts you can open in the Designer.</p>
         </div>
         <div class="tpl-door-side">
           <div class="tpl-door-icons" id="dashTemplatesIcons" aria-hidden="true"></div>
-          <button class="btn primary" id="btnBrowseTemplates">Browse templates</button>
+          <button class="btn secondary" id="btnBrowseTemplates">Open catalog</button>
         </div>
       </article>
-      <h3 class="view-h">Your projects</h3>
+      <h3 class="view-h">Recent work</h3>
       <div class="projects-grid" id="projectsGrid"></div>
       <div class="dash-insight" id="dashInsight"></div>
     </section>
@@ -132,7 +131,7 @@
     <section class="view" id="view-templates">
       <div class="tpl-intro">
         <h2>Templates</h2>
-        <p>Client-ready starting points. Preview one, then start it in the Designer. Pro templates stay locked until you upgrade.</p>
+        <p>Preview a layout, then start it in the Designer. Pro templates unlock with a paid plan.</p>
       </div>
       <div class="tpl-grid" id="tplGrid"></div>
     </section>
@@ -145,8 +144,8 @@
     <!-- AI Studio -->
     <section class="view" id="view-ai">
       <div class="ai-intro">
-        <h2>✦ AI Studio <span class="pill" id="aiCreditPill"></span></h2>
-        <p>Describe the site you want in plain English — <strong>“a modern bakery in Paris”</strong> — and the studio designs it: name, palette, fonts, copy and a full section layout. Then generate AI images to match.</p>
+        <h2>AI Studio <span class="pill" id="aiCreditPill"></span></h2>
+        <p>Describe the business. Studio writes the draft: name, palette, type, copy, layout, and photos.</p>
       </div>
       <div id="streakRoot"></div>
       <div class="ai-wrap" id="aiRoot"></div>
@@ -155,8 +154,8 @@
     <!-- Suites -->
     <section class="view" id="view-suites">
       <div class="suites-intro">
-        <h2>Upgrade suites</h2>
-        <p>Suites are feature packs you can install <strong>after</strong> a site is built — adding blog, shop, animations, SEO and more without touching the design.</p>
+        <h2>Upgrade Suites</h2>
+        <p>Install blog, shop, motion, or SEO on a finished site without changing the layout.</p>
       </div>
       <div class="suites-grid" id="suitesGrid"></div>
     </section>
@@ -165,7 +164,7 @@
     <section class="view" id="view-database">
       <div class="db-intro">
         <h2>Database</h2>
-        <p>Browse the local PallettAI library — templates, sections, palettes, fonts — and pull live content from free online databases.</p>
+        <p>Local sections, palettes, and type, plus live photo and data sources.</p>
       </div>
       <h3 class="view-h">Online sources <span class="pill" id="onlineStatus"></span></h3>
       <div class="online-grid" id="onlineGrid"></div>
@@ -188,20 +187,25 @@
       <div class="settings-wrap" id="settingsRoot"></div>
     </section>
 
+    <!-- QR Codes -->
+    <section class="view" id="view-qr">
+      <div class="settings-wrap" id="qrRoot"></div>
+    </section>
+
   </main>
 </div>
 
 <!-- ============ AI Copilot chat ============ -->
 <div class="chat-panel" id="chatPanel" hidden>
   <div class="chat-head">
-    <div class="chat-title"><span class="chat-spark">✦</span><div><b>Copilot</b><div class="chat-sub">edit “<span id="chatProj"></span>” in plain English</div></div></div>
+    <div class="chat-title"><span class="chat-spark" aria-hidden="true"></span><div><b>Copilot</b><div class="chat-sub">Edit “<span id="chatProj"></span>” in plain English</div></div></div>
     <button class="icon-btn" id="chatClose" title="Close chat">✕</button>
   </div>
   <div class="chat-list" id="chatList"></div>
   <div class="chat-chips" id="chatChips"></div>
   <div class="chat-input">
-    <input id="chatInput" placeholder="Try: make it glassmorphism · make the hero punchier · rounder corners · add a pricing section…" autocomplete="off" spellcheck="false">
-    <button class="btn primary small" id="chatSend" title="Send">➤</button>
+    <input id="chatInput" placeholder="Example: add a pricing section, tighten the hero, use the brand palette" autocomplete="off" spellcheck="false">
+    <button class="btn primary small" id="chatSend" title="Send">Send</button>
   </div>
 </div>
 
@@ -228,11 +232,15 @@
 <script src="data/plan-receipt.js"></script>
 <script src="data/review-reward.js"></script>
 <script src="data/command-palette.js"></script>
+<script src="data/icons.js"></script>
+<script src="data/chrome.js"></script>
 <script src="data/ai-brief.js"></script>
 <script src="data/ai-followup.js"></script>
 <script src="data/ai-translate.js"></script>
 <script src="data/ai-niches-extra.js"></script>
 <script src="data/ai-fingerprint.js"></script>
+<script src="data/ai-photos.js"></script>
+<script src="data/ai-compose.js"></script>
 <script src="modules/modal-focus.js"></script>
 <script src="modules/supabase.js"></script>
 <script src="modules/ai.js"></script>
@@ -240,6 +248,7 @@
 <script src="modules/zip.js"></script>
 <script src="modules/gpuimage.js"></script>
 <script src="modules/store.js"></script>
+<script src="vendor/qrcode.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

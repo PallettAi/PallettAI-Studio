@@ -14,7 +14,7 @@ function fail(msg) { failed++; console.error('  ✗ ' + msg); }
 function assert(cond, msg) { cond ? pass(msg) : fail(msg); }
 
 console.log('== Scripts load before ai.js ==');
-const order = ['data/ai-brief.js', 'data/ai-followup.js', 'data/ai-translate.js', 'data/ai-niches-extra.js', 'data/ai-fingerprint.js', 'modules/ai.js'];
+const order = ['data/ai-brief.js', 'data/ai-followup.js', 'data/ai-translate.js', 'data/ai-niches-extra.js', 'data/ai-fingerprint.js', 'data/ai-photos.js', 'data/ai-compose.js', 'modules/ai.js'];
 let last = -1;
 order.forEach((src) => {
   const i = html.indexOf('src="' + src + '"');
@@ -35,7 +35,12 @@ assert(/chatLastEdit|rememberEdit/.test(app), 'Copilot remembers the last edit')
 assert(/Fix the weak CTA/.test(app), 'quality-gate chip for a weak CTA');
 assert(/Add a map for/.test(app), 'quality-gate chip to add a map');
 assert(/opts\.brief|brief:/.test(app) && /onePager/.test(app) && /photoGrade/.test(app), 'runAI passes brief, onePager and photoGrade');
-assert(/ai-brief/.test(css) || /ai-proof/.test(css) || /brief-grid/.test(css), 'brief form has layout styles');
+assert(/id="aiMore"/.test(app), 'brief lives behind More details');
+assert(/photoDropOverlay/.test(app), 'preview has a photo drop overlay');
+assert(/seImageFileBtn/.test(app), 'section editor can replace a photo from disk');
+assert(!/openPicker:\s*photoMode === 'real'/.test(app), 'generate does not auto-open the picker');
+assert(/includedInGenerate/.test(app), 'generate bundles the photo pass');
+assert(/photo-drop-overlay/.test(css), 'photo drop overlay styles exist');
 
 console.log('\n== Keys & services copy (no secrets in the client) ==');
 assert(/Once a DeepL API key is set on the registry/.test(app), 'translate copy says DeepL starts after the registry key is set');

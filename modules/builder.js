@@ -11,6 +11,13 @@ const Builder = (() => {
 
   const picsum = (seed, w, h) => `https://picsum.photos/seed/${encodeURIComponent(seed)}/${w}/${h}`;
 
+  function isAiDraft(p) {
+    return !!(p && (p.aiType || String(p.templateId || '').indexOf('ai:') === 0));
+  }
+  function photoHole(ratio, label) {
+    return `<div class="photo-hole" style="aspect-ratio:${ratio}" data-photo-hole="${esc(label || 'Photo')}"><span>${esc(label || 'Drop a photo here')}</span></div>`;
+  }
+
   function photoGradeOn(p) {
     return !!(p && p.site && p.site.photoGrade && p.site.photoGrade.on);
   }
@@ -61,7 +68,8 @@ body.photo-grade{
   // stock photo as the hero background by surprise — instead the hero shows the site
   // name on a subtle gradient that reacts to the chosen palette (dark sites get a
   // dark gradient, light sites get a light one).
-  function heroPlaceholder(p, s, i) {
+  function heroPlaceholder(p, s, i, kind) {
+    if (isAiDraft(p)) return photoHole(kind === 'about' ? '4/3' : '16/9', kind === 'about' ? 'About photo' : 'Hero photo');
     const pal = (p.site || {}).palette || 'midnight';
     const isDark = /^(ink|cobalt|grape|pine|roast|paper|lagoon|pack_|midnight|dark)/i.test(String(pal));
     const name = (p.site && p.site.name) || 'Site';
@@ -395,7 +403,7 @@ body.photo-grade{
   function renderAbout(p, s, i) {
     const hasImg = !!(s.image || '').trim();
     const img = hasImg ? s.image : '';
-    const ph = hasImg ? '' : heroPlaceholder(p, s, i);
+    const ph = hasImg ? '' : heroPlaceholder(p, s, i, 'about');
     const checks = itemsField(s).map((it) => `<li>${esc(it.icon || '✓')} ${esc(it.title || it.text || '')}</li>`).join('');
     const side = s.layout === 'left';
     if (s.layout === 'timeline') {
@@ -448,18 +456,27 @@ body.photo-grade{
     const pro = (p.suites || []).includes('gallerypro');
     const items = itemsField(s, Array.from({ length: 6 }, (_, j) => ({ title: `Work ${j + 1}`, extra: 'Project' })));
     const cards = items.map((it, j) => {
-      const img = it.image || picsum(`${p.id}-gal-${i}-${j}`, 640, pro ? 640 : 480);
+      const img = it.image || (isAiDraft(p) ? '' : picsum(`${p.id}-gal-${i}-${j}`, 640, pro ? 640 : 480));
+      const media = img
+        ? gradeWrap(p, `<img src="${esc(img)}" alt="${esc(it.alt || it.title || '')}" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;height:auto;display:block">`)
+        : photoHole('1/1', 'Gallery photo');
       return `
-      <figure class="gal-item ${pro ? 'masonry' : ''}" data-cap="${esc(it.title || '')}" data-extra="${esc(it.extra || '')}">        ${gradeWrap(p, `<img src="${esc(img)}" alt="${esc(it.alt || it.title || '')}" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;height:auto;display:block">`)}
+      <figure class="gal-item ${pro ? 'masonry' : ''}" data-cap="${esc(it.title || '')}" data-extra="${esc(it.extra || '')}">        ${media}
         <figcaption><span>${esc(it.title || '')}</span><small>${esc(it.extra || '')}</small></figcaption>
        </figure>`;
     }).join('');
     if (s.layout === 'mosaic') {
-      const mosaic = itemsField(s, Array.from({ length: 7 }, (_, j) => ({ title: `Work ${j + 1}`, extra: 'Project' }))).map((it, j) => `
+      const mosaic = itemsField(s, Array.from({ length: 7 }, (_, j) => ({ title: `Work ${j + 1}`, extra: 'Project' }))).map((it, j) => {
+        const img = it.image || (isAiDraft(p) ? '' : picsum(`${p.id}-gal-${i}-${j}`, 640, 480));
+        const media = img
+          ? gradeWrap(p, `<img src="${esc(img)}" alt="${esc(it.alt || it.title || '')}" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;height:auto;display:block">`)
+          : photoHole('1/1', 'Gallery photo');
+        return `
         <figure class="gal-m mos-${j + 1}" data-cap="${esc(it.title || '')}" data-extra="${esc(it.extra || '')}">
-          ${gradeWrap(p, `<img src="${esc(it.image || picsum(`${p.id}-gal-${i}-${j}`, 640, 480))}" alt="${esc(it.alt || it.title || '')}" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;height:auto;display:block">`)}
+          ${media}
            <figcaption><strong>${esc(it.title || '')}</strong> <small>${esc(it.extra || '')}</small></figcaption>
-         </figure>`).join('');
+         </figure>`;
+      }).join('');
       return sectionShell(s, i, `${head(s)}<div class="gal-mosaic">${mosaic}</div>`);
     }
     const lightbox = pro ? `
@@ -519,12 +536,22 @@ body.photo-grade{
       { title: 'Mina Park', text: 'They understood the vision immediately.', extra: 'CMO, Verdant' },
       { title: 'Sam Oduya', text: 'The results speak for themselves. Highly recommended.', extra: 'Director, Fieldwork' }
     ];
+    const who = (it, j) => {
+      if (it && it.image) return `<img src="${esc(it.image)}" alt="">`;
+      if (isAiDraft(p)) {
+        const t = String((it && it.title) || '?').trim();
+        const parts = t.split(/\s+/);
+        const ini = ((parts[0] && parts[0][0]) || '?') + (parts[1] && parts[1][0] ? parts[1][0] : '');
+        return `<span class="who-ini" aria-hidden="true">${esc(ini.toUpperCase())}</span>`;
+      }
+      return `<img src="${esc(`https://i.pravatar.cc/96?img=${(j * 13) % 70 + 1}`)}" alt="">`;
+    };
     const card = (it, j) => `
       <div class="card quote">
         <div class="quote-mark">“</div>
         <p>${esc(it.text)}</p>
         <div class="quote-who">
-          <img src="${esc(it.image || `https://i.pravatar.cc/96?img=${(j * 13) % 70 + 1}`)}" alt="">
+          ${who(it, j)}
           <div><strong>${esc(it.title)}</strong><small>${esc(it.extra || '')}</small></div>
         </div>
       </div>`;
@@ -540,12 +567,12 @@ body.photo-grade{
       <div class="t-featured">
         <div class="quote-mark">“</div>
         <p>${esc(main.text)}</p>
-        <div class="quote-who"><img src="${esc(main.image || 'https://i.pravatar.cc/96?img=11')}" alt=""><div><strong>${esc(main.title)}</strong><small>${esc(main.extra || '')}</small></div></div>
+        <div class="quote-who">${who(main, 0)}<div><strong>${esc(main.title)}</strong><small>${esc(main.extra || '')}</small></div></div>
       </div>`;
       const stack = rest.map((it, j) => `
       <div class="card quote t-stack-item">
         <p>${esc(it.text)}</p>
-        <div class="quote-who"><img src="${esc(it.image || `https://i.pravatar.cc/96?img=${(j * 13) % 70 + 1}`)}" alt=""><div><strong>${esc(it.title)}</strong><small>${esc(it.extra || '')}</small></div></div>
+        <div class="quote-who">${who(it, j)}<div><strong>${esc(it.title)}</strong><small>${esc(it.extra || '')}</small></div></div>
       </div>`).join('');
       return sectionShell(s, i, `${head(s)}<div class="t-feat-grid">${big}<div class="t-stack">${stack}</div></div>`);
     }
@@ -1277,6 +1304,8 @@ body.theme-dark .hero-tag{color:#e8eaf2}
 .quote-who{display:flex;gap:12px;align-items:center}
 .quote-who img{width:46px;height:46px;border-radius:50%;object-fit:cover}
 .quote-who small{display:block;color:var(--muted)}
+.who-ini{width:46px;height:46px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:800;letter-spacing:.04em;background:color-mix(in srgb,var(--accent) 22%,var(--surface));color:var(--text);flex:0 0 46px}
+.photo-hole{width:100%;min-height:160px;display:flex;align-items:center;justify-content:center;text-align:center;border:1px dashed color-mix(in srgb,var(--text) 22%,transparent);border-radius:16px;background:color-mix(in srgb,var(--surface) 80%,transparent);color:var(--muted);font-size:.85rem;font-weight:700;letter-spacing:.02em}
 /* faq */
 .faq-list{max-width:760px;margin:0 auto;display:grid;gap:14px}
 .faq-item{background:var(--surface);border:1px solid color-mix(in srgb,var(--text) 8%,transparent);border-radius:14px;padding:0 22px;box-shadow:var(--shadow)}

@@ -109,7 +109,9 @@ const SMOKES = [
   ['scripts/ai-niche-smoke.js', 'AI niche smoke'],
   ['scripts/ai-followup-smoke.js', 'AI follow-up smoke'],
   ['scripts/ai-translate-smoke.js', 'AI translate smoke'],
-  ['scripts/ai-fingerprint-smoke.js', 'AI fingerprint smoke']
+  ['scripts/ai-fingerprint-smoke.js', 'AI fingerprint smoke'],
+  ['scripts/ai-photos-smoke.js', 'AI photo ranker smoke'],
+  ['scripts/ai-compose-smoke.js', 'AI compose smoke']
 ];
 
 function runScript(args, label) {
@@ -246,6 +248,7 @@ function checkBuilder() {
   runScript(['scripts/command-palette-smoke.js'], 'Command palette smoke');
   runScript(['scripts/modal-focus-smoke.js'], 'Modal focus smoke');
   runScript(['scripts/studio-chrome-smoke.js'], 'Studio chrome smoke');
+  runScript(['scripts/chrome-registry-smoke.js'], 'Chrome registry smoke');
   runScript(['scripts/review-reward-smoke.js'], 'Review reward smoke');
   runScript(['scripts/ai-studio-upgrade-smoke.js'], 'AI Studio upgrade smoke');
   await runSmokeSuites();

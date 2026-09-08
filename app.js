@@ -11,6 +11,8 @@ const App = (() => {
   const uid = () => Math.random().toString(36).slice(2, 10);
   // platform-aware shortcut label (⌘ on macOS, Ctrl elsewhere)
   const KBD = (typeof window !== 'undefined' && window.pallettai && window.pallettai.platform === 'darwin') ? '⌘' : 'Ctrl+';
+  const uiIcon = (name) => (typeof ICONS !== 'undefined' && ICONS.svg) ? ICONS.svg(name) : '';
+  const chromeTitle = (id) => (typeof CHROME !== 'undefined' && CHROME.viewTitle) ? CHROME.viewTitle(id) : id;
 
   // ---------------- state ----------------
   let projects = [];
@@ -627,7 +629,7 @@ const App = (() => {
     if (!c) return toast('Open a project first');
     const list = (loadRevs()[c.id] || []);
     if (!list.length) {
-      return openModal('⏱ Autosave history', `
+      return openModal('Autosave history', `
         <p style="color:var(--muted)">No autosaved revisions for “${esc(c.name)}” yet. Snapshots are taken about 2 seconds after you stop editing (up to 12 per project) — and every edit is also covered by <b>Undo</b> (${KBD}Z) while the designer is open.</p>`);
     }
     const fmt = (t) => {
@@ -639,13 +641,13 @@ const App = (() => {
             : Math.floor(secs / 86400) + 'd ago';
       return ago + ' · ' + d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     };
-    openModal('⏱ Autosave history — ' + esc(c.name), `
+    openModal('Autosave history — ' + esc(c.name), `
       <p style="color:var(--muted);margin-bottom:12px">Autosaved snapshots of this project. Restoring keeps the current state in Undo (${KBD}Z) so nothing is lost.</p>
       <div style="display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto">
         ${list.map((r, i) => {
           let meta = '';
           try { const s = JSON.parse(r.snap); meta = (s.site.sections || []).length + ' sections · ' + (s.suites || []).length + ' suites'; } catch (e) {}
-          return `<div class="rev-row"><div><b>${fmt(r.t)}</b><small>${esc(meta)}</small></div><div style="display:flex;gap:6px"><button class="btn ghost small" data-rev-del="${i}">🗑</button><button class="btn primary small" data-rev-use="${i}">Restore</button></div></div>`;
+          return `<div class="rev-row"><div><b>${fmt(r.t)}</b><small>${esc(meta)}</small></div><div style="display:flex;gap:6px"><button class="btn ghost small" data-rev-del="${i}">${uiIcon('trash')}</button><button class="btn primary small" data-rev-use="${i}">Restore</button></div></div>`;
         }).join('')}
       </div>`);
     $$('[data-rev-use]').forEach((b) => b.onclick = () => {
@@ -680,7 +682,7 @@ const App = (() => {
     if (!c) return;
     if (!spendCredit()) return;
     const btn = $('#seAi');
-    if (btn) { btn.disabled = true; btn.textContent = '✦ Rewriting…'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Rewriting…'; }
     try {
       const r = await AI.enhanceSection(sec, '', c, settings.onlineEnabled !== false);
       if (!r || !r.applied) {
@@ -701,7 +703,7 @@ const App = (() => {
       console.error('AI section rewrite failed', e);
       toast('The section rewrite failed — your credit was refunded. Try again.', false);
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '✦ Regenerate this section (1 credit)'; }
+      if (btn) { btn.disabled = false; btn.textContent = 'Regenerate this section (1 credit)'; }
     }
   }
 
@@ -738,12 +740,12 @@ const App = (() => {
     const audit = seoAudit(c);
     const gColor = ['A+', 'A', 'B'].includes(audit.letter) ? '#22c55e' : audit.letter === 'C' ? '#eab308' : '#ef4444';
     const ic = (l, fix) => (l === 'error' ? '🔴' : l === 'warn' ? '🟡' : (fix ? '🔵' : '✅'));
-    openModal('🩺 Site health check', `
+    openModal('Site health', `
       <p style="color:var(--muted);margin-bottom:14px">${issues.length ? issues.length + ' finding' + (issues.length === 1 ? '' : 's') + ' for “' + esc(s.name) + '”.' : 'No issues found — this site is in great shape. 🎉'}</p>
       <div style="display:flex;flex-direction:column;gap:8px">
         ${issues.map((i) => `<div class="diag-row diag-${esc(i.level)}">${i.level === 'error' ? '🔴' : i.level === 'warn' ? '🟡' : '🔵'} ${esc(i.msg)}</div>`).join('')}
       </div>
-      <h4 style="margin:18px 0 8px;font-size:.9rem">🔍 Launch grade — <span style="color:${gColor};font-weight:800">${esc(audit.letter)} · ${audit.score}/100</span> <small style="color:var(--muted);font-weight:600">SEO · performance · accessibility</small></h4>
+      <h4 style="margin:18px 0 8px;font-size:.9rem">Launch grade — <span style="color:${gColor};font-weight:800">${esc(audit.letter)} · ${audit.score}/100</span> <small style="color:var(--muted);font-weight:600">SEO · performance · accessibility</small></h4>
       <div style="display:flex;flex-direction:column;gap:8px">
         ${audit.checks.map((i) => `<div class="diag-row diag-${esc(i.level)}"><div>${ic(i.level, i.fix)} ${esc(i.msg)}${i.fix ? `<br><small style="color:var(--muted)">Fix: ${esc(i.fix)}</small>` : ''}</div></div>`).join('')}
       </div>`);
@@ -802,10 +804,10 @@ const App = (() => {
         </div>`).join('')
       : '<div class="quality-clear">✓ No findings — this project is ready to publish.</div>';
     const repairLabel = audit.safeFixes
-      ? '🛠 Run ' + audit.safeFixes + ' safe repair' + (audit.safeFixes === 1 ? '' : 's')
-      : '🛠 No safe repairs available';
+      ? 'Run ' + audit.safeFixes + ' safe repair' + (audit.safeFixes === 1 ? '' : 's')
+      : 'No safe repairs available';
     const afterLabel = qualityAfter ? 'Export site' : 'Export / hand off';
-    openModal('🛡 Publish quality gate', `
+    openModal('Publish quality gate', `
       <div class="quality-hero">
         <div class="quality-score" style="--quality-color:${color}"><strong>${esc(audit.letter)}</strong><span>${audit.score}/100</span></div>
         <div class="quality-summary"><span class="quality-kicker">${esc(audit.summary)}</span><h4>${esc(p.site.name || 'Untitled site')}</h4><p>Checked SEO, accessibility, content structure, responsive export safety and conversion essentials.</p></div>
@@ -1028,7 +1030,7 @@ const App = (() => {
       </div>
       <div class="lic-row">
         <input id="refCodeInput" placeholder="REF-XXXXXX — got a referral code?" spellcheck="false" autocomplete="off">
-        <button class="btn ghost small" id="btnRedeemRef">🎁 Redeem free Pro days</button>
+        <button class="btn ghost small" id="btnRedeemRef">Redeem Pro days</button>
       </div>
       <p class="lic-hint">Paste a license key issued by pallettai.org, or redeem a referral code for free Pro days — no card needed. Find your own referral code in Settings.</p>`;
     openModal('Upgrade PallettAI Studio', body, true);
@@ -1259,6 +1261,16 @@ const App = (() => {
   }
 
   // ---------------- navigation ----------------
+  function paintNav() {
+    if (typeof CHROME === 'undefined' || !CHROME.view) return;
+    $$('.nav-item[data-view]').forEach((btn) => {
+      const v = CHROME.view(btn.dataset.view);
+      if (!v) return;
+      const chip = CHROME.chip ? CHROME.chip(v.chip) : '';
+      btn.innerHTML = chip + '<span class="nav-ico" aria-hidden="true">' + uiIcon(v.icon) + '</span><span class="nav-label">' + esc(v.label) + '</span>';
+    });
+  }
+
   function switchView(name) {
     if (name !== 'ai' && aiStudyController) {
       aiStudyController.abort();
@@ -1268,8 +1280,8 @@ const App = (() => {
     $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
     $$('.view').forEach((v) => v.classList.remove('active'));
     $('#view-' + name).classList.add('active');
-    const titles = { dashboard: 'Dashboard', templates: 'Templates', designer: 'Designer', ai: 'AI Studio', suites: 'Upgrade Suites', database: 'Database', settings: 'Settings' };
-    $('#viewTitle').textContent = titles[name] || name;
+    const titles = { dashboard: 'Dashboard', templates: 'Templates', designer: 'Designer', ai: 'AI Studio', suites: 'Upgrade Suites', database: 'Database', settings: 'Settings', qr: 'QR Codes' };
+    $('#viewTitle').textContent = chromeTitle(name) || titles[name] || name;
     if (name === 'dashboard') renderDashboard();
     if (name === 'templates') renderTemplates();
     if (name === 'designer') renderDesigner();
@@ -1277,9 +1289,10 @@ const App = (() => {
     if (name === 'suites') renderSuites();
     if (name === 'database') renderDatabase();
     if (name === 'settings') renderSettings();
+    if (name === 'qr') renderQr();
     $('#projectChip').hidden = !(name === 'designer' || name === 'suites' || name === 'database') || !current();
     if (current() && ['designer', 'suites', 'database'].includes(name)) {
-      $('#projectChip').textContent = '◆ ' + current().name;
+      $('#projectChip').textContent = current().name;
     }
     if (name !== 'designer') chatOpenPanel(false);
     $('#topbarActions').innerHTML = '';
@@ -1287,19 +1300,19 @@ const App = (() => {
       const c = current();
       if (c) {
         $('#topbarActions').innerHTML = `
-          <button class="btn ghost small" id="btnUndo" title="Undo (${KBD}Z)">↩</button>
-          <button class="btn ghost small" id="btnRedo" title="Redo (${KBD}Shift+Z)">↪</button>
-          <button class="btn ghost small" id="btnHistory" title="Autosave history — restore an earlier version">⏱</button>
-          <button class="btn ghost small" id="btnChat" title="✦ Copilot — edit this site in plain English">✦ Copilot</button>
-          <button class="btn ghost small" id="btnPacks" title="One-click AI style packs">🎨 Styles</button>
-          <button class="btn ghost small" id="btnBrandPresets" title="Save and reuse your visual identity across projects">✦ Brand presets</button>
-          <button class="btn ghost small" id="btnDiag" title="Site health check">🩺</button>
-          <button class="btn ghost small" id="btnQuality" title="Publish quality gate — audit and safely repair this site">🛡</button>
-          <button class="btn ghost small" id="btnCopyHtml" title="Copy the current page as HTML">📋 Copy code</button>
-          <button class="btn ghost small" id="btnHandoff" title="Client handoff ZIP — site + guide + brand kit">🎁 Handoff</button>
-          <button class="btn ghost small" id="btnPublish" title="Publish online for a live link">🌐 Publish</button>
-          <button class="btn primary small" id="btnExport">⬇ Export site</button>
-          <button class="btn ghost small" id="btnCloseProject">✕ Close</button>`;
+          <button class="btn ghost small" id="btnUndo" title="Undo (${KBD}Z)">${uiIcon('undo')}</button>
+          <button class="btn ghost small" id="btnRedo" title="Redo (${KBD}Shift+Z)">${uiIcon('redo')}</button>
+          <button class="btn ghost small" id="btnHistory" title="Autosave history">${uiIcon('history')}</button>
+          <button class="btn ghost small" id="btnChat" title="Copilot">${uiIcon('chat')} Copilot</button>
+          <button class="btn ghost small" id="btnPacks" title="Style packs">${uiIcon('swatch')} Styles</button>
+          <button class="btn ghost small" id="btnBrandPresets" title="Brand presets">${uiIcon('layers')} Presets</button>
+          <button class="btn ghost small" id="btnDiag" title="Site health">${uiIcon('pulse')}</button>
+          <button class="btn ghost small" id="btnQuality" title="Quality gate">${uiIcon('shield')}</button>
+          <button class="btn ghost small" id="btnCopyHtml" title="Copy HTML">${uiIcon('copy')} Copy</button>
+          <button class="btn ghost small" id="btnHandoff" title="Client handoff">${uiIcon('gift')} Handoff</button>
+          <button class="btn ghost small" id="btnPublish" title="Publish">${uiIcon('globe')} Publish</button>
+          <button class="btn primary small" id="btnExport">${uiIcon('download')} Export site</button>
+          <button class="btn ghost small" id="btnCloseProject">${uiIcon('close')} Close</button>`;
         $('#btnUndo').onclick = histUndo;
         $('#btnRedo').onclick = histRedo;
         $('#btnHistory').onclick = histOpen;
@@ -1699,6 +1712,26 @@ const App = (() => {
     return new Date(ts).toLocaleDateString();
   }
   function renderCoreTools() {
+    renderJobTray();
+  }
+
+  function renderJobTray() {
+    const root = $('#jobTray');
+    if (!root) return;
+    const c = current();
+    if (!c) {
+      root.className = 'job-tray empty';
+      root.innerHTML = `<div class="job-copy"><span class="job-kicker">Workspace</span><h2>No project open</h2><p>Create a project or generate a first draft. Work stays on this machine until you export.</p></div>`;
+      return;
+    }
+    const tpl = c.templateId && String(c.templateId).indexOf('ai:') === 0 ? 'AI draft' : ((DB.getTemplate(c.templateId) || {}).name || 'Project');
+    root.className = 'job-tray';
+    root.innerHTML = `<div class="job-copy"><span class="job-kicker">Current job</span><h2>${esc(c.name)}</h2><p>${esc(tpl)} · ${relWhen(c.updatedAt)}</p></div><button class="btn primary" id="jobOpen">Open</button>`;
+    const open = $('#jobOpen');
+    if (open) open.onclick = () => switchView('designer');
+  }
+
+  function renderCoreToolsLegacy() {
     const root = $('#coreTools');
     if (!root) return;
     const now = Date.now();
@@ -1747,7 +1780,7 @@ const App = (() => {
     const integrationIcons = ['⌖', '☼', '↗', '▣', '✦', '•••', '₿'];
     const integrationBody = `<div class="integration-grid">${integrationNames.map((name, i) => { const available = i < availableIntegrations; return `<div class="integration-chip"><span class="integration-mark mark-${i}">${integrationIcons[i]}</span><b>${name}</b><i class="${available ? 'available' : 'locked'}" title="${available ? 'Available in this plan' : 'Pro plan required'}"></i></div>`; }).join('')}</div><div class="integration-status"><span class="status-dot"></span>${availableIntegrations} of ${DB.integrations.length} services available · keyless-ready</div>`;
     const analyticsBody = `${svg('<path class="graph-fill" d="' + activityFill + '"/><path class="graph-line" d="' + activityPath + '"/>', 'growth-svg')}<div class="analytics-metrics"><div class="velocity-gauge" style="--velocity:${projectRatio}%"><span>${projectRatio}%</span><small>Velocity</small></div><div><b>${editedWeek}</b><span>projects active this week</span><b>${generationCount}</b><span>AI generations tracked</span></div></div>`;
-    root.innerHTML = `<div class="core-tools-heading"><div><span class="eyebrow">CORE TOOLS</span><h2>Everything you need to ship.</h2></div><span class="core-tools-meta">Live workspace overview</span></div><div class="core-tools-grid">
+    root.innerHTML = `<div class="core-tools-heading"><div><h2>Workspace</h2></div></div><div class="core-tools-grid">
       ${card('tool-ai', '✦', 'AI Studio Creator', 'Prompt-based website & asset builder.', aiBody, { key: 'ai', label: 'Open AI Studio' })}
       ${card('tool-designer', '⌘', 'Project Designer', 'Visual editor for layout, colors, and components.', designerBody, { key: 'designer', label: 'Open Designer' })}
       ${card('tool-team', '♧', 'Team Collaboration Hub', 'Keep your tasks and workspace presence in view.', teamBody, { key: 'settings', label: 'Workspace settings' })}
@@ -1782,8 +1815,8 @@ const App = (() => {
     const weekAgo = now - 7 * 864e5;
     const editedWeek = projects.filter((p) => p.updatedAt >= weekAgo).length;
     const makeStat = (cls, label, ico, valueHtml, sub, go) =>
-      `<div class="stat-card ${cls}"${go ? ` data-go="${go}"` : ''}>
-        <div class="sc-top"><span class="sc-label">${label}</span><span class="sc-ico">${ico}</span></div>
+      `<div class="metric ${cls}"${go ? ` data-go="${go}"` : ''}>
+        <div class="sc-top"><span class="sc-label">${label}</span></div>
         <div class="sc-value">${valueHtml}</div>
         <div class="sc-sub">${sub}</div>
       </div>`;
@@ -1814,10 +1847,10 @@ const App = (() => {
       ? 'Nothing saved yet — projects stay on this device'
       : projects.length + ' project' + (projects.length === 1 ? '' : 's') + ' + autosave history · local only';
     stats.innerHTML =
-      makeStat('sc-projects', 'Active projects', '📁', '<span>' + projects.length + '</span>', pSub, 'projects') +
-      makeStat('sc-ai', 'AI credits', '✦', '<span>' + (pro ? '∞' : cred.left) + '</span><small>' + (pro ? 'unlimited' : 'left') + '</small>', cSub, 'ai') +
-      makeStat('sc-store', 'Local studio data', '💾', '<span>' + dashFmtBytes(totB) + '</span>', st4);
-    $$('#dashStats .stat-card[data-go]').forEach((c) => c.onclick = () => {
+      makeStat('sc-projects', 'Projects', '', '<span>' + projects.length + '</span>', pSub, 'projects') +
+      makeStat('sc-ai', 'Credits', '', '<span>' + (pro ? 'Unlimited' : cred.left) + '</span><small>' + (pro ? '' : ' left') + '</small>', cSub, 'ai') +
+      makeStat('sc-store', 'Local data', '', '<span>' + dashFmtBytes(totB) + '</span>', st4);
+    $$('#dashStats .metric[data-go]').forEach((c) => c.onclick = () => {
       const go = c.dataset.go;
       if (go === 'ai') switchView('ai');
       else if (go === 'projects') $('#projectsGrid').scrollIntoView({ behavior: 'smooth' });
@@ -1846,12 +1879,12 @@ const App = (() => {
         }).join('')}</div>`;
     const sorted = projects.slice().sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 4);
     const recentHtml = !sorted.length
-      ? `<div class="ins-empty"><div class="ie-emoji">🪄</div><p>No projects yet — create one from a template above and your activity will appear here.</p></div>`
+      ? `<div class="ins-empty"><p>No projects yet. Start from a template and recent work will show here.</p></div>`
       : `<div class="act-list">${sorted.map((p) => {
           const secs = totalSections(p);
           const pages = Builder.pages(p).length;
           const su = (p.suites || []).length;
-          const tpl = p.templateId && p.templateId.indexOf('ai:') === 0 ? '✦ AI-generated' : ((DB.getTemplate(p.templateId) || {}).name || 'custom');
+          const tpl = p.templateId && p.templateId.indexOf('ai:') === 0 ? 'AI draft' : ((DB.getTemplate(p.templateId) || {}).name || 'custom');
           const metaBits = [tpl + ' template', secs + ' section' + (secs === 1 ? '' : 's')];
           if (pages > 1) metaBits.push(pages + ' pages');
           if (su) metaBits.push(su + ' suite' + (su === 1 ? '' : 's'));
@@ -1869,7 +1902,7 @@ const App = (() => {
       `<div class="ins-card">
         <div class="ins-head"><h3>AI generations — last 7 days</h3><span class="ins-note">${signedIn ? 'tied to your registry account' : 'tracked on this device'}</span></div>
         ${total === 0
-          ? `<div class="ins-empty"><div class="ie-emoji">✦</div><p>No AI generations this week. Describe a site in the AI Studio and it will show up here.</p><button class="btn primary small" id="insAiGo">Open AI Studio</button></div>`
+          ? `<div class="ins-empty"><p>No generations this week.</p><button class="btn primary small" id="insAiGo">Open AI Studio</button></div>`
           : chartHtml}
       </div>
       <div class="ins-card">
@@ -1892,7 +1925,7 @@ const App = (() => {
     const icons = $('#dashTemplatesIcons');
     if (icons) {
       icons.innerHTML = DB.templates.slice(0, 8).map((t) =>
-        `<span class="tpl-door-ico" title="${esc(t.name)}">${t.icon}</span>`
+        `<span class="tpl-door-ico" title="${esc(t.name)}">${esc((t.name || '?').charAt(0))}</span>`
       ).join('');
     }
     const go = () => switchView('templates');
@@ -1909,13 +1942,13 @@ const App = (() => {
       const locked = proTpl && !isPro();
       return `
       <div class="card tpl-card ${locked ? 'locked' : ''}" data-tpl="${t.id}">
-        <span class="tag">${esc(t.tag)}${proTpl ? ' · <span class="pro-chip">🔒 Pro</span>' : ''}</span>
-        <div class="tpl-icon">${t.icon}</div>
+        <span class="tag">${esc(t.tag)}${proTpl ? ' · <span class="pro-chip">Pro</span>' : ''}</span>
+        <div class="tile-mark">${esc((t.name || '?').charAt(0))}</div>
         <h4>${esc(t.name)}</h4>
         <p>${esc(t.desc)}</p>
         <div class="mini-row">
-          <button class="btn primary small" data-use="${t.id}">${locked ? '🔒 Upgrade' : '＋ Start'}</button>
-          <button class="btn ghost small" data-prev="${t.id}">👁 Preview</button>
+          <button class="btn primary small" data-use="${t.id}">${locked ? 'Upgrade' : 'Start'}</button>
+          <button class="btn ghost small" data-prev="${t.id}">Preview</button>
         </div>
         ${locked ? `<div class="lock-veil"><span class="lock-chip"><span class="pill-dot"></span>${esc(t.name)} is a Pro template</span></div>` : ''}
       </div>`;
@@ -1944,7 +1977,7 @@ const App = (() => {
     rows.slice(1).forEach((el) => el.remove());
     if (!rows.length) grid.insertAdjacentHTML('beforebegin', `
       <div class="import-row" style="display:flex;gap:10px;align-items:center;margin-bottom:12px">
-        <button class="btn ghost small" id="btnImport">⬆ Import project (JSON)</button>
+        <button class="btn ghost small" id="btnImport">Import project</button>
         <span style="font-size:.75rem;color:var(--muted)">Backups are per-project JSON files — restore them on any machine.</span>
         <input type="file" id="importFile" accept=".json,application/json" hidden>
       </div>`);
@@ -1952,23 +1985,27 @@ const App = (() => {
     const importFile = $('#importFile');
     if (importFile) importFile.onchange = (e) => importProjectFile(e.target.files[0]);
     if (!projects.length) {
-      grid.innerHTML = '<div class="empty-state">No projects yet — start from a template. ✨</div>';
+      grid.innerHTML = '<div class="empty-state">No projects yet. Start from a template.</div>';
       return;
     }
-    grid.innerHTML = projects.map((p) => `
-      <div class="card project-card">
-        <h4>${esc(p.name)}</h4>
-        <p>${esc(p.templateId && p.templateId.indexOf('ai:') === 0 ? '✦ AI-generated' : DB.getTemplate(p.templateId).name + ' template')} · ${totalSections(p)} section${totalSections(p) === 1 ? '' : 's'}${Builder.pages(p).length > 1 ? ' · ' + Builder.pages(p).length + ' pages' : ''} · ${(p.suites || []).length} suite${(p.suites || []).length === 1 ? '' : 's'}</p>
-        <div>${(p.suites || []).map((s) => `<span class="chip">${esc((DB.getSuite(s) || {}).name || s)}</span>`).join('')}</div>
-        <div class="mini-row">
+    grid.innerHTML = projects.map((p) => {
+      const kind = p.templateId && String(p.templateId).indexOf('ai:') === 0 ? 'AI draft' : ((DB.getTemplate(p.templateId) || {}).name || 'Project');
+      const meta = [kind, totalSections(p) + ' section' + (totalSections(p) === 1 ? '' : 's')];
+      if (Builder.pages(p).length > 1) meta.push(Builder.pages(p).length + ' pages');
+      if ((p.suites || []).length) meta.push((p.suites || []).length + ' suite' + ((p.suites || []).length === 1 ? '' : 's'));
+      return `
+      <div class="work-row">
+        <span class="work-mark">${esc((p.name || '?').charAt(0))}</span>
+        <div class="work-copy"><b>${esc(p.name)}</b><span>${esc(meta.join(' · '))} · ${esc(new Date(p.updatedAt).toLocaleDateString())}</span></div>
+        <div class="work-actions">
           <button class="btn primary small" data-open="${p.id}">Open</button>
-          <button class="btn ghost small" data-dup="${p.id}">⧉</button>
-          <button class="btn ghost small" data-bak="${p.id}" title="Backup as JSON">💾</button>
-          <button class="btn ghost small" data-exp="${p.id}">⬇</button>
-          <button class="btn danger small" data-del="${p.id}">🗑</button>
+          <button class="btn ghost small" data-dup="${p.id}" title="Duplicate">${uiIcon('dup')}</button>
+          <button class="btn ghost small" data-bak="${p.id}" title="Backup as JSON">${uiIcon('save')}</button>
+          <button class="btn ghost small" data-exp="${p.id}" title="Export">${uiIcon('download')}</button>
+          <button class="btn danger small" data-del="${p.id}" title="Delete">${uiIcon('trash')}</button>
         </div>
-        <div class="project-meta"><span>${esc(new Date(p.updatedAt).toLocaleDateString())}</span><span>${esc(new Date(p.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</span></div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
 
     $$('[data-open]').forEach((b) => b.onclick = () => { currentId = b.dataset.open; switchView('designer'); });
     $$('[data-dup]').forEach((b) => b.onclick = () => duplicateProject(b.dataset.dup));
@@ -1985,7 +2022,7 @@ const App = (() => {
         <iframe srcdoc="${esc(Builder.buildSiteHTML(p, exportSettings()))}" style="width:100%;height:420px;border:none"></iframe>
       </div>
       <div style="display:flex;gap:10px;margin-top:14px">
-        <button class="btn primary small" id="modalUseTpl">＋ Create project from this template</button>
+        <button class="btn primary small" id="modalUseTpl">Create project</button>
       </div>`);
     $('#modalUseTpl').onclick = () => { closeModal(); createProject(tpl); };
   }
@@ -2123,8 +2160,9 @@ const App = (() => {
 
   // Shared empty-state hero: circular icon chip + title + explanation + actions.
   function emptyStateHtml(o) {
+    const mark = (typeof ICONS !== 'undefined' && ICONS.has && ICONS.has(o.icon)) ? uiIcon(o.icon) : o.icon;
     return `<div class="empty-hero${o.compact ? ' compact' : ''}">
-      <div class="eh-ico" aria-hidden="true">${o.icon}</div>
+      <div class="eh-ico" aria-hidden="true">${mark}</div>
       <h3>${o.title}</h3>
       ${o.desc ? `<p>${o.desc}</p>` : ''}
       ${o.actions ? `<div class="eh-actions">${o.actions}</div>` : ''}
@@ -2137,11 +2175,11 @@ const App = (() => {
     const c = current();
     if (!c) {
       $('#designerRoot').innerHTML = emptyStateHtml({
-        icon: '🎨',
+        icon: 'pen',
         title: 'No project open',
-        desc: 'Open a project from the dashboard to start designing — or generate a fresh site with AI and it opens straight in the Designer.',
+        desc: 'Open a project from the dashboard, or generate a draft in AI Studio.',
         actions: `<button class="btn primary" onclick="App.go('dashboard')">Go to Dashboard</button>
-                  <button class="btn ghost" onclick="App.go('ai')">✦ Generate with AI</button>`
+                  <button class="btn ghost" onclick="App.go('ai')">Generate</button>`
       });
       return;
     }
@@ -2172,11 +2210,11 @@ const App = (() => {
         </div>
         <div class="set-desc" id="palA11y" style="margin-top:2px"></div>
         <div class="field"><label>Font ${customF.length ? `· <span style="color:var(--accent)">${customF.length} custom</span>` : ''}</label>
-          <select id="siteFont">${customF.map((f) => `<option value="${esc(f.name)}" ${f.name === c.site.font ? 'selected' : ''}>${esc(f.name)} · custom ⬆</option>`).join('')}${DB.fonts.map((f) => `<option value="${f.id}" ${f.id === c.site.font ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</select>
+          <select id="siteFont">${customF.map((f) => `<option value="${esc(f.name)}" ${f.name === c.site.font ? 'selected' : ''}>${esc(f.name)} · custom</option>`).join('')}${DB.fonts.map((f) => `<option value="${f.id}" ${f.id === c.site.font ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</select>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <input type="file" id="fontFile" accept=".woff2,.woff,.ttf,application/font-woff2,application/font-woff,font/ttf" hidden>
-          <button class="btn ghost small" id="btnUploadFont">⬆ Upload custom font</button>
+          <button class="btn ghost small" id="btnUploadFont">${uiIcon('upload')} Upload font</button>
           ${customF.map((f) => `<span class="chip">${esc(f.name)} <b data-rmfont="${esc(f.name)}" style="cursor:pointer;color:var(--danger)">✕</b></span>`).join('')}
         </div>
       </div>
@@ -2186,8 +2224,8 @@ const App = (() => {
         <div class="set-row" style="padding:6px 0"><div><label>Logo</label></div>
           <div style="display:flex;gap:8px;align-items:center">
             ${s.logo ? `<img src="${esc(s.logo)}" style="width:34px;height:34px;border-radius:9px;background:var(--surface2);padding:3px" alt="">` : ''}
-            <button class="btn ghost small" id="btnAiLogo">✦ AI logo</button>
-            <button class="btn ghost small" id="btnLogoUp">⬆</button>
+            <button class="btn ghost small" id="btnAiLogo">AI logo</button>
+            <button class="btn ghost small" id="btnLogoUp">Upload</button>
             ${s.logo ? '<button class="btn ghost small" id="btnLogoClear">✕</button>' : ''}
             <input type="file" id="logoFile" accept="image/*" hidden>
           </div>
@@ -2250,6 +2288,9 @@ const App = (() => {
           </div>
         </div>
         <iframe id="previewFrame" title="Live site preview"></iframe>
+        <div id="photoDropOverlay" class="photo-drop-overlay" hidden>
+          <div class="photo-drop-slots" id="photoDropSlots"></div>
+        </div>
       </div>
 
       <div class="panel">
@@ -2257,7 +2298,7 @@ const App = (() => {
         <h3>Sections <span style="color:var(--muted);font-weight:600">(${c.site.sections.length})</span>${multiPg ? '<span class="chip" style="margin-left:6px">📄 ' + esc(pgNow.name) + ' page</span>' : ''}</h3>
         <div class="add-sec-row">
           <select id="addSecType">${Object.entries(DB.sectionTypes).map(([k, v]) => `<option value="${k}">${v.icon} ${v.name}</option>`).join('')}</select>
-          <button class="btn primary small" id="addSecBtn">＋ Add</button>
+          <button class="btn primary small" id="addSecBtn">Add</button>
         </div>
         <div class="section-list" id="secList"></div>
         <div class="sec-editor" id="secEditor"></div>
@@ -2388,13 +2429,14 @@ const App = (() => {
     renderSecList();
     renderEditor();
     schedulePreview();
+    bindPhotoDrop();
   }
 
   function touch(c) {
     c.updatedAt = Date.now();
     saveProjects();
     const chip = $('#projectChip');
-    if (chip && !chip.hidden) chip.textContent = '◆ ' + c.name;
+    if (chip && !chip.hidden) chip.textContent = c.name;
     schedulePreview();
     // The section list contents do not change during typing, so do not rebuild it
     // on every keystroke. Section-order / section-content changes call their own
@@ -2403,7 +2445,7 @@ const App = (() => {
 
   function schedulePreview() {
     clearTimeout(previewTimer);
-    previewTimer = setTimeout(renderPreview, 500);
+    previewTimer = setTimeout(renderPreview, 200);
   }
   function paintSwatches(activeId) {
     $$('[data-pal]').forEach((sw) => { sw.style.borderColor = sw.dataset.pal === activeId ? 'var(--accent)' : 'transparent'; });
@@ -2436,6 +2478,80 @@ const App = (() => {
     }
   }
 
+  function photoTargets(project) {
+    const slots = [];
+    ((project && project.site && project.site.sections) || []).forEach((s) => {
+      if (!s) return;
+      if (s.type === 'hero') slots.push({ label: 'Hero', sec: s });
+      if (s.type === 'about') slots.push({ label: 'About', sec: s });
+      if (s.type === 'gallery' && Array.isArray(s.items)) {
+        s.items.slice(0, 6).forEach((it, j) => { if (it) slots.push({ label: 'Gallery ' + (j + 1), sec: it }); });
+      }
+    });
+    return slots;
+  }
+
+  async function applyLocalPhoto(target, file, label) {
+    const done = await compressPhoto(file);
+    if (!done) return toast('Could not read that image — try a JPG or PNG', false);
+    histCapture();
+    target.image = done.data;
+    target.imageSource = 'Your photo';
+    const live = current();
+    if (live) touch(live);
+    toast('Photo placed on ' + (label || 'the site'), true);
+  }
+
+  function bindPhotoDrop() {
+    const wrap = $('.preview-wrap');
+    const overlay = $('#photoDropOverlay');
+    const slotsEl = $('#photoDropSlots');
+    if (!wrap || !overlay || !slotsEl) return;
+    if (wrap.dataset.photoDrop === '1') return;
+    wrap.dataset.photoDrop = '1';
+    const hide = () => { overlay.hidden = true; };
+    const hasFiles = (e) => {
+      const types = e.dataTransfer && e.dataTransfer.types;
+      if (!types) return false;
+      return ([].indexOf.call(types, 'Files') !== -1) || ([].indexOf.call(types, 'application/x-moz-file') !== -1);
+    };
+    const paintSlots = () => {
+      const slots = photoTargets(current());
+      slotsEl.innerHTML = slots.map((s, i) => `<button type="button" class="photo-drop-slot" data-slot="${i}">Drop on ${esc(s.label)}</button>`).join('')
+        || '<div class="photo-drop-slot">No photo slots on this page</div>';
+      $$('#photoDropSlots .photo-drop-slot').forEach((el) => {
+        el.addEventListener('dragover', (ev) => { ev.preventDefault(); ev.stopPropagation(); el.classList.add('over'); });
+        el.addEventListener('dragleave', () => el.classList.remove('over'));
+        el.addEventListener('drop', async (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          hide();
+          const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+          const slot = photoTargets(current())[+el.dataset.slot];
+          if (!file || !slot) return;
+          await applyLocalPhoto(slot.sec, file, slot.label);
+        });
+      });
+    };
+    wrap.addEventListener('dragenter', (e) => {
+      if (!hasFiles(e) || !current()) return;
+      e.preventDefault();
+      paintSlots();
+      overlay.hidden = false;
+    });
+    wrap.addEventListener('dragover', (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+    });
+    wrap.addEventListener('dragleave', (e) => {
+      if (!wrap.contains(e.relatedTarget)) hide();
+    });
+    wrap.addEventListener('drop', (e) => {
+      e.preventDefault();
+      hide();
+    });
+  }
+
   function renderSecList() {
     const c = current();
     const wrap = $('#secList');
@@ -2444,24 +2560,24 @@ const App = (() => {
       const t = DB.sectionTypes[s.type] || { name: s.type, icon: '🧩' };
       return `
       <div class="sec-card ${selectedSec === i ? 'active' : ''}" data-sec="${i}">
-        <div class="sec-top"><span>${t.icon}</span> ${esc(s.title || t.name)}</div>
+        <div class="sec-top">${esc(s.title || t.name)}</div>
         <div class="sec-type">${esc(t.name)} · ${esc((DB.getAnimation(s.animation) || {}).name || 'none')}</div>
         <div class="sec-actions">
           <button class="icon-btn" data-sec-up="${i}" title="Move up">↑</button>
           <button class="icon-btn" data-sec-down="${i}" title="Move down">↓</button>
-          <button class="icon-btn" data-sec-dup="${i}" title="Duplicate">⧉</button>
-          <button class="icon-btn" data-sec-del="${i}" title="Delete">🗑</button>
+          <button class="icon-btn" data-sec-dup="${i}" title="Duplicate">${uiIcon('dup')}</button>
+          <button class="icon-btn" data-sec-del="${i}" title="Delete">${uiIcon('trash')}</button>
         </div>
       </div>`;
     }).join('') || `<div class="empty-state" style="padding:30px 12px">
         <div style="font-size:1.6rem;margin-bottom:6px">Looks empty here</div>
         <p style="color:var(--muted);margin:0 0 18px">Your site has no sections yet. Add the first one below — most sites start with a <b>hero</b>, then an <b>about</b> and a <b>contact</b>.</p>
         <div style="display:flex;flex-wrap:wrap;gap:8px">
-          <button class="btn primary small" data-add-sec-type="hero">＋ Hero</button>
-          <button class="btn ghost small" data-add-sec-type="about">＋ About</button>
-          <button class="btn ghost small" data-add-sec-type="features">＋ Features</button>
-          <button class="btn ghost small" data-add-sec-type="testimonials">＋ Testimonials</button>
-          <button class="btn ghost small" data-add-sec-type="contact">＋ Contact</button>
+          <button class="btn primary small" data-add-sec-type="hero">Hero</button>
+          <button class="btn ghost small" data-add-sec-type="about">About</button>
+          <button class="btn ghost small" data-add-sec-type="features">Features</button>
+          <button class="btn ghost small" data-add-sec-type="testimonials">Testimonials</button>
+          <button class="btn ghost small" data-add-sec-type="contact">Contact</button>
         </div>
       </div>`;
 
@@ -2575,12 +2691,12 @@ const App = (() => {
     bar.innerHTML =
       pages.map((pg) => `
         <button class="page-chip ${pg.id === active ? 'active' : ''}" data-page-go="${esc(pg.id)}" title="Edit the “${esc(pg.name)}” page">
-          ${esc(pg.name)}${pg.slug === 'index' ? ' <span style="opacity:.6">🏠</span>' : ''}
+          ${esc(pg.name)}
         </button>`).join('') +
       (multi ? `<span class="page-chip-sep"></span>
-        <button class="icon-btn" data-page-ren title="Rename this page">✎</button>
-        <button class="icon-btn" data-page-del title="Delete this page" ${(Builder.pages(c).find((pg) => pg.id === active) || {}).slug === 'index' ? 'disabled' : ''}>🗑</button>` : '') +
-      `<button class="page-chip add" data-page-add title="Add another page — e.g. About, Services, Gallery…">＋ Page</button>`;
+        <button class="icon-btn" data-page-ren title="Rename this page">${uiIcon('pen')}</button>
+        <button class="icon-btn" data-page-del title="Delete this page" ${(Builder.pages(c).find((pg) => pg.id === active) || {}).slug === 'index' ? 'disabled' : ''}>${uiIcon('trash')}</button>` : '') +
+      `<button class="page-chip add" data-page-add title="Add another page">Add page</button>`;
     $$('[data-page-go]').forEach((b) => b.onclick = () => setActivePage(b.dataset.pageGo));
     const del = $('[data-page-del]');
     if (del) del.onclick = () => askDeletePage();
@@ -2601,14 +2717,14 @@ const App = (() => {
     const usedNames = Builder.pages(c).map((pg) => pg.name.toLowerCase());
     const ideas = ['About', 'Services', 'Portfolio', 'Gallery', 'Team', 'Pricing', 'Blog', 'Contact']
       .filter((n) => !usedNames.includes(n.toLowerCase()));
-    const chips = ideas.map((n) => `<button class="chip" style="cursor:pointer" data-idea="${n}">＋ ${n}</button>`).join('') || '<span style="color:var(--muted)">Every page name is taken — pick your own below.</span>';
-    openModal('📄 Add a page', `
+    const chips = ideas.map((n) => `<button class="chip" style="cursor:pointer" data-idea="${n}">${n}</button>`).join('') || '<span style="color:var(--muted)">Every page name is taken — pick your own below.</span>';
+    openModal('Add a page', `
       <p style="color:var(--muted);margin-bottom:10px">A new page starts with a ready-made header + contact, and shows up in the site nav. You can rename or delete it any time.</p>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${chips}</div>
       <div class="field"><label>Page name</label><input id="pgName" placeholder="e.g. About" maxlength="24"></div>
       <div class="field"><label>Web address</label><input id="pgSlug" placeholder="about" maxlength="32" spellcheck="false" style="font-family:monospace"><div class="set-desc">Exported as <b>about.html</b> — letters, numbers and dashes only.</div></div>
       <div style="display:flex;gap:10px;margin-top:16px">
-        <button class="btn primary small" id="pgCreate">＋ Add page</button>
+        <button class="btn primary small" id="pgCreate">Add page</button>
       </div>`);
     $$('[data-idea]').forEach((ch) => ch.onclick = () => {
       const nm = ch.dataset.idea;
@@ -2721,15 +2837,17 @@ const App = (() => {
     const t = DB.sectionTypes[s.type] || {};
     box.classList.add('open');
     box.innerHTML = `
-      <h4>${t.icon} Editing ${esc(t.name || s.type)}</h4>
+      <h4>Editing ${esc(t.name || s.type)}</h4>
       <div class="field"><label>Title</label><input id="seTitle" value="${esc(s.title)}"></div>
       <div class="field"><label>Subtitle / tagline</label><input id="seSubtitle" value="${esc(s.subtitle)}"></div>
       <div class="field"><label>Text</label><textarea id="seText">${esc(s.text)}</textarea></div>
       <div class="field"><label>Emblem image (shown above title)</label>
         <input id="seEmblem" placeholder="https://… or icon URL" value="${esc(s.emblem || '')}"></div>
       <div class="field"><label>Image URL ${s.imageSource ? `· <span style="color:var(--accent)">from ${esc(s.imageSource)}</span>` : ''}</label>
-        <input id="seImage" placeholder="https://… or leave empty for auto" value="${esc(s.image)}"></div>
-      <button class="btn ghost small" id="seAi" style="align-self:flex-start">✦ Regenerate this section (1 credit)</button>
+        <input id="seImage" placeholder="https://… or leave empty for auto" value="${esc(s.image)}">
+        <button type="button" class="btn ghost small" id="seImageFileBtn">Replace from disk</button>
+        <input type="file" id="seImageFile" accept="image/jpeg,image/png,image/webp,image/gif" hidden></div>
+      <button class="btn ghost small" id="seAi" style="align-self:flex-start">Regenerate this section (1 credit)</button>
       ${DB.layoutsFor(s.type).length ? `
       <div class="field"><label>Design variant</label>
         <select id="seLayout">${DB.layoutsFor(s.type).map((v) => `<option value="${esc(v.id)}" ${(s.layout || (s.type === 'hero' ? (c.site.heroLayout || '') : '')) === v.id ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select>
@@ -2746,10 +2864,10 @@ const App = (() => {
             <input data-pk="title" value="${esc(it.title)}" placeholder="Post title">
             <input data-pk="extra" value="${esc(it.extra)}" placeholder="Category · X min read">
             <textarea data-pk="text" rows="4" placeholder="Post body…">${esc(it.text)}</textarea>
-            <button class="icon-btn" data-post-del="${j}" title="Delete post">🗑</button>
+            <button class="icon-btn" data-post-del="${j}" title="Delete post">${uiIcon('trash')}</button>
           </div>`).join('')}
         </div>
-        <button class="btn ghost small" id="postAdd" style="align-self:flex-start">＋ Add post</button>
+        <button class="btn ghost small" id="postAdd" style="align-self:flex-start">${uiIcon('plus')} Add post</button>
       </div>` : ['features', 'stats', 'pricing', 'testimonials', 'faq', 'shop', 'about', 'gallery', 'collection'].includes(s.type) ? `
       <div class="field"><label>Items — one per line: icon|title|text|extra|tag|image</label>
         <textarea id="seItems" rows="6" style="font-size:.75rem;font-family:monospace">${esc(itemsToText(s.items))}</textarea>
@@ -2780,7 +2898,7 @@ const App = (() => {
         <textarea id="seRows" rows="8" style="font-size:.75rem;font-family:monospace">${esc((s.rows || []).map((r) => (Array.isArray(r) ? r.join('|') : String(r || ''))).join('\n'))}</textarea>
         <label style="font-size:.68rem;color:var(--muted)">Menus & schedules: “Item|Price|Notes”. Perfect for price comparisons, opening hours or specs.</label>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost small" id="seRowAdd">＋ Add row</button><button class="btn ghost small" id="seColAdd">＋ Add column</button></div>` : ''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost small" id="seRowAdd">${uiIcon('plus')} Add row</button><button class="btn ghost small" id="seColAdd">${uiIcon('plus')} Add column</button></div>` : ''}
       ${s.type === 'collection' ? `
       <div class="field"><label>Live controls on the exported site</label>
         <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
@@ -2796,6 +2914,19 @@ const App = (() => {
     };
     bind('seTitle', 'title'); bind('seSubtitle', 'subtitle'); bind('seText', 'text');
     bind('seImage', 'image'); bind('seExtra', 'extra');
+    const seImageFileBtn = $('#seImageFileBtn');
+    const seImageFile = $('#seImageFile');
+    if (seImageFileBtn && seImageFile) {
+      seImageFileBtn.onclick = () => seImageFile.click();
+      seImageFile.onchange = async () => {
+        const file = seImageFile.files && seImageFile.files[0];
+        seImageFile.value = '';
+        if (!file) return;
+        await applyLocalPhoto(s, file, (DB.sectionTypes[s.type] || {}).name || s.type);
+        const urlInp = $('#seImage');
+        if (urlInp) urlInp.value = s.image || '';
+      };
+    }
     const seBookingProvider = $('#seBookingProvider');
     if (seBookingProvider) {
       seBookingProvider.onchange = () => {
@@ -3027,12 +3158,12 @@ const App = (() => {
     if (!c) return toast('Open a project first');
     const skipQuality = !!(options && options.skipQuality);
     const pages = Builder.pages(c);
-    openModal('⬇ Export & hand off', `
-      <p style="color:var(--muted);margin-bottom:14px">${esc(c.name)} — ${pages.length} page${pages.length === 1 ? '' : 's'}, ready to ship. These are files, not tenants: plain HTML/CSS/JS you own, hostable anywhere without a PallettAI account.</p>
+    openModal('Export & hand off', `
+      <p style="color:var(--muted);margin-bottom:14px">${esc(c.name)} — ${pages.length} page${pages.length === 1 ? '' : 's'}. These are files, not tenants: plain HTML/CSS/JS you own, hostable anywhere without a PallettAI account.</p>
       <div class="export-cards">
-        <button class="export-card" id="exDownload"><span class="export-ico">⬇</span><b>Download site</b><small>${pages.length === 1 ? 'Single self-contained .html file' : pages.length + ' pages as a .zip folder (index.html + more)'}</small></button>
-        <button class="export-card" id="exHandoff"><span class="export-ico">🎁</span><b>Client handoff ZIP</b><small>Site + hosting guide + brand kit + optional invoice — hand to your client</small></button>
-        <button class="export-card" id="exPublish"><span class="export-ico">🌐</span><b>Publish online</b><small>Deploy to a free host (Netlify / Neocities) and get a live link</small></button>
+        <button class="export-card" id="exDownload"><span class="export-ico">${uiIcon('download')}</span><b>Download site</b><small>${pages.length === 1 ? 'Single self-contained .html file' : pages.length + ' pages as a .zip folder (index.html + more)'}</small></button>
+        <button class="export-card" id="exHandoff"><span class="export-ico">${uiIcon('gift')}</span><b>Client handoff ZIP</b><small>Site, hosting guide, brand kit, optional invoice</small></button>
+        <button class="export-card" id="exPublish"><span class="export-ico">${uiIcon('globe')}</span><b>Publish online</b><small>Netlify or Neocities, then a live link</small></button>
       </div>`);
     $('#exDownload').onclick = () => { closeModal(); exportSite({ skipQuality }); };
     $('#exHandoff').onclick = () => { closeModal(); openHandoff({ skipQuality }); };
@@ -3113,11 +3244,11 @@ const App = (() => {
         return openQualityGate(() => openHandoff({ skipQuality: true }), c);
       }
     }
-    openModal('🎁 Client handoff', `        <p style="color:var(--muted);margin-bottom:12px">Generates one ZIP with the live site files, a plain-English hosting guide, the brand kit — and an optional invoice you can email straight to the client. Pro+ removes PallettAI attribution from the delivery pack.</p>
+    openModal('Client handoff', `        <p style="color:var(--muted);margin-bottom:12px">One ZIP with the live site files, a hosting guide, the brand kit, and an optional invoice. Pro+ removes PallettAI attribution from the pack.</p>
       <div class="field"><label>Client / business name</label><input id="hoClient" placeholder="e.g. Willow Café Ltd." value="${esc((c.name || '').replace(/ Site$/, ''))}"></div>
       <div class="field"><label>Invoice amount £ (optional — blank = no invoice)</label><input id="hoAmount" type="number" min="0" step="0.01" placeholder="e.g. 450"></div>
       <div style="display:flex;gap:10px;margin-top:16px">
-        <button class="btn primary small" id="hoGo">🎁 Build handoff ZIP</button>
+        <button class="btn primary small" id="hoGo">Build handoff ZIP</button>
       </div>`);
     $('#hoGo').onclick = () => {
       const client = ($('#hoClient').value || '').trim();
@@ -3265,7 +3396,7 @@ const App = (() => {
     }
     const cred = await loadPublish();
     const pages = Builder.pages(c);
-    openModal('🌐 Publish online', `
+    openModal('Publish online', `
       <p style="color:var(--muted);margin-bottom:14px">${esc(c.name)} — ${pages.length} page${pages.length === 1 ? '' : 's'}. Choose a free host, connect once, then publish with one click. Credentials stay in this app only.</p>
 
       <div class="pub-card">
@@ -3349,9 +3480,9 @@ const App = (() => {
     const grid = $('#suitesGrid');
     if (!c) {
       grid.innerHTML = emptyStateHtml({
-        icon: '🧩',
+        icon: 'layers',
         title: 'Open a project to install suites',
-        desc: 'Suites upgrade a finished site — blog, shop, animations, SEO and more.',
+        desc: 'Add blog, shop, motion, or SEO after the site is built.',
         actions: `<button class="btn primary" onclick="App.go('dashboard')">Go to Dashboard</button>`
       });
       return;
@@ -3362,8 +3493,8 @@ const App = (() => {
       const locked = proOnly && !isPro();
       return `
       <div class="suite-card ${installed ? 'installed' : ''} ${locked ? 'locked' : ''}">
-        <div class="suite-icon">${s.icon}</div>
-        <span class="suite-tag">${esc(s.tag)}${proOnly ? ' · <span class="pro-chip">🔒 Pro</span>' : ''}</span>
+        <div class="tile-mark">${esc((s.name || '?').charAt(0))}</div>
+        <span class="suite-tag">${esc(s.tag)}${proOnly ? ' · <span class="pro-chip">Pro</span>' : ''}</span>
         <h4>${esc(s.name)}</h4>
         <p>${esc(s.desc)}</p>
         <div class="suite-features">
@@ -3378,8 +3509,8 @@ const App = (() => {
         ${installed
           ? `<div class="installed-badge">✓ Installed</div><button class="btn danger small" data-uninstall="${s.id}">Uninstall</button>`
           : locked
-            ? `<button class="btn primary small" data-upgrade="${s.id}">🔒 Upgrade to install</button>`
-            : `<button class="btn primary small" data-install="${s.id}">＋ Install on “${esc(c.name)}”</button>`}
+            ? `<button class="btn primary small" data-upgrade="${s.id}">Upgrade to install</button>`
+            : `<button class="btn primary small" data-install="${s.id}">Install on ${esc(c.name)}</button>`}
       </div>`;
     }).join('');
 
@@ -3446,82 +3577,85 @@ const App = (() => {
     const root = $('#aiRoot');
     root.innerHTML = `
       <div class="ai-card">
-        <h3>✦ Generate a site from a prompt</h3>
-        <p class="sub">One credit per site. Describe the business — or paste your current website's URL and add your own photos, and the AI studies them and rebuilds you something better. New sites ship with real, topic-matched photos from the web by default.</p>
+        <h3>Generate a site from a prompt</h3>
+        <p class="sub">One click. A complete first draft: logo, ranked photos, and a layout that fits the business. Drop your own photos on the preview to swap them.</p>
         <textarea id="aiPrompt" placeholder="e.g. A modern bakery in Paris with a cozy, artisanal feel…"></textarea>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
           <input id="aiName" placeholder="Business name (optional — e.g. “Rustica”) — or just say it in the prompt" autocomplete="off" spellcheck="false" style="flex:1;min-width:200px;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font:inherit;font-size:.85rem">
           <input id="aiArea" placeholder="Town / area served (optional — e.g. “Leeds”) — powers local SEO" autocomplete="off" spellcheck="false" style="flex:1;min-width:200px;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font:inherit;font-size:.85rem">
         </div>
-        <div class="ai-brief">
-          <input id="aiOffer" placeholder="Offer in one line (e.g. “Sourdough daily, 48-hour dough”)" autocomplete="off">
-          <input id="aiCta" placeholder="Primary CTA (e.g. “Book a loaf”)" autocomplete="off">
-          <select id="aiVoice" title="Voice lock">
-            <option value="warm">Voice: warm</option>
-            <option value="premium">Voice: premium</option>
-            <option value="punchy">Voice: punchy</option>
-          </select>
-          <input id="aiProof1" placeholder="Proof 1" autocomplete="off">
-          <input id="aiProof2" placeholder="Proof 2" autocomplete="off">
-          <input id="aiProof3" placeholder="Proof 3" autocomplete="off">
-          <label class="ai-onepager"><input type="checkbox" id="aiOnePager"> Generate a one-page site</label>
-        </div>
-        <div class="ai-comps">
-          <input id="aiComp1" class="ai-in" placeholder="Competitor URL 1 (optional — structure only)" autocomplete="off" spellcheck="false">
-          <input id="aiComp2" class="ai-in" placeholder="Competitor URL 2 (optional)" autocomplete="off" spellcheck="false">
-          <input id="aiComp3" class="ai-in" placeholder="Competitor URL 3 (optional)" autocomplete="off" spellcheck="false">
-        </div>
-        <input id="aiSiteUrl" class="ai-in" placeholder="Your current website URL (optional) — the AI opens it, keeps the brand, contact details, services & content, and rebuilds it better" autocomplete="off" spellcheck="false">
         <div class="ai-upload">
           <div class="ai-upload-head">
-            <span class="up-title">📸 Your own photos <small>optional — used first: 1st → hero, 2nd → about, the rest → gallery</small></span>
-            <label for="aiFile" class="btn ghost small up-add">＋ Add photos</label>
+            <span class="up-title">Your photos <small>optional — drop here, then drag to Hero / About / Gal</small></span>
+            <label for="aiFile" class="btn ghost small up-add">Add photos</label>
           </div>
           <input type="file" id="aiFile" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden>
-          <div class="upload-drop" id="aiDrop">Drop photos here or click — they're used before anything else, in the order shown</div>
+          <div class="upload-drop" id="aiDrop">Drop photos here or click — used before web photos, in the order shown</div>
           <div class="upload-grid" id="aiUploadGrid"></div>
         </div>
-        <div class="chip-row" id="aiChips"></div>
-        <div class="ai-opts">
-          <select id="aiPack" title="Finish the site with a signature look"><option value="">No style pack</option>${AI.stylePacks.map((p) => `<option value="${p.id}">${p.icon} ${p.name}</option>`).join('')}</select>
-          <select id="aiFlavor" title="How the AI arranges sections"><option value="auto">✦ Auto — AI picks creative layouts</option><option value="classic">Classic layouts only</option></select>
-          <select id="aiPhoto" title="Where the site's photos come from">
-            <option value="real">📷 Real photos from the web — topic-matched (recommended)</option>
-            <option value="ai">🎨 AI-generated art</option>
-            <option value="none">No photos (clean, minimal)</option>
-          </select>
-          <label class="ai-onepager ai-photo-grade" title="Optional. Soft palette blend on photos only — faces and food stay real.">
-            <input type="checkbox" id="aiPhotoGrade">
-            <span>Tint photos to the palette <small>off by default · not a filter</small></span>
-          </label>
-        </div>
+        <details class="ai-more" id="aiMore">
+          <summary>More details</summary>
+          <div class="ai-brief">
+            <input id="aiOffer" placeholder="Offer in one line (e.g. “Sourdough daily, 48-hour dough”)" autocomplete="off">
+            <input id="aiCta" placeholder="Primary CTA (e.g. “Book a loaf”)" autocomplete="off">
+            <select id="aiVoice" title="Voice lock">
+              <option value="warm">Voice: warm</option>
+              <option value="premium">Voice: premium</option>
+              <option value="punchy">Voice: punchy</option>
+            </select>
+            <input id="aiProof1" placeholder="Proof 1" autocomplete="off">
+            <input id="aiProof2" placeholder="Proof 2" autocomplete="off">
+            <input id="aiProof3" placeholder="Proof 3" autocomplete="off">
+            <label class="ai-onepager"><input type="checkbox" id="aiOnePager"> Generate a one-page site</label>
+          </div>
+          <div class="ai-comps">
+            <input id="aiComp1" class="ai-in" placeholder="Competitor URL 1 (optional — structure only)" autocomplete="off" spellcheck="false">
+            <input id="aiComp2" class="ai-in" placeholder="Competitor URL 2 (optional)" autocomplete="off" spellcheck="false">
+            <input id="aiComp3" class="ai-in" placeholder="Competitor URL 3 (optional)" autocomplete="off" spellcheck="false">
+          </div>
+          <input id="aiSiteUrl" class="ai-in" placeholder="Your current website URL (optional) — the AI opens it, keeps the brand, contact details, services & content, and rebuilds it better" autocomplete="off" spellcheck="false">
+          <div class="chip-row" id="aiChips"></div>
+          <div class="ai-opts">
+            <select id="aiPack" title="Finish the site with a signature look"><option value="">No style pack</option>${AI.stylePacks.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>
+            <select id="aiFlavor" title="How the AI arranges sections"><option value="auto">Auto layouts</option><option value="classic">Classic layouts only</option></select>
+            <select id="aiPhoto" title="Where the site's photos come from">
+              <option value="real">Real photos from the web (recommended)</option>
+              <option value="ai">Generated art</option>
+              <option value="none">No photos</option>
+            </select>
+            <label class="ai-onepager ai-photo-grade" title="Optional. Soft palette blend on photos only — faces and food stay real.">
+              <input type="checkbox" id="aiPhotoGrade">
+              <span>Tint photos to the palette <small>off by default · not a filter</small></span>
+            </label>
+          </div>
+        </details>
         <div class="ai-gen-actions">
-          <button class="btn primary ai-run" id="aiRun" ${aiBusy ? 'disabled' : ''}>✦ Generate site</button>
-          <button class="btn ghost ai-directions" id="aiDirections" ${aiBusy ? 'disabled' : ''}>🧭 Explore 3 directions <small>(1 credit)</small></button>
+          <button class="btn primary ai-run" id="aiRun" ${aiBusy ? 'disabled' : ''}>Generate site</button>
+          <button class="btn ghost ai-directions" id="aiDirections" ${aiBusy ? 'disabled' : ''}>Explore 3 directions <small>(1 credit)</small></button>
         </div>
         <div class="ai-progress" id="aiProgress" hidden></div>
         <div class="ai-result" id="aiResult" hidden></div>
       </div>
       <div class="ai-card">
         ${c ? `
-        <h3>Quick magic${' on “' + esc(c.site.name) + '”'}</h3>
-        <p class="sub">Upgrade a finished site without touching the design.</p>`
+        <h3>On “${esc(c.site.name)}”</h3>
+        <p class="sub">Photos, copy, restyle, and translation for the open site.</p>`
         : emptyStateHtml({
-            icon: '✨',
+            icon: 'spark',
             title: 'No project open',
-            desc: 'Quick magic upgrades an open site — photos, copy, restyle, translation. Generate a site above, or open one from the dashboard.',
+            desc: 'Generate a draft above, or open a project to edit photos, copy, and translation.',
             actions: `<button class="btn primary" onclick="App.go('dashboard')">Go to Dashboard</button>`
           })}
         <div class="ai-actions"${c ? '' : ' hidden'}>
-          <button class="btn ghost" id="aiImagesReal" ${c ? '' : 'disabled'}>📷 Topic-matched real photos <small>(1 credit)</small></button>
-          <button class="btn ghost" id="aiImagesAi" ${c ? '' : 'disabled'}>🎨 AI-generated images <small>(1 credit)</small></button>
-          <button class="btn ghost" id="aiPickBtn" ${c ? '' : 'disabled'}>🖼 Pick & choose photos <small>(1 credit)</small></button>
-          <button class="btn ghost" id="aiEnhance" ${c ? '' : 'disabled'}>✨ Enhance copy with AI <small>(1 credit)</small></button>
-          <button class="btn ghost" id="aiRestyleBtn" ${c ? '' : 'disabled'}>🎭 AI restyle <small>(1 credit)</small></button>
-          <button class="btn ghost" id="aiShuffleLook" ${c ? '' : 'disabled'}>🎲 Shuffle look <small>same copy · 1 credit</small></button>
-          <button class="btn ghost" id="aiLogoBtn" ${c ? '' : 'disabled'}>◆ AI logo <small>(free)</small></button>
-          <button class="btn ghost" id="aiStudioBtn" ${c ? '' : 'disabled'}>🎨 Logo studio <small>(free)</small></button>
-          <button class="btn ghost" id="aiAltBtn" ${c ? '' : 'disabled'}>🏷 Alt text for all images <small>(free)</small></button>
+          <button class="btn ghost" id="aiImagesReal" ${c ? '' : 'disabled'}>Topic-matched photos <small>(1 credit)</small></button>
+          <button class="btn ghost" id="aiImagesAi" ${c ? '' : 'disabled'}>Generated images <small>(1 credit)</small></button>
+          <button class="btn ghost" id="aiPickBtn" ${c ? '' : 'disabled'}>Pick photos <small>(1 credit)</small></button>
+          <button class="btn ghost" id="aiEnhance" ${c ? '' : 'disabled'}>Enhance copy <small>(1 credit)</small></button>
+          <button class="btn ghost" id="aiRestyleBtn" ${c ? '' : 'disabled'}>Restyle <small>(1 credit)</small></button>
+          <button class="btn ghost" id="aiShuffleLook" ${c ? '' : 'disabled'}>Shuffle look <small>1 credit</small></button>
+          <button class="btn ghost" id="aiLogoBtn" ${c ? '' : 'disabled'}>AI logo <small>free</small></button>
+          <button class="btn ghost" id="aiStudioBtn" ${c ? '' : 'disabled'}>Logo studio <small>free</small></button>
+          <button class="btn ghost" id="aiAltBtn" ${c ? '' : 'disabled'}>Alt text <small>free</small></button>
           <div class="ai-translate">
             <select id="aiLang" title="Translate the open site">${(typeof AiTranslate !== 'undefined' ? AiTranslate.LANGS : [{ id: 'en', name: 'English' }, { id: 'es', name: 'Spanish' }, { id: 'fr', name: 'French' }, { id: 'de', name: 'German' }, { id: 'it', name: 'Italian' }, { id: 'pt', name: 'Portuguese' }, { id: 'nl', name: 'Dutch' }, { id: 'pl', name: 'Polish' }]).map((l) => `<option value="${l.id}">${l.name}</option>`).join('')}</select>
             <label class="ai-onepager"><input type="checkbox" id="aiTranslateName"> Translate the name</label>
@@ -3692,7 +3826,7 @@ const App = (() => {
     grid.innerHTML = aiUploads.map((u, i) => `
       <div class="upload-card">
         ${u.thumb ? `<img src="${u.thumb}" loading="lazy" decoding="async" alt="">` : '<div class="upload-thumb-ph">…</div>'}
-        <div class="upload-role">${i === 0 ? 'Hero' : i === 1 ? 'About' : 'Gallery'}</div>
+        <div class="upload-role">${i === 0 ? 'Hero' : i === 1 ? 'About' : 'Gal ' + (i - 1)}</div>
         <div class="upload-name" title="${esc(u.name)}">${esc(u.name)}</div>
         <div class="upload-ctrls">
           <button class="btn ghost small" data-mv="${i}" data-dir="-1" title="Move earlier">◀</button>
@@ -3911,7 +4045,7 @@ const App = (() => {
     refreshEntitlements();
     switchView('designer');
     toast('✦ “' + chosen.site.name + '” direction selected — now make it yours', true);
-    if (photoMode !== 'none' || photos.length) runSitePhotos(chosen, st.prompt, photoMode, { photos, siteImages, openPicker: photoMode === 'real' });
+    if (photoMode !== 'none' || photos.length) runSitePhotos(chosen, st.prompt, photoMode, { photos, siteImages, includedInGenerate: true });
   }
 
   async function runAI() {
@@ -3947,7 +4081,7 @@ const App = (() => {
           });
           aiStudyController = null;
         } else {
-          await new Promise((r) => setTimeout(r, 430));
+          await new Promise((r) => setTimeout(r, 120));
         }
         const done = $('#aiStep' + i);
         if (done) { done.classList.add('done'); done.classList.remove('on'); }
@@ -3974,7 +4108,8 @@ const App = (() => {
         onePager: onePager,
         photoGrade: !!( $('#aiPhotoGrade') && $('#aiPhotoGrade').checked ),
         studied: studied.length ? studied : undefined,
-        website: website || undefined
+        website: website || undefined,
+        photoMode
       });
       if (!p || !p.site) throw new Error('AI returned no project');
       if (packId) AI.applyStylePack(p, packId);
@@ -3998,7 +4133,7 @@ const App = (() => {
         toast('✦ AI Studio built “' + p.site.name + '”', true);
       }
       if (photoMode !== 'none' || photos.length) {
-        runSitePhotos(p, prompt, photoMode, { photos, siteImages: website ? (website.images || []) : [], openPicker: photoMode === 'real' });
+        runSitePhotos(p, prompt, photoMode, { photos, siteImages: website ? (website.images || []) : [], includedInGenerate: true });
       }
     } catch (e) {
       if (aiStudyController) { aiStudyController.abort(); aiStudyController = null; }
@@ -4021,26 +4156,35 @@ const App = (() => {
     const opts = extra || {};
     const hasLocal = !!(opts.photos && opts.photos.length);
     if (settings.onlineEnabled === false && !hasLocal) {
-      toast('📡 Photos need an internet connection — add them any time from Database ▸ Online sources', false);
+      toast('Photos need an internet connection — drop your own onto the preview', false);
       return;
     }
+    if (opts.includedInGenerate) toast('Photos landing…');
     let out;
     try {
       out = await AI.generateImages(p, prompt, Object.assign({ source, online: settings.onlineEnabled !== false }, opts));
     } catch (e) {
-      refundCredit();
-      renderPlanPill();
+      if (!opts.includedInGenerate) {
+        refundCredit();
+        renderPlanPill();
+      }
       console.error('AI photo pass failed', e);
-      toast('The photo pass failed — your credit was refunded. Try again in a moment.', false);
+      toast(opts.includedInGenerate
+        ? 'Could not reach photo sources — drop your own onto the preview.'
+        : 'The photo pass failed — your credit was refunded. Try again in a moment.', false);
       return;
     }
     touch(p);
     refreshEntitlements();
     const ok = (out.hero ? 1 : 0) + (out.about ? 1 : 0) + out.gallery;
     if (ok === 0) {
-      refundCredit();
-      renderPlanPill();
-      toast('Could not fetch photos right now — credit refunded. Try again in a moment.', false);
+      if (!opts.includedInGenerate) {
+        refundCredit();
+        renderPlanPill();
+        toast('Could not fetch photos right now — credit refunded. Try again in a moment.', false);
+      } else {
+        toast('Could not reach photo sources — drop your own onto the preview.', false);
+      }
       return;
     }
     const phrase = source === 'ai'
@@ -4049,12 +4193,7 @@ const App = (() => {
         ? ok + ' of your uploaded photos in place'
         : ok + ' real, topic-matched photos in place';
     const what = [out.hero ? 'hero' : '', out.about ? 'about' : '', out.gallery ? out.gallery + ' gallery' : ''].filter(Boolean).join(', ');
-    toast('Photos ready — ' + phrase + ': ' + what + ' 🖼️', true);
-    // after a fresh real-photo run, let the creator fine-tune which photos
-    // land where — the engine already picked well, they get the final say
-    if (opts.openPicker && source === 'real' && ok > 0 && current() === p) {
-      openPhotoPicker(p, prompt, { auto: true });
-    }
+    toast('Photos ready — ' + phrase + ': ' + what, true);
   }
 
   // ---------------- Photo picker ----------------
@@ -4224,7 +4363,7 @@ const App = (() => {
     const src = source === 'ai' ? 'ai' : 'real';
     const btnId = src === 'ai' ? 'aiImagesAi' : 'aiImagesReal';
     const btn = $('#' + btnId);
-    if (btn) { btn.disabled = true; btn.textContent = src === 'ai' ? '🎨 Generating… (~20s)' : '📷 Finding real photos…'; }
+    if (btn) { btn.disabled = true; btn.textContent = src === 'ai' ? 'Generating…' : 'Finding photos…'; }
     const prompt = ($('#aiPrompt') && $('#aiPrompt').value.trim()) || c.site.name + ' — ' + c.site.tagline;
     const bank = aiUploads.filter((u) => u && u.data).map((u) => u.data);
     let out;
@@ -4240,8 +4379,8 @@ const App = (() => {
     if (btn) {
       btn.disabled = false;
       btn.innerHTML = src === 'ai'
-        ? '🎨 AI-generated images <small>(1 credit)</small>'
-        : '📷 Topic-matched real photos <small>(1 credit)</small>';
+        ? 'Generated images <small>(1 credit)</small>'
+        : 'Topic-matched photos <small>(1 credit)</small>';
     }
     if (!out) return;
     const ok = (out.hero ? 1 : 0) + (out.about ? 1 : 0) + out.gallery;
@@ -4370,7 +4509,7 @@ const App = (() => {
       const sw = d.c ? d.c.map((col) => `<span style="background:${col}"></span>`).join('') : `<span style="background:linear-gradient(135deg,#7c5cff,#22d3ee)"></span>`;
       return `<button class="lo-pair ${active ? 'active' : ''}" data-pair="${d.id}" title="${esc(d.name)}">${sw}</button>`;
     }).join('');
-    openModal('🎨 Logo studio', `
+    openModal('Logo studio', `
       <div class="lo-wrap">
         <div class="lo-preview">
           <div class="lo-stage"><img src="${uri}" alt="Logo preview" id="loImg"></div>
@@ -4450,7 +4589,7 @@ const App = (() => {
       console.error('AI copy enhancement failed', e);
       toast('Copy enhancement failed — your credit was refunded. Try again.', false);
     } finally {
-      if (btn) { btn.disabled = false; btn.innerHTML = '✨ Enhance copy with AI <small>(1 credit)</small>'; }
+      if (btn) { btn.disabled = false; btn.innerHTML = 'Enhance copy <small>(1 credit)</small>'; }
     }
   }
 
@@ -4475,7 +4614,7 @@ const App = (() => {
     if (!wrap) return;
     const tpl = (s, actions, results) => `
       <div class="online-card${s.tier ? ' pro-locked-src' : ''}">
-        <div class="src-top"><span class="src-ico">${s.icon}</span><div><h4>${esc(s.name)}${s.tier ? ' <span class="pro-chip">🔒 Pro</span>' : ''}</h4><a class="src-url" href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url.replace(/^https?:\/\//, ''))}</a></div></div>
+        <div class="src-top"><span class="tile-mark">${esc((s.name || '?').charAt(0))}</span><div><h4>${esc(s.name)}${s.tier ? ' <span class="pro-chip">Pro</span>' : ''}</h4><a class="src-url" href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url.replace(/^https?:\/\//, ''))}</a></div></div>
         <p>${esc(s.desc)}</p>
         <div class="src-actions">${actions}</div>
         <div class="src-results" id="res-${s.id}">${results || ''}</div>
@@ -4491,7 +4630,7 @@ const App = (() => {
           ? `<input class="src-input" id="inp-pixabay" placeholder="e.g. coffee, architecture, food" spellcheck="false" autocomplete="off" style="width:150px">
             <button class="btn ghost small" data-fetch="pixabay">Search photos</button>
             <button class="btn ghost small" data-fetch="pixabay-wide">Wide shots</button>${needProject}`
-          : `<span style="font-size:.72rem;color:var(--muted)">Pixabay photos need your free API key — </span><button class="btn ghost small" data-go-pixkey>🔑 Add in Settings</button>` },
+          : `<span style="font-size:.72rem;color:var(--muted)">Pixabay photos need your free API key. </span><button class="btn ghost small" data-go-pixkey>Add in Settings</button>` },
       randomuser: { acts: `<button class="btn ghost small" data-fetch="people">Fetch 6 people</button>${needProject}` },
       quotable: { acts: `<button class="btn ghost small" data-fetch="quotes">Fetch 5 quotes</button>${needProject}` },
       gfonts: { acts: `<button class="btn ghost small" data-fetch="fonts">Show all fonts</button>`, results: `<div class="src-results" id="res-gfonts" style="display:grid;grid-template-columns:1fr;gap:8px"></div>` },
@@ -4514,7 +4653,7 @@ const App = (() => {
       const ui = UI[s.id] || {};
       const locked = ui.pro && !isPro();
       const acts = locked
-        ? `<button class="btn ghost small" data-pro-upgrade>🔒 Pro database — upgrade</button>`
+        ? `<button class="btn ghost small" data-pro-upgrade>Upgrade for this source</button>`
         : (ui.acts || '');
       return tpl(s, acts, ui.results || '');
     }).join('');
@@ -4594,7 +4733,7 @@ const App = (() => {
         html = items.map((p) => `
           <div class="res-item" style="grid-column:span 2">
             <div style="display:flex;gap:10px;align-items:center"><img src="${esc(p.avatar)}" style="width:44px;height:44px;border-radius:50%;object-fit:cover"><div><b>${esc(p.name)}</b><div>${esc(p.city)}</div></div></div>
-            <div class="res-actions"><button class="btn ghost small" data-t-avatar="${esc(p.avatar)}" data-t-name="${esc(p.name)}" data-t-city="${esc(p.city)}">＋ Testimonial</button></div>
+            <div class="res-actions"><button class="btn ghost small" data-t-avatar="${esc(p.avatar)}" data-t-name="${esc(p.name)}" data-t-city="${esc(p.city)}">Add testimonial</button></div>
           </div>`).join('');
       } else if (what === 'quotes') {
         items = await ONLINE.fetchQuotes(5);
@@ -4603,8 +4742,8 @@ const App = (() => {
             <b>“${esc(q.text.slice(0, 90))}${q.text.length > 90 ? '…' : ''}”</b>
             <div style="color:var(--muted)">— ${esc(q.author)}</div>
             <div class="res-actions">
-              <button class="btn ghost small" data-q-cta="${esc(q.text)}" data-q-auth="${esc(q.author)}">📣 CTA</button>
-              <button class="btn ghost small" data-q-t="${esc(q.text)}" data-q-auth="${esc(q.author)}">💬 Testimonial</button>
+              <button class="btn ghost small" data-q-cta="${esc(q.text)}" data-q-auth="${esc(q.author)}">Use as CTA</button>
+              <button class="btn ghost small" data-q-t="${esc(q.text)}" data-q-auth="${esc(q.author)}">Use as testimonial</button>
             </div>
           </div>`).join('');
       } else if (what === 'fonts') {
@@ -4659,7 +4798,7 @@ const App = (() => {
               <div>${c2.price != null
                 ? `<span style="font-weight:800">£${Number(c2.price).toFixed(2)}</span> <span style="color:${(c2.change || 0) >= 0 ? 'var(--ok)' : 'var(--danger)'}">${(c2.change || 0) >= 0 ? '▲' : '▼'} ${Math.abs(c2.change || 0).toFixed(1)}%</span>`
                 : '<span style="color:var(--danger)">unknown coin id — try bitcoin,ethereum</span>'}</div>
-              <div class="res-actions"><button class="btn ghost small" data-widget="crypto" data-extra="${esc(ids)}">＋ Add crypto ticker</button></div>
+              <div class="res-actions"><button class="btn ghost small" data-widget="crypto" data-extra="${esc(ids)}">Add crypto ticker</button></div>
             </div>`).join('');
           toast('Coin prices fetched 🪙', true);
         } else if (what === 'github') {
@@ -4669,7 +4808,7 @@ const App = (() => {
             <div class="res-item" style="grid-column:span 2">
               <div style="display:flex;gap:10px;align-items:center"><img src="${esc(gh.avatar)}" style="width:44px;height:44px;border-radius:50%" alt=""><div><b>${esc(gh.name)}</b><div style="color:var(--muted)">${esc(gh.bio || '@' + gh.login)}</div></div></div>
               <div style="color:var(--muted)">${gh.public_repos} repos · ${gh.followers} followers · ${esc(gh.location || '—')}</div>
-              <div class="res-actions"><button class="btn ghost small" data-widget="github" data-extra="${esc(gh.login)}">＋ Add GitHub widget</button></div>
+              <div class="res-actions"><button class="btn ghost small" data-widget="github" data-extra="${esc(gh.login)}">Add GitHub widget</button></div>
             </div>`;
           toast('GitHub profile fetched 🐙', true);
         } else if (what === 'fx') {
@@ -4679,7 +4818,7 @@ const App = (() => {
             <div class="res-item" style="grid-column:span 2">
               <b>1 ${esc(base)} =</b>
               <div style="display:flex;gap:12px;flex-wrap:wrap;font-weight:700">${rates.map((r) => `<span>${esc(r.flag)} ${r.code} ${Number(r.rate).toFixed(2)}</span>`).join('')}</div>
-              <div class="res-actions"><button class="btn ghost small" data-widget="fx" data-extra="${esc(base)}">＋ Add FX widget</button></div>
+              <div class="res-actions"><button class="btn ghost small" data-widget="fx" data-extra="${esc(base)}">Add FX widget</button></div>
             </div>`;
           toast('FX rates fetched 💱', true);
         } else {
@@ -4850,17 +4989,17 @@ const App = (() => {
         if (q && !(t.name + ' ' + t.desc).toLowerCase().includes(q)) return;
         items.push(`
         <div class="db-item">
-          <h5>${t.icon} ${esc(t.name)}</h5>
+          <h5>${esc(t.name)}</h5>
           <p>${esc(t.desc)}</p>
-          <button class="btn ghost small" data-add-sec="${k}">＋ Add to project</button>
+          <button class="btn ghost small" data-add-sec="${k}">Add to project</button>
         </div>`);
       });
     } else if (dbTab === 'palettes') {
       items.push(`
         <div class="db-item" style="border-style:dashed;align-items:center;justify-content:center;text-align:center;cursor:pointer" id="newPalCard">
-          <div style="font-size:1.6rem">🎨</div>
-          <h5 style="color:var(--accent)">＋ Create your own palette</h5>
-          <p>Pick background, surface, primary and accent — saved to your library.</p>
+          <div class="tile-mark">${uiIcon('swatch')}</div>
+          <h5>Create a palette</h5>
+          <p>Pick background, surface, primary and accent. Saved to this library.</p>
         </div>`);
       DB.palettes.forEach((p) => {
         if (q && !p.name.toLowerCase().includes(q)) return;
@@ -4876,8 +5015,8 @@ const App = (() => {
           <div data-a11y="${p.id}" style="font-size:.68rem;min-height:1em"></div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
             <button class="btn ghost small" data-palette="${p.id}">Apply palette</button>
-            <button class="btn ghost small" data-pal-tune="${p.id}" title="Adjust the text colours until every text role passes WCAG AA (brand colours untouched)">🎚 AA tune</button>
-            ${p.id.indexOf('custom_') === 0 ? `<button class="btn danger small" data-del-pal="${p.id}">🗑</button>` : ''}
+            <button class="btn ghost small" data-pal-tune="${p.id}" title="Adjust the text colours until every text role passes WCAG AA (brand colours untouched)">Tune AA</button>
+            ${p.id.indexOf('custom_') === 0 ? `<button class="btn danger small" data-del-pal="${p.id}">${uiIcon('trash')}</button>` : ''}
           </div>
         </div>`);
       });
@@ -4887,11 +5026,11 @@ const App = (() => {
         iconSearchSerial++;
         if (iconSearchController) { try { iconSearchController.abort(); } catch (e) {} iconSearchController = null; }
         $('#dbList').innerHTML = q
-          ? emptyStateHtml({ icon: '🔍', title: 'Almost there', desc: 'Type at least 2 characters to search Iconify.' })
-          : emptyStateHtml({ icon: '🔎', title: 'Search 100k+ free icons', desc: 'Iconify is one search away — try “coffee”, “rocket”, “heart” or “leaf” and click an icon to set it as a section emblem.', compact: true });
+          ? emptyStateHtml({ icon: 'search', title: 'Almost there', desc: 'Type at least 2 characters to search Iconify.' })
+          : emptyStateHtml({ icon: 'search', title: 'Search icons', desc: 'Try coffee, rocket, heart, or leaf. Click an icon to set it as the selected section emblem.', compact: true });
         return;
       }
-      $('#dbList').innerHTML = emptyStateHtml({ icon: '⏳', title: 'Searching Iconify…', compact: true });
+      $('#dbList').innerHTML = emptyStateHtml({ icon: 'search', title: 'Searching Iconify…', compact: true });
       clearTimeout(iconTimer);
       const serial = ++iconSearchSerial;
       if (iconSearchController) { try { iconSearchController.abort(); } catch (e) {} }
@@ -4906,7 +5045,7 @@ const App = (() => {
           if (serial !== iconSearchSerial) return;
           const icons = (data.icons || []).slice(0, 48);
           if (!icons.length) {
-            $('#dbList').innerHTML = emptyStateHtml({ icon: '🫥', title: 'No icons match “' + esc(q) + '”', desc: 'Try a simpler word — “shop”, “food”, “star” — or browse a synonym.', compact: true });
+            $('#dbList').innerHTML = emptyStateHtml({ icon: 'search', title: 'No icons match “' + esc(q) + '”', desc: 'Try a simpler word such as shop, food, or star.', compact: true });
             return;
           }
           $('#dbList').innerHTML = `
@@ -4919,7 +5058,7 @@ const App = (() => {
 
         } catch (e) {
           if (serial !== iconSearchSerial || (e && e.code === 'request_cancelled')) return;
-          $('#dbList').innerHTML = emptyStateHtml({ icon: '📡', title: 'Iconify is unreachable', desc: 'Check your connection and try again — your library is unaffected.', compact: true });
+          $('#dbList').innerHTML = emptyStateHtml({ icon: 'globe', title: 'Iconify is unreachable', desc: 'Check your connection and try again. The local library is unaffected.', compact: true });
         } finally {
           if (iconSearchController === controller) iconSearchController = null;
         }
@@ -4937,11 +5076,11 @@ const App = (() => {
           const locked = pro && !isPro();
           items.push(`
           <div class="db-item${locked ? ' pro-locked' : ''}">
-            <h5>${esc(f.name)}${pro ? ' <span class="pro-chip">🔒 Pro</span>' : ''}</h5>
+            <h5>${esc(f.name)}${pro ? ' <span class="pro-chip">Pro</span>' : ''}</h5>
             <link rel="stylesheet" href="${ONLINE.fontCssUrl(f.id)}">
             <div class="font-preview" style="font-family:${esc(f.css)}">The quick brown fox jumps over the lazy dog — 0123456789</div>
             ${locked
-              ? `<button class="btn ghost small" data-font-upgrade>🔒 Premium Font Pack — upgrade</button>`
+              ? `<button class="btn ghost small" data-font-upgrade>Upgrade for this font</button>`
               : `<button class="btn ghost small" data-font="${f.id}">Apply font</button>`}
           </div>`);
         });
@@ -4961,7 +5100,7 @@ const App = (() => {
         if (q && !(it.name + ' ' + it.desc).toLowerCase().includes(q)) return;
         items.push(`
         <div class="db-item">
-          <h5>${it.icon} ${esc(it.name)}</h5>
+          <h5><span class="tile-mark">${esc((it.name || '?').charAt(0))}</span> ${esc(it.name)}</h5>
           <p>${esc(it.desc)}</p>
           <button class="btn ghost small" data-int="${it.id}">${esc(it.action)}</button>
           <div class="src-results" id="int-${it.id}"></div>
@@ -4976,16 +5115,16 @@ const App = (() => {
         items.push(`
         <div class="db-item lt-item${lockedL ? ' pro-locked' : ''}">
           ${l.thumb}
-          <h5>${l.icon} ${esc(l.name)}${l.tag ? ` <span class="chip${proL ? ' chip-pro' : ''}">${esc(l.tag)}</span>` : ''}</h5>
+          <h5>${esc(l.name)}${l.tag ? ` <span class="chip${proL ? ' chip-pro' : ''}">${esc(l.tag)}</span>` : ''}</h5>
           <p>${esc(l.desc)}</p>
           <small class="lt-type">${esc(tname)} section</small>
           ${lockedL
-            ? `<button class="btn ghost small" data-layout-upgrade="${l.id}">🔒 Pro layout — upgrade</button>`
-            : `<button class="btn ghost small" data-add-layout="${l.id}">＋ Add to project</button>`}
+            ? `<button class="btn ghost small" data-layout-upgrade="${l.id}">Upgrade for this layout</button>`
+            : `<button class="btn ghost small" data-add-layout="${l.id}">Add to project</button>`}
         </div>`);
       });
     }
-    $('#dbList').innerHTML = items.join('') || emptyStateHtml({ icon: '🗂', title: 'No matches in the library', desc: 'Try a shorter search — or browse the tabs above for the full collection.', compact: true });
+    $('#dbList').innerHTML = items.join('') || emptyStateHtml({ icon: 'search', title: 'No matches in the library', desc: 'Try a shorter search, or browse the tabs above.', compact: true });
 
     if (dbTab === 'palettes') {
       // WCAG contrast badges on every palette card
@@ -5284,7 +5423,7 @@ const App = (() => {
     const accountCard = !cloudOn ? `
       <div class="set-row"><div><label>PallettAI cloud registry</label><div class="set-desc">This app only connects to the official registry. The host cannot be changed.</div></div>
         <code class="ref-code" id="sbHostLocked">${esc(registryHost)}</code></div>
-      <div class="acc-row"><button class="btn primary small" id="btnAccConnect">☁ Connect</button></div>
+        <div class="acc-row"><button class="btn primary small" id="btnAccConnect">Connect</button></div>
       <div class="acc-status">Not connected — tap Connect, then create an account or sign in to upgrade.</div>`
       : !signedIn ? `
       <div class="acc-row"><span class="acc-badge">Ready to sign in</span><span class="conn-host">${esc(registryHost)}</span></div>
@@ -5313,16 +5452,15 @@ const App = (() => {
         <div class="acc-row"><button class="btn ghost small" id="btnChangePass">Change password</button></div>
         <p class="acc-status">Payments, cancellations and license keys attach to this account. Come back here to confirm whether you are on Free, Pro or Pro+.</p>
       </div>`;
-    const setIco = (inner) => `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
     const SET_ICO = {
-      account: setIco('<circle cx="10" cy="6.8" r="2.6"/><path d="M4.6 16.2c.7-3.1 2.6-4.6 5.4-4.6s4.7 1.5 5.4 4.6"/>'),
-      appearance: setIco('<path d="M10 3.2c2.6 3.1 5.2 5.4 5.2 8.1a5.2 5.2 0 1 1-10.4 0C4.8 8.6 7.4 6.3 10 3.2z"/><path d="M8.1 12.6h.01"/>'),
-      branding: setIco('<path d="M3.6 10.2V4.8A1.2 1.2 0 0 1 4.8 3.6h5.6L16.4 9.6 10 16 3.6 10.2z"/><circle cx="7.2" cy="7.2" r="1"/>'),
-      defaults: setIco('<path d="M3.6 6.6h12.8M3.6 13.4h12.8"/><circle cx="8" cy="6.6" r="1.55"/><circle cx="12.4" cy="13.4" r="1.55"/>'),
-      export: setIco('<path d="M4.2 13v2a1 1 0 0 0 1 1h9.6a1 1 0 0 0 1-1v-2"/><path d="M10 3.8v8.4M7 6.6l3-2.8 3 2.8"/>'),
-      online: setIco('<circle cx="10" cy="14.8" r="1.05" fill="currentColor" stroke="none"/><path d="M6.5 11.4a5 5 0 0 1 7 0M4.4 8.8a8 8 0 0 1 11.2 0"/>'),
-      studio: setIco('<circle cx="10" cy="10" r="2.2"/><path d="M10 3.2v1.6M10 15.2v1.6M3.2 10h1.6M15.2 10h1.6M5.2 5.2l1.1 1.1M13.7 13.7l1.1 1.1M14.8 5.2l-1.1 1.1M6.3 13.7l-1.1 1.1"/>'),
-      about: setIco('<circle cx="10" cy="10" r="6.4"/><path d="M10 9v5M10 6.2h.01"/>')
+      account: uiIcon('user'),
+      appearance: uiIcon('swatch'),
+      branding: uiIcon('layers'),
+      defaults: uiIcon('sliders'),
+      export: uiIcon('download'),
+      online: uiIcon('globe'),
+      studio: uiIcon('gear'),
+      about: uiIcon('info')
     };
     const TABS = [
       ['account', 'Account & billing'], ['appearance', 'Appearance'], ['branding', 'Branding'],
@@ -5375,17 +5513,17 @@ const App = (() => {
       </div>
 
       <div class="settings-card">
-        <h3>Referral program — give Pro, earn Pro</h3>
+        <h3>Referral program</h3>
         ${cloudOn && signedIn
           ? `<p class="sub">Give a friend <b>30 days of Pro</b> free when they redeem your code — you earn <b>7 days</b> every time they do. Rewards are granted by the cloud registry, so they work across devices.</p>
         <div class="set-row"><div><label>Your referral code</label><div class="set-desc">One stable code per account — share it anywhere.</div></div>
-          <div style="display:flex;gap:8px;align-items:center"><code class="ref-code" id="myRefCode">${esc(myRef)}</code><button class="btn ghost small" id="btnCopyRef">🔗 Copy invite link</button></div></div>
+          <div style="display:flex;gap:8px;align-items:center"><code class="ref-code" id="myRefCode">${esc(myRef)}</code><button class="btn ghost small" id="btnCopyRef">Copy invite link</button></div></div>
         <div class="set-row"><div><label>Invite link</label><div class="set-desc">https://pallettai.org/ref/… — redeemable here or in the upgrade modal.</div></div>
           <input id="refLink" readonly value="https://pallettai.org/ref/${esc(myRef.replace('REF-', ''))}"></div>
-        <h4 style="margin:16px 0 4px">Redemption history <span class="acc-status">☁ stamped by the registry</span></h4>`
+        <h4 style="margin:16px 0 4px">Redemption history <span class="acc-status">Recorded by the registry</span></h4>`
           : `<p class="sub">Give a friend <b>30 days of Pro</b> free when they redeem your code — you earn <b>7 days</b> every time they do. ${cloudOn ? 'Sign in above to verify codes against the cloud registry.' : 'Works instantly in the upgrade modal; connect an account above to verify codes server-side.'}</p>
         <div class="set-row"><div><label>Your referral code</label><div class="set-desc">Share it with clients, friends, or on your own site.</div></div>
-          <div style="display:flex;gap:8px;align-items:center"><code class="ref-code" id="myRefCode">${esc(myRef)}</code><button class="btn ghost small" id="btnCopyRef">🔗 Copy invite link</button></div></div>
+          <div style="display:flex;gap:8px;align-items:center"><code class="ref-code" id="myRefCode">${esc(myRef)}</code><button class="btn ghost small" id="btnCopyRef">Copy invite link</button></div></div>
         <div class="set-row"><div><label>Invite link</label><div class="set-desc">https://pallettai.org/ref/… — redeemable here or in the upgrade modal.</div></div>
           <input id="refLink" readonly value="https://pallettai.org/ref/${esc(myRef.replace('REF-', ''))}"></div>
         <h4 style="margin:16px 0 4px">Redemption history</h4>`}
@@ -5485,14 +5623,14 @@ const App = (() => {
       <div class="settings-card">
         <h3>Studio behaviour</h3>
         <p class="sub">How the app itself behaves on your machine.</p>
-        <div class="set-row"><div><label>Autosave snapshots</label><div class="set-desc">Revision history (⏱ in the designer toolbar) records automatically.</div></div>
+        <div class="set-row"><div><label>Autosave snapshots</label><div class="set-desc">Revision history in the designer toolbar records automatically.</div></div>
           <label class="switch"><input type="checkbox" id="setAutosave" ${s.autosave !== false ? 'checked' : ''}><span class="slider"></span></label></div>
         <div class="set-row"><div><label>Snapshot delay (ms)</label><div class="set-desc">How long after you stop editing before a snapshot is taken.</div></div>
           <input type="number" id="setAutosaveMs" value="${s.autosaveMs || 2000}" min="500" max="30000" step="500"></div>
         <div class="set-row"><div><label>Confirm before deleting</label><div class="set-desc">Ask for confirmation before deleting projects, pages and sections.</div></div>
           <label class="switch"><input type="checkbox" id="setConfirmDel" ${s.confirmDelete !== false ? 'checked' : ''}><span class="slider"></span></label></div>
         <div class="set-row"><div><label>Guided tour</label><div class="set-desc">Run the welcome tour again any time.</div></div>
-          <button class="btn ghost small" id="btnReTour">▶ Re-run the tour</button></div>
+          <button class="btn ghost small" id="btnReTour">Run the tour</button></div>
       </div>
 `) +
       cards('about', `
@@ -5500,7 +5638,7 @@ const App = (() => {
         <h3>About</h3>
         <p class="sub">PallettAI Studio ${esc(DB.version)} — design & build websites for clients.</p>
         <div class="set-row"><div><label>Made by PallettAI</label><div class="set-desc">Visit the studio online.</div></div>
-          <a class="btn ghost small" href="https://pallettai.org" target="_blank" rel="noopener">pallettai.org ↗</a></div>
+          <a class="btn ghost small" href="https://pallettai.org" target="_blank" rel="noopener">pallettai.org</a></div>
         <div class="set-row"><div><label>Reset all settings</label><div class="set-desc">Restore every option to its factory default.</div></div>
           <button class="btn danger small" id="btnResetSettings">Reset</button></div>
       </div>
@@ -5768,6 +5906,8 @@ const App = (() => {
     out.push('Make the hero punchier', 'Add a testimonials section', 'Try a dark blue palette', 'Rounder corners');
     if (!c.site.logo) out.push('Generate an AI logo');
     if (/^get started$/i.test(c.site.ctaText || '') || !(c.site.ctaText || '').trim()) out.unshift('Fix the weak CTA');
+    const heroNow = (c.site.sections || []).find((s) => s && s.type === 'hero');
+    if (heroNow && !String(heroNow.image || '').trim()) out.unshift('Drop a photo on the hero');
     const hasMap = (c.site.sections || []).some((s) => s.type === 'map')
       || (c.site.pages || []).some((pg) => (pg.sections || []).some((s) => s.type === 'map'));
     if (c.site.area && !hasMap) out.unshift('Add a map for ' + c.site.area);
@@ -6064,17 +6204,17 @@ const App = (() => {
                 <div style="display:flex;gap:3px;flex:none">${swatches}</div>
                 <div style="min-width:0"><b style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name || 'Brand system')}</b><small>${esc((pal && pal.name) || 'Custom palette')} · ${esc((font && font.name) || p.font || 'Inter')}${display ? ' + ' + esc(display.name) : ''}${p.stylePack ? ' · ' + esc(p.stylePack.name || 'Style pack') : ''}${p.seo ? ' · SEO defaults' : ''}</small></div>
               </div>
-              <div style="display:flex;gap:6px;flex:none"><button class="btn primary small" data-brand-apply="${esc(p.id)}">Apply</button><button class="btn ghost small" data-brand-delete="${esc(p.id)}" title="Delete preset">🗑</button></div>
+              <div style="display:flex;gap:6px;flex:none"><button class="btn primary small" data-brand-apply="${esc(p.id)}">Apply</button><button class="btn ghost small" data-brand-delete="${esc(p.id)}" title="Delete preset">${uiIcon('trash')}</button></div>
             </div>`;
           }).join('')
         : '<p class="sub" style="margin:0">No saved brand systems yet. Save the current project above and reuse it whenever you start a new client site.</p>';
-      openModal('✦ Reusable brand presets', `
+      openModal('Brand presets', `
         <p style="color:var(--muted);margin-bottom:14px">Save the visual system once — palette, type, logo, spacing, hero, navigation and custom CSS — then apply it to any project on this machine. Your site copy, sections, contacts and URLs stay untouched.</p>
         <div style="padding:14px;border:1px solid var(--border);border-radius:14px;background:var(--surface2);margin-bottom:16px">
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><b>Current brand</b><span class="chip">${esc(currentPalette.name)}</span><span class="chip">${esc(currentFont.name)}</span>${c.site.stylePack ? '<span class="chip">🎨 ' + esc(c.site.stylePack.name || 'Style pack') + '</span>' : ''}${c.site.logo ? '<span class="chip">◆ logo</span>' : ''}</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><b>Current brand</b><span class="chip">${esc(currentPalette.name)}</span><span class="chip">${esc(currentFont.name)}</span>${c.site.stylePack ? '<span class="chip">' + esc(c.site.stylePack.name || 'Style pack') + '</span>' : ''}${c.site.logo ? '<span class="chip">Logo</span>' : ''}</div>
           <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
             <div class="field" style="flex:1;min-width:210px;margin:0"><label>Preset name</label><input id="brandPresetName" maxlength="60" value="${esc(c.site.name || 'Client brand')} brand" placeholder="e.g. Northwind brand"></div>
-            <button class="btn primary small" id="brandPresetSave">＋ Save current brand</button>
+            <button class="btn primary small" id="brandPresetSave">Save current brand</button>
           </div>
           <label style="display:flex;gap:8px;align-items:flex-start;margin-top:11px;color:var(--muted);font-size:.75rem;line-height:1.45;cursor:pointer"><input type="checkbox" id="brandPresetSeo"><span><b style="color:var(--text)">Include SEO defaults</b><br>Also reuse the meta description, schema type, area served and social image. Leave this off when those details belong to each client.</span></label>
         </div>
@@ -6139,7 +6279,7 @@ const App = (() => {
         ${isAct ? '<button class="btn ghost small" disabled>✓ Active</button>' : `<button class="btn primary small" data-pack="${pk.id}">Apply${isPro() ? '' : ' · 1 credit'}</button>`}
       </div>`;
     }).join('');
-    openModal('🎨 AI style packs', `
+    openModal('Style packs', `
       <p style="color:var(--muted);margin-bottom:12px">One click reimagines the whole site — palette, typography, spacing, radius and signature styling. ${active ? 'Currently active: <b style="color:var(--ok)">' + esc(c.site.stylePack.name) + '</b>' : 'Preview updates instantly and everything is undoable with ${KBD}Z.'}</p>
       <div class="packs-grid">${cards}</div>
       <div style="display:flex;gap:14px;margin-top:14px;flex-wrap:wrap;align-items:center">
@@ -6168,48 +6308,391 @@ const App = (() => {
     };
   }
 
+
+  // ---------------- QR Codes (sidebar) ----------------
+  // Fully offline — uses vendor/qrcode.js (Kazuhiko Arase, MIT).
+  // No remote host needed; no CSP change. Data stays on device.
+  let qrType = (function(){ try{ return localStorage.getItem('pallettai.qr.type.v1') || 'url'; }catch(e){ return 'url'; }})();
+  let qrEcc = (function(){ try{ return localStorage.getItem('pallettai.qr.ecc.v1') || 'M'; }catch(e){ return 'M'; }})();
+  let qrQuiet = 4; // quiet zone in modules (spec default)
+  let qrLastDataUrl = '';
+
+  function qrBuildPayload() {
+    var t = qrType;
+    try {
+      if (t === 'url') {
+        var u = ($('#qrUrl') ? $('#qrUrl').value.trim() : '');
+        if (!u) return '';
+        if (u && !/^https?:\/\//i.test(u) && !u.startsWith('#') && !u.startsWith('mailto:') && !u.startsWith('tel:') && !u.startsWith('sms:') && !/^data:|^blob:/.test(u)) u = 'https://' + u;
+        return u;
+      }
+      if (t === 'wifi') {
+        var ssid = $('#qrWifiSsid') ? $('#qrWifiSsid').value : '';
+        var pass = $('#qrWifiPass') ? $('#qrWifiPass').value : '';
+        var enc = $('#qrWifiEnc') ? $('#qrWifiEnc').value : 'WPA';
+        var hidden = $('#qrWifiHidden') ? ($('#qrWifiHidden').checked ? 'true' : 'false') : 'false';
+        ssid = ssid.trim();
+        if (!ssid) return '';
+        // escape ; , : \ "
+        var escWifi = function(v){ return String(v||'').replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/:/g,'\\:').replace(/"/g,'\\"'); };
+        var out = 'WIFI:';
+        out += 'T:' + (enc === 'nopass' ? 'nopass' : enc) + ';';
+        out += 'S:' + escWifi(ssid) + ';';
+        if (enc !== 'nopass') out += 'P:' + escWifi(pass) + ';';
+        if (hidden === 'true') out += 'H:true;';
+        out += ';';
+        return out;
+      }
+      if (t === 'email') {
+        var to = $('#qrEmailTo') ? $('#qrEmailTo').value.trim() : '';
+        var sub = $('#qrEmailSub') ? $('#qrEmailSub').value : '';
+        var body = $('#qrEmailBody') ? $('#qrEmailBody').value : '';
+        if (!to) return '';
+        var mailto = 'mailto:' + encodeURIComponent(to);
+        var params = [];
+        if (sub) params.push('subject=' + encodeURIComponent(sub));
+        if (body) params.push('body=' + encodeURIComponent(body));
+        return mailto + (params.length ? '?' + params.join('&') : '');
+      }
+      if (t === 'phone') {
+        var ph = $('#qrPhone') ? $('#qrPhone').value.trim() : '';
+        if (!ph) return '';
+        // normalize: keep +, strip spaces/dashes
+        var tel = ph.replace(/[ \-\(\)]/g,'');
+        return 'tel:' + tel;
+      }
+      if (t === 'sms') {
+        var smsNum = $('#qrSmsNum') ? $('#qrSmsNum').value.trim() : '';
+        var smsBody = $('#qrSmsBody') ? $('#qrSmsBody').value : '';
+        if (!smsNum) return '';
+        var smsTel = smsNum.replace(/[ \-\(\)]/g,'');
+        // SMSTO: scheme widely supported; body optional
+        return smsBody ? ('SMSTO:' + smsTel + ':' + smsBody) : ('sms:' + smsTel);
+      }
+      if (t === 'vcard') {
+        var fn = $('#qrVcardName') ? $('#qrVcardName').value.trim() : '';
+        var org = $('#qrVcardOrg') ? $('#qrVcardOrg').value.trim() : '';
+        var vp = $('#qrVcardPhone') ? $('#qrVcardPhone').value.trim() : '';
+        var ve = $('#qrVcardEmail') ? $('#qrVcardEmail').value.trim() : '';
+        var vu = $('#qrVcardUrl') ? $('#qrVcardUrl').value.trim() : '';
+        if (!fn && !ve && !vp) return '';
+        var v = 'BEGIN:VCARD\r\nVERSION:3.0\r\n';
+        if (fn) v += 'FN:' + fn.replace(/[\r\n;]/g,' ') + '\r\n' + 'N:' + fn.replace(/[\r\n;]/g,' ') + ';;;;\r\n';
+        if (org) v += 'ORG:' + org.replace(/[\r\n;]/g,' ') + '\r\n';
+        if (vp) v += 'TEL:' + vp.replace(/[ \-\(\)]/g,'') + '\r\n';
+        if (ve) v += 'EMAIL:' + ve + '\r\n';
+        if (vu) { if (!/^https?:\/\//i.test(vu)) vu = 'https://' + vu; v += 'URL:' + vu + '\r\n'; }
+        v += 'END:VCARD';
+        return v;
+      }
+      // text
+      var tv = $('#qrText') ? $('#qrText').value : '';
+      return tv;
+    } catch(e){ return ''; }
+  }
+
+  function qrMakeDataUrl(payload) {
+    if (!payload) return '';
+    // vendor global `qrcode`
+    if (typeof qrcode !== 'function') return '';
+    try {
+      var qr = qrcode(0, qrEcc); // 0 = auto typeNumber
+      qr.addData(payload);
+      qr.make();
+      // 8 px per module gives a crisp ~260px code for type 4; GIF data URL scales well when drawn to canvas
+      var gifUrl = qr.createDataURL(8, qrQuiet * 8);
+      return gifUrl;
+    } catch(e){
+      // data too long for current ECC → try lower ECC once, then surface error
+      if (qrEcc !== 'L') {
+        try {
+          var qr2 = qrcode(0, 'L');
+          qr2.addData(payload);
+          qr2.make();
+          return qr2.createDataURL(8, qrQuiet * 8);
+        } catch(e2){ return ''; }
+      }
+      return '';
+    }
+  }
+
+  function qrDownload(dataUrl, name) {
+    try {
+      var a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = name || 'qrcode.png';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function(){ try{ a.remove(); }catch(e){} }, 300);
+    } catch(e) { toast('Could not download — try right-clicking the code and Save image', false); }
+  }
+
+  function qrCopyPayload(payload) {
+    if (!payload) return toast('Nothing to copy yet', false);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(payload).then(function(){ toast('Copied QR content ✓', true); }, function(){
+        var ta = document.createElement('textarea'); ta.value = payload; document.body.appendChild(ta); ta.select();
+        try{ document.execCommand('copy'); toast('Copied ✓', true); }catch(e){ toast('Copy failed', false); } try{ ta.remove(); }catch(e){}
+      });
+    } else {
+      var ta2 = document.createElement('textarea'); ta2.value = payload; document.body.appendChild(ta2); ta2.select();
+      try{ document.execCommand('copy'); toast('Copied ✓', true); }catch(e){ toast('Copy failed', false); } try{ ta2.remove(); }catch(e){}
+    }
+  }
+
+  function qrRenderPreview() {
+    var payload = qrBuildPayload();
+    var box = $('#qrPreviewBox');
+    var hint = $('#qrPreviewHint');
+    var dl = $('#qrDl');
+    var cpy = $('#qrCopy');
+    var copyPayloadBtn = $('#qrCopyPayload');
+    if (!box) return;
+    if (!payload) {
+      box.innerHTML = '<div class="qr-placeholder">Fill in the fields. The code appears here.<span>Stays on this device.</span></div>';
+      if (hint) hint.textContent = 'Waiting for content…';
+      if (dl) dl.disabled = true;
+      if (cpy) cpy.disabled = true;
+      qrLastDataUrl = '';
+      return;
+    }
+    var dataUrl = qrMakeDataUrl(payload);
+    qrLastDataUrl = dataUrl;
+    if (!dataUrl) {
+      box.innerHTML = '<div class="qr-placeholder qr-error">That is too long for a QR code at this error correction. Shorten it or switch Error correction to <b>L</b>.</div>';
+      if (hint) hint.textContent = 'Too much data — shorten or lower ECC';
+      if (dl) dl.disabled = true;
+      if (cpy) cpy.disabled = true;
+      return;
+    }
+    box.innerHTML = '<img class="qr-img" src="' + esc(dataUrl) + '" alt="QR code" width="256" height="256" draggable="false">';
+    if (hint) {
+      var nice = payload.length > 80 ? (payload.slice(0,78) + '…') : payload;
+      // for WIFI/vCard show trimmed label, not raw payload noise
+      var label = qrType;
+      var extra = '';
+      if (qrType === 'wifi') { var sEl = $('#qrWifiSsid'); var sVal = sEl ? sEl.value.trim() : ''; extra = sVal ? (' · ' + sVal) : ''; }
+      else if (qrType === 'vcard') { var nEl = $('#qrVcardName'); var nVal = nEl ? nEl.value.trim() : ''; extra = nVal ? (' · ' + nVal) : ''; }
+      hint.textContent = label + extra + ' · ' + payload.length + ' chars · ECC ' + qrEcc;
+      hint.title = payload;
+    }
+    if (dl) dl.disabled = false;
+    if (cpy) cpy.disabled = false;
+  }
+
+  function renderQr() {
+    var root = $('#qrRoot');
+    if (!root) return;
+    var urlGuess = '';
+    try {
+      var c = current();
+      if (c && c.site) {
+        if (c.site.url) urlGuess = String(c.site.url).trim();
+        else if (c.site.ctaLink && /^https?:\/\//i.test(String(c.site.ctaLink).trim())) urlGuess = String(c.site.ctaLink).trim();
+      }
+    } catch(e){}
+
+    var typeOpts = [
+      ['url','link','URL','Any HTTPS link'],
+      ['wifi','wifi','Wi-Fi','Network name and password'],
+      ['email','mail','Email','Address, subject, and body'],
+      ['phone','phone','Phone','Opens a call'],
+      ['sms','chat','SMS','A number and a message'],
+      ['text','lines','Text','Notes or a coupon code'],
+      ['vcard','user','vCard','A contact card']
+    ];
+
+    var eccOpts = [['L','L · ~7%'],['M','M · 15%'],['Q','Q · 25%'],['H','H · 30%']];
+
+    // field blocks
+    var urlBlock = '<div class="field" data-qr-field="url"><label>Link</label><input id="qrUrl" type="url" inputmode="url" spellcheck="false" placeholder="https://your-site.com" value="' + esc(urlGuess) + '"><label style="font-size:.68rem;color:var(--muted)">A published project URL, booking link, or menu PDF. https:// is added if omitted.</label></div>';
+
+    var wifiBlock = '<div data-qr-field="wifi" style="display:none;flex-direction:column;gap:10px">'
+      + '<div class="field"><label>Network name (SSID)</label><input id="qrWifiSsid" placeholder="e.g. Hearth Guest Wi-Fi"></div>'
+      + '<div style="display:grid;grid-template-columns:1fr 140px;gap:10px"><div class="field"><label>Password</label><input id="qrWifiPass" placeholder="leave empty for open network"></div>'
+      + '<div class="field"><label>Security</label><select id="qrWifiEnc"><option value="WPA">WPA/WPA2</option><option value="WEP">WEP</option><option value="nopass">No password (open)</option></select></div></div>'
+      + '<label style="display:flex;gap:6px;align-items:center;font-size:.8rem;cursor:pointer"><input type="checkbox" id="qrWifiHidden"> Hidden network</label></div>';
+
+    var emailBlock = '<div data-qr-field="email" style="display:none;flex-direction:column;gap:10px">'
+      + '<div class="field"><label>To</label><input id="qrEmailTo" type="email" placeholder="hello@example.com"></div>'
+      + '<div class="field"><label>Subject</label><input id="qrEmailSub" placeholder="Enquiry from QR code"></div>'
+      + '<div class="field"><label>Message</label><textarea id="qrEmailBody" rows="3" placeholder="Hi — I found your QR code…"></textarea></div></div>';
+
+    var phoneBlock = '<div class="field" data-qr-field="phone" style="display:none"><label>Phone number</label><input id="qrPhone" type="tel" inputmode="tel" placeholder="e.g. +44 20 7123 4567"></div>';
+    var smsBlock = '<div data-qr-field="sms" style="display:none;flex-direction:column;gap:10px">'
+      + '<div class="field"><label>Number</label><input id="qrSmsNum" type="tel" inputmode="tel" placeholder="e.g. +44 7700 900000"></div>'
+      + '<div class="field"><label>Message</label><textarea id="qrSmsBody" rows="3" placeholder="Hi! I scanned your code…"></textarea></div></div>';
+    var textBlock = '<div class="field" data-qr-field="text" style="display:none"><label>Text</label><textarea id="qrText" rows="4" placeholder="Anything — a coupon code, wifi-free message, etc."></textarea></div>';
+    var vcardBlock = '<div data-qr-field="vcard" style="display:none;flex-direction:column;gap:10px">'
+      + '<div class="field"><label>Full name</label><input id="qrVcardName" placeholder="Maya Chen"></div>'
+      + '<div class="field"><label>Organisation</label><input id="qrVcardOrg" placeholder="PallettAI Studio"></div>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div class="field"><label>Phone</label><input id="qrVcardPhone" type="tel" placeholder="+44 20 7123 4567"></div><div class="field"><label>Email</label><input id="qrVcardEmail" type="email" placeholder="maya@example.com"></div></div>'
+      + '<div class="field"><label>Website</label><input id="qrVcardUrl" type="url" placeholder="https://example.com"></div></div>';
+
+    root.innerHTML =
+      '<div class="qr-intro">'
+      + '<h2>QR Codes</h2>'
+      + '<p class="sub">Make a code for a link, Wi-Fi network, email, call, text, or contact card. It stays on this device. No account and no limit.</p>'
+      + '<p class="qr-free-note">Offline · free · print at 2.5 cm or larger</p>'
+      + '</div>'
+      + '<div class="qr-layout">'
+      + '  <div class="qr-left">'
+      + '    <div class="settings-card">'
+      + '      <h3>Type</h3><p class="sub" style="margin:-2px 0 10px;font-size:.78rem">Pick what the code should do when scanned</p>'
+      + '      <div class="qr-types" role="group" aria-label="QR type">' + typeOpts.map(function(o){
+              var active = o[0]===qrType;
+              return '<button type="button" class="qr-type' + (active?' active':'') + '" data-qr-type="' + o[0] + '">' + uiIcon(o[1]) + '<span class="qr-type-title">' + esc(o[2]) + '</span><small>' + esc(o[3]) + '</small></button>';
+            }).join('') + '</div>'
+      + '      <div class="qr-fields" style="margin-top:14px">' + urlBlock + wifiBlock + emailBlock + phoneBlock + smsBlock + textBlock + vcardBlock + '</div>'
+      + '      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center">'
+      + '        <div class="field" style="min-width:140px"><label>Error correction</label><select id="qrEcc">' + eccOpts.map(function(o){ return '<option value="' + o[0] + '"' + (qrEcc===o[0]?' selected':'') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select></div>'
+      + '        <div class="field" style="min-width:120px"><label>Quiet zone</label><select id="qrQuiet"><option value="2">2 modules</option><option value="4" selected>4 (spec)</option><option value="6">6 modules</option></select></div>'
+      + '      </div>'
+      + '      <p class="qr-hint" style="font-size:.68rem;color:var(--muted);margin-top:8px">Higher error correction survives wear but holds less data. Keep the quiet zone so phones can lock on.</p>'
+      + '    </div>'
+      + '  </div>'
+      + '  <div class="qr-right">'
+      + '    <div class="settings-card qr-preview-card">'
+      + '      <h3>Preview</h3>'
+      + '      <div id="qrPreviewBox" class="qr-preview-box"></div>'
+      + '      <div id="qrPreviewHint" class="qr-preview-hint"></div>'
+      + '      <div class="qr-actions">'
+      + '        <button class="btn primary small" id="qrDl" type="button" disabled>' + uiIcon('download') + ' Download</button>'
+      + '        <button class="btn ghost small" id="qrCopy" type="button" disabled>' + uiIcon('copy') + ' Copy image</button>'
+      + '        <button class="btn ghost small" id="qrCopyPayload" type="button" title="Copy the payload">' + uiIcon('lines') + ' Copy content</button>'
+      + '      </div>'
+      + '      <p class="qr-print-tip">Print at 2.5 cm or larger on a white background. Test from a phone camera before a bulk print.</p>'
+      + '    </div>'
+      + '  </div>'
+      + '</div>';
+
+    function showFields() {
+      var all = root.querySelectorAll('[data-qr-field]');
+      all.forEach(function(el){
+        var is = el.getAttribute('data-qr-field') === qrType;
+        el.style.display = is ? '' : 'none';
+        if (is && el.style.flexDirection === '') {} // keep grid
+        // maintain flex layout for composite blocks
+        if (is && (qrType === 'wifi' || qrType === 'email' || qrType === 'sms' || qrType === 'vcard')) el.style.display = 'flex';
+      });
+      root.querySelectorAll('.qr-type').forEach(function(b){
+        b.classList.toggle('active', b.getAttribute('data-qr-type') === qrType);
+      });
+    }
+
+    showFields();
+    qrRenderPreview();
+
+    // bindings
+    root.querySelectorAll('[data-qr-type]').forEach(function(b){
+      b.addEventListener('click', function(){
+        qrType = b.getAttribute('data-qr-type');
+        try{ localStorage.setItem('pallettai.qr.type.v1', qrType); }catch(e){}
+        showFields();
+        qrRenderPreview();
+      });
+    });
+
+    var bind = function(id, ev){
+      var el = $('#' + id);
+      if (!el) return;
+      el.addEventListener(ev || 'input', function(){ qrRenderPreview(); });
+    };
+    ['qrUrl','qrWifiSsid','qrWifiPass','qrEmailTo','qrEmailSub','qrEmailBody','qrPhone','qrSmsNum','qrSmsBody','qrText','qrVcardName','qrVcardOrg','qrVcardPhone','qrVcardEmail','qrVcardUrl'].forEach(function(id){ bind(id); });
+    var enc = $('#qrWifiEnc'); if (enc) enc.addEventListener('change', function(){ qrRenderPreview(); });
+    var hid = $('#qrWifiHidden'); if (hid) hid.addEventListener('change', function(){ qrRenderPreview(); });
+
+    var eccSel = $('#qrEcc');
+    if (eccSel) eccSel.addEventListener('change', function(){
+      qrEcc = eccSel.value;
+      try{ localStorage.setItem('pallettai.qr.ecc.v1', qrEcc); }catch(e){}
+      qrRenderPreview();
+    });
+    var quietSel = $('#qrQuiet');
+    if (quietSel) quietSel.addEventListener('change', function(){
+      qrQuiet = Math.max(2, Math.min(6, parseInt(quietSel.value,10) || 4));
+      qrRenderPreview();
+    });
+
+    var dl = $('#qrDl');
+    if (dl) dl.addEventListener('click', function(){
+      if (qrLastDataUrl) qrDownload(qrLastDataUrl, 'pallettai-qr-' + qrType + '.gif');
+    });
+    var cpy = $('#qrCopy');
+    if (cpy) cpy.addEventListener('click', async function(){
+      if (!qrLastDataUrl) return;
+      // copy image via Clipboard API if available (needs secure context — preview is localhost, OK)
+      try {
+        if (navigator.clipboard && window.ClipboardItem) {
+          var res = await fetch(qrLastDataUrl);
+          var blob = await res.blob();
+          // GIF -> clipboard as image/gif where supported
+          var item = new ClipboardItem({ [blob.type]: blob });
+          await navigator.clipboard.write([item]);
+          toast('QR image copied ✓', true);
+          return;
+        }
+      } catch(e) { /* fallback to download hint */ }
+      toast('Copy as image not supported here — use Download, then copy the file', false);
+    });
+    var copyPayloadBtn = $('#qrCopyPayload');
+    if (copyPayloadBtn) copyPayloadBtn.addEventListener('click', function(){
+      qrCopyPayload(qrBuildPayload());
+    });
+  }
+
   // ---------------- guided onboarding tour ----------------
   const TOUR_KEY = 'pallettai.tour.seen.v1';
   const TOUR_STEPS = [
     {
-      sel: null, icon: '◆',
-      title: 'Welcome to PallettAI Studio',
-      body: 'Design fully functioning, animated websites for your clients — from blank idea to a live link on the internet. Everything here is free to explore; Pro unlocks premium fonts, layouts, live-data widgets and unlimited projects.'
+      sel: null, icon: 'home',
+      title: 'PallettAI Studio',
+      body: 'Build client websites from a template or a brief, then export files they own. Pro unlocks extra type, layouts, and live data widgets.'
     },
     {
-      sel: '#dashTemplates', icon: '▤',
-      title: 'Start from a template',
-      body: 'The catalog lives on Templates — startups, weddings, cafés, law firms, podcasts, real estate and more. Open it to Preview a look, then hit ＋ Start to take it into the Designer.'
+      sel: '#dashTemplates', icon: 'grid',
+      title: 'Templates',
+      body: 'The catalog is on Templates. Preview a layout, then start it in the Designer.'
     },
     {
-      sel: '[data-view="designer"]', icon: '🎨',
-      title: 'Designer — every pixel, your call',
-      body: 'Edit text, swap palettes & fonts, reorder sections with drag & drop, tune spacing and radius, upload a logo — and add whole extra pages with ＋ Page. Changes preview live on the right.'
+      sel: '[data-view="designer"]', icon: 'pen',
+      title: 'Designer',
+      body: 'Edit copy, palette, type, and sections. Changes preview on the right. Add pages from the page bar.'
     },
     {
-      sel: '[data-view="ai"]', icon: '✦',
+      sel: '[data-view="ai"]', icon: 'spark',
       title: 'AI Studio',
-      body: 'Describe a site in plain English — “a modern bakery in Paris” — and the AI builds it: name, palette, fonts, copy and a full layout. It can also restyle, generate images, write alt text and make logos.'
+      body: 'Describe the business. Studio writes the draft: name, palette, type, copy, layout, and photos.'
     },
     {
-      sel: '[data-view="suites"]', icon: '🧩',
-      title: 'Upgrade suites',
-      body: 'Sites are never finished — install the Animation Pack, Blog, Shop, SEO, Gallery Pro or live Data Widgets after the fact, without touching your design. The Copilot ✦ button edits everything in plain English too.'
+      sel: '[data-view="suites"]', icon: 'layers',
+      title: 'Upgrade Suites',
+      body: 'Install blog, shop, motion, or SEO after the site is built. Copilot edits the open project in plain English.'
     },
     {
-      sel: '[data-view="database"]', icon: '🗄️',
+      sel: '[data-view="database"]', icon: 'cylinder',
       title: 'Database',
-      body: 'The local library holds every section, palette, font and layout — plus live online sources: photos, people, quotes, Wikipedia summaries, and Pro widgets for crypto, GitHub and FX rates.'
+      body: 'The local library holds sections, palettes, fonts, and layouts, plus live photo and data sources.'
     },
     {
-      sel: '#planPill', icon: '💎',
-      title: 'Plans & referrals',
-      body: 'Free keeps the core tools. Pro (£9/mo) unlocks premium fonts, 6 extra layouts, 3 more databases and Data Widgets. Pro+ (£19/mo) adds unbranded exports, reusable brand presets and a white-label client handoff. Refer a friend to earn 7 free Pro days — your code lives in Settings.'
+      sel: '[data-view="qr"]', icon: 'qr',
+      title: 'QR Codes',
+      body: 'Make a code for a link, Wi-Fi network, email, call, or contact card. It stays on this device.'
     },
     {
-      sel: null, icon: '🚀',
-      title: 'Ready to build?',
-      body: 'Head to the AI Studio and describe your first client site — or pick a template from Templates. Export, hand off or publish whenever you like from the Designer toolbar.'
+      sel: '[data-view="settings"]', icon: 'gear',
+      title: 'Settings',
+      body: 'Account, appearance, export, and online data. Plan status and invite codes live here.'
+    },
+    {
+      sel: '#planPill', icon: 'user',
+      title: 'Plans',
+      body: 'Free covers the core studio. Pro and Pro+ unlock extra layouts, widgets, unbranded export, and handoff. Referral codes live in Settings.'
+    },
+    {
+      sel: null, icon: 'spark',
+      title: 'Next',
+      body: 'Generate a first draft in AI Studio, or start from a template. Export and publish from the Designer toolbar.'
     }
   ];
   function startTour() {
@@ -6251,7 +6734,7 @@ const App = (() => {
       }, target ? 420 : 0);
       const dots = TOUR_STEPS.map((_, i) => `<span class="tour-dot ${i === step ? 'on' : ''}"></span>`).join('');
       card.innerHTML = `
-        <div class="tour-ico">${st.icon || '◆'}</div>
+        <div class="tour-ico">${uiIcon(st.icon) || ''}</div>
         <h4>${esc(st.title)}</h4>
         <p>${esc(st.body)}</p>
         <div class="tour-foot">
@@ -6261,7 +6744,7 @@ const App = (() => {
             <button class="btn ghost small" id="tourSkip">Skip</button>
             ${step < TOUR_STEPS.length - 1
               ? '<button class="btn primary small" id="tourNext">Next ›</button>'
-              : '<button class="btn primary small" id="tourDone">🚀 Let’s go</button>'}
+              : '<button class="btn primary small" id="tourDone">Finish</button>'}
           </div>
         </div>`;
       const prev = $('#tourPrev'); if (prev) prev.onclick = () => { step--; show(); };
@@ -6312,6 +6795,9 @@ const App = (() => {
     loadCustomPalettes();
     await hydrateBrandPresets();
     seed();
+    paintNav();
+    const chatSpark = document.querySelector('.chat-spark');
+    if (chatSpark && !chatSpark.innerHTML) chatSpark.innerHTML = uiIcon('chat');
     $('#btnNewProject').onclick = () => switchView('templates');
     $('#btnAiGo').onclick = () => switchView('ai');
     const upgradeBtn = $('#btnUpgrade');
