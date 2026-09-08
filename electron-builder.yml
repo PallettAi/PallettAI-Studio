@@ -18,6 +18,7 @@ files:
   - preload.js
   - data/**
   - modules/**
+  - vendor/**
   - '!**/*.map'
   - '!**/*.md'
 
