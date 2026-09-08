@@ -105,8 +105,8 @@ jobs:
             [EnableNodeCliInspectArguments]="Disabled"
             [EnableEmbeddedAsarIntegrityValidation]="Enabled"
             [OnlyLoadAppFromAsar]="Enabled"
-            [LoadBrowserProcessSpecificV8Snapshot]="Enabled"
-            [GrantFileProtocolExtraPrivileges]="Disabled"
+            [LoadBrowserProcessSpecificV8Snapshot]="Disabled"
+            [GrantFileProtocolExtraPrivileges]="Enabled"
           )
 
           failed=0

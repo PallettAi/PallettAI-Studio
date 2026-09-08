@@ -50,12 +50,17 @@ electronFuses:
   # Combined with enableEmbeddedAsarIntegrityValidation = tamper-proof app code.
   # PallettAI ships everything it needs inside the asar (no native modules, no external files).
   onlyLoadAppFromAsar: true
-  # Browser process uses its own V8 snapshot (browser_v8_context_snapshot.bin) — small perf win.
-  loadBrowserProcessSpecificV8Snapshot: true
-  # Disable extra privileges for file:// protocol pages (fetch, service workers, child-frame access).
-  # PallettAI's renderer does not fetch over file://, register service workers, or use file:// iframes,
-  # so this is safe and removes an unnecessary privilege surface.
-  grantFileProtocolExtraPrivileges: false
+  # KEEP FALSE: official Electron distributions do NOT ship browser_v8_context_snapshot.bin,
+  # so enabling this fuse makes the main process die at startup with
+  # "FATAL: Error loading V8 startup snapshot file" before any app code runs.
+  loadBrowserProcessSpecificV8Snapshot: false
+  # KEEP TRUE (default): the renderer IS a file:// document — it loads index.html plus its
+  # own scripts/styles from inside app.asar. Disabling this fuse makes Electron refuse to
+  # load file:// content from the asar ("ERR_FILE_NOT_FOUND" on the window URL), so the
+  # app would open blank. Moving the UI onto a custom privileged scheme (app://) would let
+  # us disable this fuse later; until then it stays on. CSP + contextIsolation + sandbox
+  # still constrain what file:// pages can do.
+  grantFileProtocolExtraPrivileges: true
 
 mac:
   category: public.app-category.graphics-design

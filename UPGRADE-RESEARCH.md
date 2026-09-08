@@ -164,15 +164,25 @@ The app already passes most of the official checklist; the remaining gaps:
    `img-src`/`connect-src` here or the preview breaks (test in web mode: `npm run web`).
 2. **`setPermissionRequestHandler` — IMPLEMENTED** in main.js: deny-all by default for the
    renderer session (notifications, geolocation, clipboard-read, camera, mic). One call.
+   (0.3.11 correction: the handler is registered on `win.webContents.session`, not on
+   `webContents` — calling it on `webContents` throws "not a function" and silently
+   disabled the deny-by-default until fixed.)
 3. **Electron Fuses — IMPLEMENTED** via `electronFuses:` in `electron-builder.yml`.
    electron-builder flips these BEFORE codesigning (so the macOS signature stays valid).
    Configured fuses: `runAsNode: false`, `enableCookieEncryption: true`,
    `enableNodeOptionsEnvironmentVariable: false`, `enableNodeCliInspectArguments: false`,
    `enableEmbeddedAsarIntegrityValidation: true`, `onlyLoadAppFromAsar: true`,
-   `loadBrowserProcessSpecificV8Snapshot: true`, `grantFileProtocolExtraPrivileges: false`.
+   `loadBrowserProcessSpecificV8Snapshot: false`, `grantFileProtocolExtraPrivileges: true`.
    Plus `asar: true` in the config. `@electron/fuses` was already a transitive dep; no extra
-   dependency. **Note:** to actually flip the fuses in a build you must run electron-builder
-   (`npm run dist:mac` / `npm run dist:win`) — the config is inert until a packaged build.
+   dependency. **Launch-test findings (0.3.11):** the last two fuses deliberately keep
+   Electron defaults — `loadBrowserProcessSpecificV8Snapshot: true` makes packaged builds
+   die at startup with `FATAL: Error loading V8 startup snapshot file` (official Electron
+   ships no browser_v8_context_snapshot.bin), and `grantFileProtocolExtraPrivileges: false`
+   makes the window fail to load its own file:// index.html from app.asar
+   (`ERR_FILE_NOT_FOUND`). Both were caught by actually launching packaged builds, which is
+   now part of the release gate. **Note:** to actually flip the fuses in a build you must run
+   electron-builder (`npm run dist:mac` / `npm run dist:win`) — the config is inert until a
+   packaged build.
    Do NOT set `resetAdHocDarwinSignature` — electron-builder signs the app AFTER flipping the
    fuses, which is the correct order and avoids the Apple Silicon signature pitfall.
 

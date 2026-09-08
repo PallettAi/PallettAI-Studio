@@ -101,7 +101,8 @@ function main() {
     });
 
     // P0 hardening: deny renderer permission requests by default.
-    win.webContents.setPermissionRequestHandler((_request, callback) => {
+    // NOTE: setPermissionRequestHandler lives on the Session, not on webContents.
+    win.webContents.session.setPermissionRequestHandler((_request, callback) => {
       callback(false);
     });
 

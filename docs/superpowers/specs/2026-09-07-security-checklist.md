@@ -68,10 +68,14 @@ Current tally: 44 ✅ / 13 ⏳ / 3 ☐ (60 items total).
       generate AI site, preview it) and confirm there are **no CSP console violations** for
       the app's own widget/iframe/font/script hosts. (Only the custom-JS advanced feature's
       external fetches are intentionally blocked in preview.)
-- [ ☐ ] **`grantFileProtocolExtraPrivileges: false` runtime smoke test** — confirm the app
-      still loads and works in a packaged build (the renderer doesn't use file:// fetch,
-      service workers, or file:// iframes, but verify nothing regressed). Only verifiable in
-      a packaged build (fuses only apply there).
+- [ ✅ ] **Fuse launch-test findings (0.3.11)** — two fuses intentionally keep Electron
+      defaults after launch-testing packaged builds: `grantFileProtocolExtraPrivileges`
+      stays TRUE because the renderer is a file:// document and Electron refuses to load
+      its own index.html/scripts from app.asar with the fuse off (window URL fails with
+      ERR_FILE_NOT_FOUND); `loadBrowserProcessSpecificV8Snapshot` stays FALSE because
+      official Electron ships no browser_v8_context_snapshot.bin, so enabling it FATALs
+      at startup before any JS runs. Moving the UI onto a custom privileged scheme
+      (app://) is the future path that would let us re-disable grantFileExtraPrivileges.
 
 ---
 
@@ -89,8 +93,8 @@ Current tally: 44 ✅ / 13 ⏳ / 3 ☐ (60 items total).
         - EnableNodeCliInspectArguments: Disabled
         - EnableEmbeddedAsarIntegrityValidation: Enabled
         - OnlyLoadAppFromAsar: Enabled
-        - LoadBrowserProcessSpecificV8Snapshot: Enabled
-        - GrantFileProtocolExtraPrivileges: Disabled
+        - LoadBrowserProcessSpecificV8Snapshot: Disabled  (Electron default — see item above)
+        - GrantFileProtocolExtraPrivileges: Enabled       (Electron default — see item above)
 - [ ✅ ] **CI fuses-verification step added to `build-mac.yml`** — a step that extracts the
       `.app` from the built `.zip`, runs `npx --no-install electron-fuses read --app <app>`,
       and asserts each of the 8 fuses is set to its expected Enabled/Disabled state. Fails
