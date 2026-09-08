@@ -41,6 +41,25 @@ That launches the app with the default Electron icon and no signing.
 
 That's the whole one-time setup. Everything below is automated afterwards.
 
+> **No Apple Developer account?** You can still ship **code-signed** builds for
+> free with a **self-signed certificate** — signing is what macOS auto-update
+> (Squirrel.Mac) needs. What you give up is only the *notarization* trust that
+> removes the first-launch Gatekeeper warning on fresh DMG downloads.
+>
+> Setup (done once, on this machine, already configured):
+>
+> ```bash
+> # 1. Create the cert (openssl) + import into your login keychain, then:
+> security add-trusted-cert -d -p codeSign -r trustRoot -k ~/Library/Keychains/login.keychain-db cert.pem
+> # 2. electron-builder auto-discovers it — just build:
+> npm run dist:mac
+> ```
+>
+> The self-signed identity is stored in the login keychain
+> (`~/PallettAI-Studio-mac-signing/` holds the key/cert/p12 + password).
+> electron-builder will sign with it automatically; notarization is skipped
+> (no `APPLE_ID` env). CI still requires real Developer ID secrets.
+
 ---
 
 ## 3. Build a signed + notarized DMG locally (optional)
