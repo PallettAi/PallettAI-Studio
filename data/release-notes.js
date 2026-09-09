@@ -4,8 +4,8 @@
 // Bump `version` when you ship. Each entry: version, date, tagline, highlights[].
 // Keep highlights to 3-4 items, written as user-facing wins (not commit logs).
 const RELEASE_NOTES = {
-  version: '0.3.12',
-  date: 'September 8, 2026',
+  version: '0.3.13',
+  date: 'September 9, 2026',
   tagline: 'A cleaner studio and a faster first draft',
   highlights: [
     {
