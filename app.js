@@ -989,9 +989,51 @@ const App = (() => {
     }
     if (cmd.action === 'export') openExportMenu();
     if (cmd.action === 'tour') startTour();
+    if (cmd.action === 'whatsnew') openWhatsNew(false);
   }
 
   // ---------------- plans / pricing ----------------
+  // ---- What's New (shows once per version) ----
+  const WHATSNEW_KEY = 'pallettai.whatsnew.seen.v1';
+  function openWhatsNew(auto) {
+    const notes = (typeof RELEASE_NOTES !== 'undefined') ? RELEASE_NOTES : null;
+    if (!notes || !notes.version) return;
+    if (auto && !whatsNewPending(notes.version)) return;
+    const rows = (notes.highlights || []).map((h) => {
+      const ico = (typeof ICONS !== 'undefined' && ICONS.has && ICONS.has(h.icon)) ? uiIcon(h.icon) : '<span style="font-size:1rem">✦</span>';
+      return `
+      <div class="wn-row">
+        <span class="wn-ico" aria-hidden="true">${ico}</span>
+        <div class="wn-copy"><b>${esc(h.title || '')}</b><p>${esc(h.desc || '')}</p></div>
+      </div>`;
+    }).join('');
+    const body = `
+      <div class="whats-new">
+        <div class="wn-head">
+          <span class="wn-kicker">Release ${esc(notes.version)}</span>
+          <span class="wn-date">${esc(notes.date || '')}</span>
+        </div>
+        <h3 class="wn-tagline">${esc(notes.tagline || '')}</h3>
+        ${rows}
+        <div class="wn-foot">
+          <a class="site-link" href="https://pallettai.org/changelog.html" target="_blank" rel="noopener">Full changelog ${uiIcon('external')}</a>
+          <button class="btn primary small" id="wnClose">Get started</button>
+        </div>
+      </div>`;
+    openModal('What’s new in Studio', body);
+    const btn = $('#wnClose');
+    if (btn) btn.onclick = () => { markWhatsNewSeen(notes.version); closeModal(); };
+    // Auto-opened modals should never leave the user stuck if they dismiss via
+    // backdrop/Escape — mark seen on any close path once shown.
+    if (auto) markWhatsNewSeen(notes.version);
+  }
+  function whatsNewPending(v) {
+    try { return localStorage.getItem(WHATSNEW_KEY) !== v; } catch (e) { return false; }
+  }
+  function markWhatsNewSeen(v) {
+    try { localStorage.setItem(WHATSNEW_KEY, v); } catch (e) {}
+  }
+
   function openPricing() {
     const pro = isPro();
     const body = `
@@ -6864,6 +6906,12 @@ const App = (() => {
     switchView('dashboard');
     // first visit: offer the 2-minute guided tour after the UI settles
     try { if (!localStorage.getItem(TOUR_KEY)) setTimeout(startTour, 700); } catch (e) {}
+    // what's new: once per version, after the UI settles (skip first-ever run —
+    // the guided tour already owns that moment)
+    try {
+      const firstEver = !localStorage.getItem(TOUR_KEY);
+      if (whatsNewPending(RELEASE_NOTES.version) && !firstEver) setTimeout(() => openWhatsNew(true), 900);
+    } catch (e) {}
     SUPABASE.ensureOfficial();
     // Electron-only: move the Supabase session (refresh token) out of
     // localStorage and into the OS keystore via safeStorage. The browser build

@@ -14,7 +14,8 @@ const COMMANDS = [
   { id: 'upgrade', title: 'Upgrade plan', hint: 'Free, Pro, Pro+', group: 'Account', action: 'upgrade', keywords: 'pricing stripe pay' },
   { id: 'copilot', title: 'Open Copilot', hint: 'Edit in plain English', group: 'AI', action: 'copilot', keywords: 'chat' },
   { id: 'export', title: 'Export & hand off', hint: 'Download or publish', group: 'Project', action: 'export', keywords: 'zip publish' },
-  { id: 'tour', title: 'Tour', hint: 'Studio walkthrough', group: 'Help', action: 'tour', keywords: 'help onboard' }
+  { id: 'tour', title: 'Tour', hint: 'Studio walkthrough', group: 'Help', action: 'tour', keywords: 'help onboard' },
+  { id: 'whatsnew', title: "What's new", hint: 'Latest changes and fixes', group: 'Help', action: 'whatsnew', keywords: 'release notes changelog update version' }
 ];
 
 function filterCommands(query, commands) {

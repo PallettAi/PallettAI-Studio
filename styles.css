@@ -1263,6 +1263,23 @@ body.light .empty-hero .eh-ico{
 }
 body.light .empty-hero p{color:#5b5470}
 
+/* ---------- What's New modal (Color Lab) ----------
+   Mono kicker + date, hairline rows with stroke icons, primary close.
+   Shares the app's --radius-ctrl/--radius-tray and IBM Plex tokens. */
+.whats-new{padding:2px 2px 0}
+.wn-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:6px}
+.wn-kicker{font-family:var(--font-mono);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;color:var(--primary);font-weight:600}
+.wn-date{font-family:var(--font-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.wn-tagline{margin:0 0 14px;font-size:1.05rem;font-weight:600;letter-spacing:-.02em}
+.wn-row{display:flex;gap:12px;padding:12px 0;border-top:1px solid var(--border)}
+.wn-ico{width:32px;height:32px;flex:none;display:grid;place-items:center;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-ctrl);color:var(--text)}
+.wn-ico .ui-icon{width:16px;height:16px}
+.wn-copy b{display:block;font-size:.9rem;font-weight:600}
+.wn-copy p{margin:3px 0 0;color:var(--muted);font-size:.82rem;line-height:1.5}
+.wn-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+.wn-foot .site-link{display:inline-flex;align-items:center;gap:6px;font-size:.8rem}
+.wn-foot .site-link .ui-icon{width:13px;height:13px}
+
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important;scroll-behavior:auto!important}
 }
