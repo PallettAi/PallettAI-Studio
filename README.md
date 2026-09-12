@@ -18,7 +18,8 @@ The same studio ships as a **direct-download Mac app** (Electron 44 — **macOS 
 
 ## What's inside
 
-- **Dashboard** — 7 client-ready templates, project management (open / duplicate / **JSON backup** / **import** / export / delete), AI generation entry point.
+- **Dashboard** — 7 client-ready templates, project management (open / duplicate / **JSON backup** / **import** / export / delete), AI generation entry point. Signed-in accounts also get the **cloud project vault**: projects mirror to the registry automatically and restore on any machine.
+- **✦ AI Studio 2.3** — describe a site in plain English and get a complete client-ready site (name, palette, fonts, copy, full layout). **14 business types** with deep copy banks, **phrase-aware industry detection** (“dog grooming studio” is pet care, never a creative agency), a **concrete-subject extractor** (“cozy wood-fired pizza restaurant” → subject *wood-fired pizza*, which then drives the copy and the photos), and a **taste detector** (minimal / editorial / premium / playful / bold / techy / warm / vibrant). Generation options: **style pack** (any of the 8 looks), **layout flavor** (Auto = the AI hand-picks catalog layouts; Classic), and a **photo source** picker:
 - **✦ AI Studio 2.3** — describe a site in plain English and get a complete client-ready site (name, palette, fonts, copy, full layout). **14 business types** with deep copy banks, **phrase-aware industry detection** (“dog grooming studio” is pet care, never a creative agency), a **concrete-subject extractor** (“cozy wood-fired pizza restaurant” → subject *wood-fired pizza*, which then drives the copy and the photos), and a **taste detector** (minimal / editorial / premium / playful / bold / techy / warm / vibrant). Generation options: **style pack** (any of the 8 looks), **layout flavor** (Auto = the AI hand-picks catalog layouts; Classic), and a **photo source** picker:
   - 📷 **Real photos from the web (default)** — keyless, topic-matched and **licence-aware**: **Openverse** search (openly licensed images with creator + licence metadata that travel with every photo) with Wikimedia Commons, Pixabay and Flickr-via-LoremFlickr fallbacks, chosen per scene (hero / interior / gallery) for what the site actually sells or does
   - 🎨 **AI-generated art** (Pollinations) or **No photos** for clean, minimal builds
@@ -102,6 +103,7 @@ What the SQL sets up:
 | `get_streak_state()` / `claim_daily_reward(p_action)` / `spin_wheel()` RPCs | The only streak paths: server-decided UTC day, one claim per (user, day), one wheel spin per completed week, outcome picked server-side |
 | `credit_spends` | Stamped AI-credit ledger — one row per metered generation (idempotency `ref`, refunds mark `refunded_at`) |
 | `get_credit_state()` / `spend_credit(p_ref)` / `refund_credit(p_ref)` RPCs | The only credit paths: the server owns the budget (`3 base + streak bonus`, unlimited on Pro/trial), refunds within 10 minutes |
+| `project_backups` + `save_project_backup` / `delete_project_backup` RPCs | Cloud project vault — one row per (account, project); all writes flow through the security-definer RPCs, reads are RLS-scoped, deletes tombstone |
 | Signup trigger | Creates the profile + stable code the moment an account is created |
 | Row-level security | Users can only read their own profile/code/redemptions/streak/credit rows — the anon key can’t browse data, and signed-out RPC calls are rejected at the permission gate |
 
@@ -139,7 +141,7 @@ app.js             Application logic: views, gating, billing, undo/redo, diagnos
 
 ## The 30-upgrade master roadmap
 
-**Shipped since the roadmap: real form delivery (third-party endpoint), autosave + revision history (⏱), and the referral program (7/30 Pro days).**
+**Shipped since the roadmap: real form delivery (third-party endpoint), autosave + revision history (⏱), the referral program (7/30 Pro days), the cloud project vault, AI palette extraction from any image, the accessibility + performance pass (focus-visible rings, `aria-live` toasts, OS reduce-motion, `content-visibility` on long lists), saved client briefs, the Reviews + Events/RSVP suites, revision diffing, round-trip client handoff, native chrome (system accent + macOS titlebar), and native right-click menus.**
 
 **A · AI & Intelligence**
 1. ✅ AI rewrite for any section (section editor)
@@ -147,7 +149,7 @@ app.js             Application logic: views, gating, billing, undo/redo, diagnos
 3. ✅ AI logo generator
 4. ✅ AI alt-text for all images
 5. ✅ Iconify icon library (100k+ icons as emblems)
-6. ◻ AI palette extraction from any image
+6. ✅ AI palette extraction from any image — drop a client photo, logo or screenshot in Database ▸ Palettes and the dominant colours become a site-ready palette (median-cut quantization, share-weighted brand colour, surface kept AA-solvable, text roles tuned to clear WCAG AA). Fully offline — pixels are analysed on the machine, nothing uploads
 7. ◻ Prompt memory — saved client briefs & reusable prompts
 
 **B · Designer & Customization**
@@ -217,7 +219,30 @@ New capabilities added against the research-backed roadmap (see below):
 - **📐 Custom preview breakpoints** — laptop / tablet-XL / compact-phone presets plus an exact-pixel width field in the Designer preview bar.
 - **📍 Local-first AI generation** — the AI Studio takes an optional business name and “town / area served”; the generated site then mentions the area in copy, adds a “Do you serve {area}?” FAQ, and flips the exported schema to LocalBusiness (areaServed) automatically.
 
-**Still on the roadmap (next passes, not yet built):** round-trip client handoff (`manage.html` content editor inside the export), site-care mode, multilingual exports (BYO-key), subscriptions demo toggle for the Shop suite, visual revision diffing, and the “sites are files, not tenants” trust page.
+**Still on the roadmap (next passes, not yet built):** site-care mode, subscriptions demo toggle for the Shop suite, and the “sites are files, not tenants” trust page. (Round-trip client handoff and visual revision diffing shipped — see below.)
+
+## The 0.4.0 pass — clients, memory & native feel (2026-09-12)
+
+The remaining roadmap gap-closers, all shipped:
+
+- **✍️ Saved client briefs** — save any prompt + brief + style/photo/one-page options as a named brief, then reload it into the AI Studio with one click. Perfect for repeat clients and seasonal rebuilds. Stored locally (IndexedDB with localStorage fallback), capped at 40, managed with inline chips. Engine: `data/briefs.js`.
+- **⭐ Reviews Suite (Pro)** — star-rated review wall with an average rating line and a “leave a review” form that posts through the site's existing form endpoint (Formspree/Web3Forms/generic JSON). Engine + section renderer in `modules/builder.js`.
+- **🎟️ Events Suite (Pro)** — dated events list (dates are typed as `YYYY-MM-DD` in the icon field and render localized) with an RSVP form per event — the RSVP button reveals the form pre-filled with the event name and posts through the same delivery pipeline.
+- **🕘 Revision diffing** — every snapshot in the ⏱ Autosave history now has a **Diff** button: a human-readable report of what changed (palette, font, spacing, suites, added/removed/edited sections and items) with added/removed/edited badges. Engine: `data/revdiff.js`.
+- **📮 Round-trip client handoff** — the Client handoff ZIP now ships every site page with a built-in content editor: the client clicks **✏️ Edit text**, edits headings and copy in place, hits **💾 Save changes**, and their browser downloads the updated page to re-upload to their host. No studio, no account, no build tools. Includes a plain-English `how-to-edit.html` guide, and the editor strips itself from the saved output so round-tripped files stay pristine. Engine: `Builder.injectClientEditor` in `modules/builder.js`.
+- **🖥️ Native chrome** — macOS gets a `hiddenInset` titlebar (the topbar flows under the traffic lights and drags the window), plus an optional **Use system accent** setting (Settings ▸ Appearance) that follows the OS accent live, on macOS and Windows.
+- **🖱️ Native right-click menus** — cut/copy/paste on inputs, copy on selections, open-in-browser + copy address on links and images. Built in the Electron main process from a strict allow-list (no renderer-supplied menu text), so the web build simply keeps native browser menus.
+
+## Cloud project vault (Settings ▸ Cloud backup)
+
+Projects used to live only in the browser/electron profile — one cleared storage or lost laptop and every client site was gone. The vault mirrors each project to the account's registry row a few seconds after every save and converges the local list with the account's vault on launch:
+
+- **Automatic** — after each save a debounced push mirrors the changed project (`save_project_backup` RPC, 6 MB ceiling per project, advisory-locked per account+project).
+- **Multi-device** — on sign-in the vault is read back and merged last-writer-wins (`updatedAt`): newer cloud copies are adopted, newer local copies are pushed, and a second device restores everything the first one saved. One-off pushes are also available via **Back up now**.
+- **Deletion converges** — deleting a project tombstones its cloud row (`delete_project_backup`), so other devices drop it on their next sync instead of resurrecting it. Re-saving the same project id deliberately clears the tombstone.
+- **Honest limits** — oversized projects are refused client-side and server-side (413), unsigned-in users keep local-only behaviour, and a vault failure never blocks saving or the rest of the cloud sync.
+
+Toggle it in Settings ▸ Cloud backup (Automatic backup switch); the merge engine lives in `data/vault.js`, the client methods in `modules/supabase.js`, and `scripts/vault-smoke.js` exercises the whole loop against the mock registry (also part of `npm run release:check`).
 
 ## Fixes shipped (2026-09-06)
 

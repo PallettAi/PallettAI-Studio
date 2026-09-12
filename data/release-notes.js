@@ -4,30 +4,29 @@
 // Bump `version` when you ship. Each entry: version, date, tagline, highlights[].
 // Keep highlights to 3-4 items, written as user-facing wins (not commit logs).
 const RELEASE_NOTES = {
-  version: '0.3.13',
-  date: 'September 9, 2026',
-  tagline: 'A cleaner studio and a faster first draft',
+  version: '0.4.0',
+  date: 'September 12, 2026',
+  tagline: 'Cloud backup, client handoff, and a smarter AI Studio',
   highlights: [
     {
-      icon: 'spark',
-      title: 'AI first drafts, rebuilt',
-      desc: 'One prompt now returns a complete draft — logo, ranked photos, and a layout that fits the business. Drop your own photos straight onto the preview to swap them.'
+      icon: 'cloud',
+      title: 'Cloud project vault',
+      desc: 'Sign in and every project backs itself up — restore on a new machine, merge edits across devices, and delete with confidence. Settings ▸ Cloud backup.'
     },
     {
       icon: 'swatch',
-      title: 'New Color Lab design',
-      desc: 'IBM Plex typography, a hairline interface, and per-view color chips. Everything is calmer, tighter, and easier to scan.'
+      title: 'Palette from any image',
+      desc: 'Drop a client photo or logo into the Database ▸ Palettes and the Color Lab extracts a guaranteed-accessible palette in one click — all offline.'
     },
     {
-      icon: 'qr',
-      title: 'QR Codes area',
-      desc: 'Generate link, Wi-Fi, email, SMS, vCard and text QR codes offline — free, with one-click PNG download.'
+      icon: 'spark',
+      title: 'Saved client briefs',
+      desc: 'Save any prompt and brief, then reload it in one click for repeat clients and seasonal rebuilds.'
     },
     {
-      icon: 'download',
-      title: 'Local photos in the Designer',
-      fromDisk: true,
-      desc: 'Replace any section image with a photo from your machine; it embeds right into the export.'
+      icon: 'handoff',
+      title: 'Clients can edit their own site',
+      desc: 'The Client handoff ZIP now includes a built-in content editor — clients click Edit text on their live site, save, and re-upload. No studio required.'
     }
   ]
 };

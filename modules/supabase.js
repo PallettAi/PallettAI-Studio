@@ -281,6 +281,60 @@ const SUPABASE = (() => {
       } catch (e) { return _err(e); }
     },
 
+    // ---------- cloud project vault (Part 6 of schema.sql) ----------
+    // Projects live in the studio's local store; the vault mirrors them to
+    // the registry per account so work survives a lost device or a cleared
+    // profile. Writes go through the security-definer RPCs; reads are a
+    // plain RLS-scoped REST select.
+    // Push one project snapshot. Returns { ok, outcome, updatedAt (epoch ms) }.
+    // The payload is passed through unchanged — the registry validates its
+    // shape and size, so a bad or oversized payload surfaces honestly.
+    async saveProjectBackup(projectId, name, payload, options) {
+      const s = loadSes();
+      if (!api.isConfigured() || !s) return { ok: false, msg: 'Sign in to back projects up to the vault.' };
+      try {
+        const j = await _rpc('save_project_backup', {
+          p_project_id: String(projectId || '').slice(0, 80),
+          p_name: String(name || '').slice(0, 200),
+          p_payload: payload
+        }, options, TIMEOUTS.write);
+        const at = j.updatedAt ? Date.parse(j.updatedAt) : 0;
+        return { ok: true, outcome: j.outcome || 'saved', updatedAt: Number.isFinite(at) ? at : null };
+      } catch (e) {
+        const r = _err(e);
+        if (e && e.status === 413) return { ok: false, msg: 'This project is too large for the vault — remove some embedded photos and try again.', tooLarge: true };
+        return r;
+      }
+    },
+
+    // Remove one project from the vault (tombstoned, not hard-wiped).
+    async deleteProjectBackup(projectId, options) {
+      const s = loadSes();
+      if (!api.isConfigured() || !s) return { ok: false, msg: 'Sign in to manage your cloud vault.' };
+      try {
+        const j = await _rpc('delete_project_backup', { p_project_id: String(projectId || '').slice(0, 80) }, options, TIMEOUTS.write);
+        return { ok: true, outcome: j.outcome || 'deleted' };
+      } catch (e) { return _err(e); }
+    },
+
+    // Read this account's whole vault (RLS scopes it to the caller).
+    // Returns { ok, backups: [{ projectId, name, payload, updatedAt, deletedAt }] }.
+    async getProjectBackups(options) {
+      const s = loadSes();
+      if (!api.isConfigured() || !s) return { ok: false, msg: 'Not signed in.' };
+      try {
+        const rows = await _get('project_backups?select=project_id,project_name,payload,updated_at,deleted_at&owner_id=eq.' + encodeURIComponent(s.uid), options, TIMEOUTS.read);
+        const backups = (Array.isArray(rows) ? rows : []).map((r) => ({
+          projectId: r.project_id,
+          name: r.project_name || '',
+          payload: r.payload || null,
+          updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
+          deletedAt: r.deleted_at ? new Date(r.deleted_at).getTime() : null
+        }));
+        return { ok: true, backups };
+      } catch (e) { return _err(e); }
+    },
+
     // ---------- daily streak (registry-decided, anti-cheat) ----------
     // The UTC day, the one-claim-per-day cap and the wheel outcome all
     // live on the server, so local clock tampering / replay is useless.
@@ -368,7 +422,11 @@ const SUPABASE = (() => {
           body: JSON.stringify({
             texts: Array.isArray(texts) ? texts : [],
             target: String(target || 'ES'),
-            source: String(source || 'EN')
+            source: String(source || 'EN'),
+            // The same ref the client already mirrors to `settleCreditSpend`,
+            // so the function's own `spend_credit` call is idempotent with it
+            // (one charge, not two) while still metering direct callers.
+            ref: String((options && options.ref) || '')
           })
         }, options, TIMEOUTS.write);
         const j = await res.json().catch(() => ({}));

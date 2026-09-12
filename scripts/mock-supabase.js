@@ -67,6 +67,7 @@ const DAY = 864e5;
 const users = new Map();      // uid -> { email, password, profile, codes, redemptions }
 const licenses = new Map();   // code -> license row (seeded like schema.sql)
 const tokens = new Map();     // token -> uid
+const vault = new Map();      // key `${uid}:${projectId}` -> { owner_id, project_id, project_name, payload, updated_at, deleted_at } (mirrors schema.sql Part 6)
 
 // virtual UTC clock for the streak feature (advance via /__advance?days=N)
 let virtualNow = Date.now();
@@ -467,6 +468,35 @@ const server = http.createServer((req, res) => {
     }
     if (req.method === 'POST' && p === '/rest/v1/rpc/claim_review_reward') {
       return json(res, 200, claimReviewRewardRpc(u, payload));
+    }
+
+    // ---- cloud project vault (schema.sql Part 6) ----
+    if (req.method === 'POST' && p === '/rest/v1/rpc/save_project_backup') {
+      const pid = String(payload.p_project_id || '').trim().slice(0, 80);
+      if (!pid || pid === 'null') return json(res, 200, { outcome: 'bad-input', reason: 'project-id' });
+      const payload_ = payload.p_payload;
+      if (!payload_ || typeof payload_ !== 'object' || Array.isArray(payload_)) return json(res, 200, { outcome: 'bad-input', reason: 'payload' });
+      const text = JSON.stringify(payload_);
+      if (text.length > 6291456) return json(res, 413, { code: '413', message: 'payload too large' });
+      const key = u.id + ':' + pid;
+      const prev = vault.get(key);
+      const row = { owner_id: u.id, project_id: pid, project_name: String(payload.p_name || '').slice(0, 200), payload: payload_, updated_at: new Date().toISOString(), deleted_at: null };
+      vault.set(key, row);
+      return json(res, 200, { outcome: 'saved', updatedAt: row.updated_at, resurrected: !!(prev && prev.deleted_at) });
+    }
+    if (req.method === 'POST' && p === '/rest/v1/rpc/delete_project_backup') {
+      const pid = String(payload.p_project_id || '').trim().slice(0, 80);
+      if (!pid) return json(res, 200, { outcome: 'bad-input', reason: 'project-id' });
+      const key = u.id + ':' + pid;
+      const row = vault.get(key);
+      if (row && !row.deleted_at) row.deleted_at = new Date().toISOString();
+      return json(res, 200, { outcome: 'deleted' });
+    }
+    if (req.method === 'GET' && p === '/rest/v1/project_backups') {
+      const rows = [...vault.values()]
+        .filter((r) => r.owner_id === u.id)
+        .map((r) => ({ project_id: r.project_id, project_name: r.project_name, payload: r.payload, updated_at: r.updated_at, deleted_at: r.deleted_at }));
+      return json(res, 200, rows);
     }
     return json(res, 404, { code: '404', message: 'not found' });
   });

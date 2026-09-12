@@ -172,6 +172,8 @@
       <div class="db-tabs" id="dbTabs">
         <button class="db-tab active" data-tab="sections">Sections</button>
         <button class="db-tab" data-tab="palettes">Palettes</button>
+        <button class="db-tab" data-tab="presets">Presets</button>
+        <button class="db-tab" data-tab="assets">Assets</button>
         <button class="db-tab" data-tab="fonts">Fonts</button>
         <button class="db-tab" data-tab="icons">Icons</button>
         <button class="db-tab" data-tab="animations">Animations</button>
@@ -218,7 +220,7 @@
   </div>
 </div>
 
-<div class="toast" id="appToast"></div>
+<div class="toast" id="appToast" role="status" aria-live="polite"></div>
 <div class="modal-backdrop" id="modalBackdrop" hidden>
   <div class="modal-card">
     <div class="modal-head"><h3 id="modalTitle"></h3><button class="icon-btn" id="modalClose">✕</button></div>
@@ -232,6 +234,7 @@
 <script src="data/plan-receipt.js"></script>
 <script src="data/review-reward.js"></script>
 <script src="data/command-palette.js"></script>
+<script src="data/share-card.js"></script>
 <script src="data/release-notes.js"></script>
 <script src="data/icons.js"></script>
 <script src="data/chrome.js"></script>
@@ -242,6 +245,10 @@
 <script src="data/ai-fingerprint.js"></script>
 <script src="data/ai-photos.js"></script>
 <script src="data/ai-compose.js"></script>
+<script src="data/vault.js"></script>
+<script src="data/palette-lab.js"></script>
+<script src="data/briefs.js"></script>
+<script src="data/revdiff.js"></script>
 <script src="modules/modal-focus.js"></script>
 <script src="modules/supabase.js"></script>
 <script src="modules/ai.js"></script>

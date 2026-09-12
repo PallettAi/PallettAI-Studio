@@ -123,8 +123,9 @@ const DB = {
     countdown:    { name: 'Countdown',    icon: '⏳', desc: 'Live countdown to a launch date (ISO date in “extra”)', defaultItems: 0 },
     map:          { name: 'Map',          icon: '🗺️', desc: 'Google Maps embed for an address (address in “extra”)', defaultItems: 0 },
     weather:      { name: 'Weather',      icon: '🌤️', desc: 'Live 5-day forecast for a city (city in “extra”)', defaultItems: 0 },
-    embed:        { name: 'Embed',        icon: '🔗', desc: 'Any iframe — Spotify, Calendly, Typeform (URL in “extra”)', defaultItems: 0 },
-    booking:      { name: 'Booking',      icon: '📅', desc: 'Dedicated appointment booking block — Calendly, Cal.com, TidyCal and more', defaultItems: 0 },
+    embed:        { name: 'Embed',        icon: '🔗', desc: 'Any iframe — Spotify, Calendly, Typeform (URL in “extra”)', defaultItems: 0 },    booking:      { name: 'Booking',       icon: '📅', desc: 'Dedicated appointment booking block — Calendly, Cal.com, TidyCal and more', defaultItems: 0 },
+    reviews:      { name: 'Reviews',       icon: '⭐', desc: 'Star-rated customer reviews + leave-a-review form (Reviews Suite)', defaultItems: 4 },
+    events:       { name: 'Events & RSVP', icon: '🎟️', desc: 'Upcoming events with dates, plus an RSVP form (Events Suite)', defaultItems: 3 },
     contact:      { name: 'Contact',      icon: '✉️', desc: 'Form, info, map', defaultItems: 0 },
     cta:          { name: 'CTA Banner',   icon: '📣', desc: 'Call to action strip', defaultItems: 0 },
     crypto:       { name: 'Crypto Ticker', icon: '🪙', desc: 'Live coin prices (coin ids in “extra”, e.g. bitcoin,ethereum) — Pro', defaultItems: 0 },
@@ -622,6 +623,31 @@ const DB = {
       id: 'datawidgets', name: 'Data Widgets', icon: '📡', tag: 'Live data',
       desc: 'Adds live crypto prices (CoinGecko), GitHub profile stats and daily ECB exchange rates — keyless free APIs, refreshed on every visit.',
       sections: [], features: { datawidgets: true }
+    },
+    {
+      id: 'reviews', name: 'Reviews Suite', icon: '⭐', tag: 'Social proof',
+      desc: 'Adds a reviews wall with star ratings and an embedded “leave a review” form that posts to the site\'s form endpoint.',
+      sections: [
+        { type: 'reviews', animation: 'fade-up', items: [
+          { icon: '5', title: 'Amelia Hart', text: 'Absolutely brilliant service from start to finish. Couldn\'t recommend them enough!', extra: 'Google review' },
+          { icon: '5', title: 'Tom Whitaker', text: 'Fast, friendly and genuinely cares about getting it right. Five stars, well earned.', extra: 'Facebook review' },
+          { icon: '4', title: 'Priya Nair', text: 'Great communication throughout and a result we\'re delighted with.', extra: 'Trustpilot' },
+          { icon: '5', title: 'Dan Osei', text: 'Second time using them and they only get better. Book with confidence.', extra: 'Yelp' }
+        ] }
+      ],
+      features: { reviews: true }
+    },
+    {
+      id: 'events', name: 'Events Suite', icon: '🎟️', tag: 'Bookings',
+      desc: 'Adds an events list with dates and an RSVP form that sends straight to your form endpoint — classes, launches, open days.',
+      sections: [
+        { type: 'events', animation: 'fade-up', items: [
+          { icon: '2026-10-02', title: 'Autumn Tasting Evening', text: 'An evening of seasonal flights and small plates.', extra: '6:30pm · Main studio' },
+          { icon: '2026-10-18', title: 'Beginners Workshop', text: 'Hands-on session for complete newcomers.', extra: '10am · Courtyard room' },
+          { icon: '2026-11-07', title: 'Winter Launch Party', text: 'First look at the new winter range, drinks included.', extra: '7pm · Main studio' }
+        ] }
+      ],
+      features: { events: true }
     }
   ],
 
@@ -1249,6 +1275,7 @@ DB.sectionsFromTemplate = (template) =>
 DB.defaultSettings = {
   theme: 'dark',
   accent: '#22d3ee',
+  useSystemAccent: false,
   density: 'comfortable',
   reducedMotion: false,
   brandFooter: true,
@@ -1270,7 +1297,20 @@ DB.defaultSettings = {
   widgetRefreshSec: 300,
   autosave: true,
   autosaveMs: 2000,
-  confirmDelete: true
+  confirmDelete: true,
+  startupView: 'dashboard',
+  dashboardShowJobTray: true,
+  dashboardShowMetrics: true,
+  dashboardShowInsights: true,
+  dashboardShowTemplateDoor: true,
+  dashboardRecentCount: 6,
+  businessName: '',
+  businessEmail: '',
+  businessPhone: '',
+  businessAddress: '',
+  businessUrl: '',
+  businessHours: '',
+  businessSocial: ''
 };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = DB;

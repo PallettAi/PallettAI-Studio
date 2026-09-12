@@ -1,20 +1,45 @@
 // Authenticated Stripe Customer Portal. The restricted key never leaves this function.
+//
+// Hardening (rationale in .docs/SECURITY-HARDENING.md): CORS is an allowlist
+// (the Electron renderer's file:// origin, the web build on localhost, and
+// pallettai.org) instead of `*`, so an arbitrary website cannot read the
+// portal URL out of this endpoint's response.
+//
+// Keep this file self-contained — the Edge runtime crashes on createRequire.
 
-const json = (status: number, body: Record<string, unknown>) =>
+const ALLOWED_ORIGINS = new Set(['https://pallettai.org', 'https://www.pallettai.org']);
+
+function corsOrigin(raw: string): string {
+  const o = String(raw || '').trim();
+  if (!o) return '';
+  if (ALLOWED_ORIGINS.has(o)) return o;
+  if (o === 'null' || o.startsWith('file://')) return 'null'; // packaged Electron renderer
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o)) return o; // `npm run web`
+  return '';
+}
+
+function corsHeaders(origin: string): Record<string, string> {
+  const allow = corsOrigin(origin);
+  const base: Record<string, string> = { Vary: 'Origin' };
+  if (!allow) return base;
+  return {
+    ...base,
+    'Access-Control-Allow-Origin': allow,
+    'Access-Control-Allow-Headers': 'authorization, apikey, content-type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS'
+  };
+}
+
+const json = (status: number, body: Record<string, unknown>, origin: string) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'authorization, apikey, content-type'
-    }
+    headers: { 'Content-Type': 'application/json', ...corsHeaders(origin) }
   });
 
-const cors = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, apikey, content-type'
-};
-
+// The gateway verifies the JWT (verify_jwt = true in supabase/config.toml).
+// This decode is only used to pick *which* profile to look up: the lookup below
+// replays the caller's own Authorization header into PostgREST, so RLS is what
+// actually authorises it — a forged token yields no row and no portal.
 function uidFromAuth(header: string): string {
   const token = header.replace(/^Bearer\s+/i, '').trim();
   const parts = token.split('.');
@@ -45,17 +70,19 @@ function portalReturnUrl(raw: string): string {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
-  if (req.method !== 'POST') return json(405, { ok: false, error: 'method' });
+  const origin = req.headers.get('Origin') || '';
+
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders(origin) });
+  if (req.method !== 'POST') return json(405, { ok: false, error: 'method' }, origin);
 
   const auth = req.headers.get('Authorization') || '';
-  if (!auth.toLowerCase().startsWith('bearer ')) return json(401, { ok: false, error: 'auth' });
+  if (!auth.toLowerCase().startsWith('bearer ')) return json(401, { ok: false, error: 'auth' }, origin);
 
   const stripeKey = Deno.env.get('STRIPE_SECRET_KEY') || '';
-  if (!stripeKey) return json(503, { ok: false, error: 'portal-unavailable' });
+  if (!stripeKey) return json(503, { ok: false, error: 'portal-unavailable' }, origin);
 
   const uid = uidFromAuth(auth);
-  if (!uid) return json(401, { ok: false, error: 'auth' });
+  if (!uid) return json(401, { ok: false, error: 'auth' }, origin);
 
   let asked = '';
   try {
@@ -67,7 +94,7 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
   const anon = Deno.env.get('SUPABASE_ANON_KEY') || '';
-  if (!supabaseUrl || !anon) return json(500, { ok: false, error: 'misconfigured' });
+  if (!supabaseUrl || !anon) return json(500, { ok: false, error: 'misconfigured' }, origin);
 
   let customer = '';
   try {
@@ -82,7 +109,7 @@ Deno.serve(async (req) => {
   } catch {
     customer = '';
   }
-  if (!customer) return json(409, { ok: false, error: 'no-customer' });
+  if (!customer) return json(409, { ok: false, error: 'no-customer' }, origin);
 
   const form = new URLSearchParams();
   form.set('customer', customer);
@@ -100,10 +127,10 @@ Deno.serve(async (req) => {
     const data = await stripe.json().catch(() => ({})) as { url?: string };
     const url = String((data && data.url) || '');
     if (!stripe.ok || !url.startsWith('https://billing.stripe.com/')) {
-      return json(503, { ok: false, error: 'portal-unavailable' });
+      return json(503, { ok: false, error: 'portal-unavailable' }, origin);
     }
-    return json(200, { ok: true, url: url });
+    return json(200, { ok: true, url: url }, origin);
   } catch {
-    return json(503, { ok: false, error: 'portal-unavailable' });
+    return json(503, { ok: false, error: 'portal-unavailable' }, origin);
   }
 });

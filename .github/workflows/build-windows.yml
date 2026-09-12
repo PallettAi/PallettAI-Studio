@@ -17,9 +17,14 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      # Actions are pinned to commit SHAs, not moving tags. This workflow hands
+      # RELEASE_TOKEN (write access to the public website repo — which is also
+      # the electron-updater feed) to a third-party action, so a moved or
+      # compromised tag would be enough to publish a malicious auto-update to
+      # every installed app. Update by bumping the SHA + version comment.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -149,8 +154,12 @@ jobs:
 
       - name: Attach assets to the website release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
+          # RELEASE_TOKEN must be a fine-grained PAT scoped to
+          # contents:write on RELEASE_REPOSITORY only — no other scopes, no
+          # access to this repo. Prefer a short expiry + rotation, or a GitHub
+          # App installation token. See docs/SECURITY-HARDENING.md.
           repository: ${{ env.RELEASE_REPOSITORY }}
           token: ${{ secrets.RELEASE_TOKEN }}
           tag_name: ${{ github.ref_name }}
@@ -161,7 +170,7 @@ jobs:
 
       - name: Upload unsigned/manual artifacts
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: PallettAI-Studio-windows
           path: |

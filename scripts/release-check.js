@@ -102,6 +102,7 @@ function bootMock(port) {
 
 const SMOKES = [
   ['scripts/supabase-smoke.js', 'Supabase registry smoke'],
+  ['scripts/vault-smoke.js', 'Cloud vault smoke'],
   ['scripts/streak-smoke.js', 'Daily streak smoke'],
   ['scripts/credit-smoke.js', 'AI credit smoke'],
   ['scripts/ai-features-smoke.js', 'AI features smoke'],
@@ -111,7 +112,12 @@ const SMOKES = [
   ['scripts/ai-translate-smoke.js', 'AI translate smoke'],
   ['scripts/ai-fingerprint-smoke.js', 'AI fingerprint smoke'],
   ['scripts/ai-photos-smoke.js', 'AI photo ranker smoke'],
-  ['scripts/ai-compose-smoke.js', 'AI compose smoke']
+  ['scripts/ai-compose-smoke.js', 'AI compose smoke'],
+  ['scripts/palette-lab-smoke.js', 'Palette Lab smoke'],
+  ['scripts/briefs-smoke.js', 'Saved briefs smoke'],
+  ['scripts/revdiff-smoke.js', 'Revision diff smoke'],
+  ['scripts/suites-reviews-events-smoke.js', 'Reviews & Events suites smoke'],
+  ['scripts/client-handoff-smoke.js', 'Client handoff editor smoke']
 ];
 
 function runScript(args, label) {

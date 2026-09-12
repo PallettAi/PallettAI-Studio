@@ -842,6 +842,83 @@ body.photo-grade{
   }
 
   // ----- live data widgets (keyless public APIs) -----
+  // ----- Reviews Suite: star-rated wall + leave-a-review form -----
+  function renderReviews(p, s, i) {
+    const defs = [
+      { icon: '5', title: 'Amelia Hart', text: 'Absolutely brilliant service from start to finish.', extra: 'Google review' },
+      { icon: '5', title: 'Tom Whitaker', text: 'Fast, friendly and genuinely cares about getting it right.', extra: 'Facebook review' },
+      { icon: '4', title: 'Priya Nair', text: 'Great communication and a result we\'re delighted with.', extra: 'Trustpilot' }
+    ];
+    const stars = (n) => {
+      const v = Math.max(1, Math.min(5, parseInt(n, 10) || 5));
+      return '★'.repeat(v) + '<span class="stars-off">' + '★'.repeat(5 - v) + '</span>';
+    };
+    const cards = itemsField(s, defs).map((it) => `
+      <figure class="card review">
+        <div class="review-stars" aria-label="${esc(parseInt(it.icon, 10) || 5)} out of 5 stars">${stars(it.icon)}</div>
+        <blockquote>${esc(it.text)}</blockquote>
+        <figcaption><strong>${esc(it.title)}</strong><small>${esc(it.extra || '')}</small></figcaption>
+      </figure>`).join('');
+    const avg = (() => {
+      const all = itemsField(s, defs).map((it) => Math.max(1, Math.min(5, parseInt(it.icon, 10) || 5)));
+      if (!all.length) return null;
+      return (all.reduce((a, b) => a + b, 0) / all.length).toFixed(1);
+    })();
+    const sub = avg ? `${esc(avg)} average from ${itemsField(s, defs).length} reviews` : '';
+    return sectionShell(s, i, `
+      ${head(s, 'Customer reviews')}
+      ${sub ? `<p class="sub">${sub}</p>` : ''}
+      <div class="review-grid">${cards}</div>
+      <div class="review-form-card card">
+        <strong>Been a customer? Leave a review</strong>
+        <form class="rv-form" data-form="Customer review">
+          <input type="text" name="name" placeholder="Your name" required>
+          <select name="rating" aria-label="Rating" required>
+            <option value="5">★★★★★ Excellent</option>
+            <option value="4">★★★★ Good</option>
+            <option value="3">★★★ OK</option>
+            <option value="2">★★ Poor</option>
+            <option value="1">★ Bad</option>
+          </select>
+          <textarea name="review" rows="3" placeholder="How was your experience?" required></textarea>
+          <button class="btn solid" type="submit">Submit review</button>
+        </form>
+      </div>`);
+  }
+
+  // ----- Events Suite: dated list + RSVP form -----
+  function renderEvents(p, s, i) {
+    const defs = [
+      { icon: '', title: 'Upcoming event', text: 'A short description of the event.', extra: '7pm · Main studio' },
+      { icon: '', title: 'Another event', text: 'What attendees can expect.', extra: '10am · Courtyard room' }
+    ];
+    const fmtDate = (v) => {
+      const d = new Date(String(v || '') + 'T12:00:00');
+      return isNaN(d.getTime()) ? String(v || '') : d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+    };
+    const rows = itemsField(s, defs).map((it, j) => `
+      <div class="event-row card">
+        <div class="event-date" aria-hidden="true"><span>${esc(fmtDate(it.icon))}</span></div>
+        <div class="event-body"><strong>${esc(it.title)}</strong><p>${esc(it.text)}</p><small>${esc(it.extra || '')}</small></div>
+        <button class="btn solid small" data-rsvp="${j}" type="button">RSVP</button>
+      </div>`).join('');
+    return sectionShell(s, i, `
+      ${head(s, 'What\'s on')}
+      <div class="event-list">${rows}</div>
+      <div class="rsvp-card card" hidden id="rsvpPanel">
+        <strong>RSVP — reserve your place</strong>
+        <form class="rsvp-form" data-form="RSVP">
+          <input type="text" name="name" placeholder="Your name" required>
+          <input type="email" name="email" placeholder="you@email.com" required>
+          <select name="guests" aria-label="Number of guests">
+            <option value="1">Just me</option><option value="2">2 people</option><option value="3">3 people</option><option value="4">4 people</option>
+          </select>
+          <input type="hidden" name="event" value="">
+          <button class="btn solid" type="submit">Send RSVP</button>
+        </form>
+      </div>`);
+  }
+
   function renderCrypto(p, s, i) {
     const coins = (s.extra || '').trim() || 'bitcoin,ethereum,solana';
     const ids = coins.split(',').map((c) => c.trim()).filter(Boolean);
@@ -956,7 +1033,8 @@ body.photo-grade{
     video: renderVideo, countdown: renderCountdown, contact: renderContact, cta: renderCta,
     map: renderMap, weather: renderWeather, embed: renderEmbed, booking: renderBooking,
     crypto: renderCrypto, github: renderGithub, fx: renderFx,
-    table: renderTable, collection: renderCollection
+    table: renderTable, collection: renderCollection,
+    reviews: renderReviews, events: renderEvents
   };
 
   // ---------------- nav ----------------
@@ -1072,12 +1150,14 @@ body.photo-grade{
         </div>
         <div>
           <strong>Explore</strong>
-          ${_ctx.pages.length > 1
+          ${(Array.isArray(p.site.navLinks) && p.site.navLinks.length
+            ? p.site.navLinks.filter(x=> x && x.visible!==false).map(it => `<p><a href="${esc(safeHref(it.href||'#','#'))}">${esc(it.label||it.href||'Link')}</a></p>`).join('')
+            : (_ctx.pages.length > 1
             ? _ctx.pages.map((pg) => {
                 const here = pg === _ctx.page;
                 return `<p><a href="${here ? '#top' : pageHref(pg)}"${here ? '' : ' class="page-link" data-page="' + esc(pg.id) + '"'}>${esc(pg.name)}</a></p>`;
               }).join('')
-            : `<p><a href="#top">Home</a></p><p><a href="${contactRef(p)}">Contact</a></p>`}
+            : `<p><a href="#top">Home</a></p><p><a href="${contactRef(p)}">Contact</a></p>`))}
         </div>
       </div>
       ${imageCreditsHTML(p)}
@@ -1128,19 +1208,26 @@ body.photo-grade{
     // optional display/heading family (AI Studio design DNA) — falls back to body
     const fd = (p.site.fontDisplay && p.site.fontDisplay !== p.site.font) ? siteFont(p.site, p.site.fontDisplay) : null;
     const d = design(p);
+    const typoScale = Number(p.site && p.site.typoScale || 1);
+    const typoTrack = Number(p.site && p.site.typoTracking || 0);
+    const typoHLh = Number(p.site && p.site.typoHeadingLh || 1.18);
+    const typoBLh = Number(p.site && p.site.typoBodyLh || 1.65);
+    const bodyFont = (p.site && p.site.fontBody && p.site.fontBody !== p.site.font) ? siteFont(p.site, p.site.fontBody) : null;
     return `
 :root{
   --bg:${pal.bg}; --surface:${pal.surface}; --primary:${pal.primary}; --accent:${pal.accent};
   --text:${pal.text}; --muted:${pal.muted};
   --radius:${d.radius}px; --shadow:0 20px 60px rgba(0,0,0,${isDark ? 0.45 : 0.10});
-  --font:'${f.name}',system-ui,sans-serif;
+  --font:${bodyFont ? `'${bodyFont.name}',system-ui,sans-serif` : `'${f.name}',system-ui,sans-serif`};
   --fontd:${fd ? `'${fd.name}',Georgia,'Times New Roman',serif` : 'var(--font)'};
   --grad:linear-gradient(135deg,${pal.primary},${pal.accent});
+  --typo-scale:${typoScale}; --typo-track:${typoTrack}em; --typo-hlh:${typoHLh}; --typo-blh:${typoBLh};
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:smooth}
 body{font-family:var(--font);background:var(--bg);color:var(--text);line-height:1.65;overflow-x:hidden;overflow-wrap:break-word}
-h1,h2,h3,h4{font-family:var(--fontd);line-height:1.18;letter-spacing:-.012em;text-wrap:balance}
+h1,h2,h3,h4{font-family:var(--fontd);line-height:var(--typo-hlh);letter-spacing:var(--typo-track);text-wrap:balance}
+body{line-height:var(--typo-blh)}
 h1,h2,h3,h4,p,li{overflow-wrap:break-word}
 img{max-width:100%;display:block}
 a{color:inherit;text-decoration:none}
@@ -1157,7 +1244,7 @@ body.theme-dark .sec-hero h1{background:linear-gradient(120deg,#fff 20%,color-mi
 body.theme-dark .hero-tag{color:#e8eaf2}
 .eyebrow{color:var(--primary);font-weight:700;letter-spacing:.14em;text-transform:uppercase;font-size:.8rem;margin-bottom:10px}
 .sec-head{max-width:640px;margin-bottom:48px}
-.sec-head h2{font-size:clamp(1.8rem,4vw,2.6rem);line-height:1.15;letter-spacing:-.02em}
+.sec-head h2{font-size:calc(clamp(1.8rem,4vw,2.6rem) * var(--typo-scale));line-height:1.15;letter-spacing:-.02em}
 .sub{color:var(--muted);margin-top:10px;font-size:1.05rem}
 .btn{display:inline-block;padding:13px 28px;border-radius:999px;font-weight:700;font-size:.95rem;border:2px solid transparent;cursor:pointer;transition:.25s;font-family:var(--font)}
 .btn.solid{background:var(--grad);color:#fff;box-shadow:0 10px 30px rgba(0,0,0,.25)}
@@ -1245,7 +1332,7 @@ body.theme-dark .hero-tag{color:#e8eaf2}
 .hero-shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.55),rgba(0,0,0,.35) 60%,var(--bg))}
 .sec-hero .container{position:relative;z-index:2}
 .hero-badge{display:inline-block;background:color-mix(in srgb,var(--primary) 25%,transparent);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);padding:7px 18px;border-radius:999px;font-size:.8rem;font-weight:700;letter-spacing:.08em;margin-bottom:22px}
-.sec-hero h1{font-size:clamp(2.6rem,7vw,4.8rem);line-height:1.05;letter-spacing:-.03em;background:linear-gradient(120deg,#fff 20%,color-mix(in srgb,var(--accent) 70%,#fff));-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:0 20px 60px rgba(0,0,0,.4)}
+.sec-hero h1{font-size:calc(clamp(2.6rem,7vw,4.8rem) * var(--typo-scale));line-height:1.05;letter-spacing:-.03em;background:linear-gradient(120deg,#fff 20%,color-mix(in srgb,var(--accent) 70%,#fff));-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:0 20px 60px rgba(0,0,0,.4)}
 .hero-tag{font-size:clamp(1.15rem,2.6vw,1.6rem);color:#e8eaf2;margin-top:14px;font-weight:500}
 .hero-desc{color:color-mix(in srgb,#fff 75%,transparent);max-width:620px;margin:18px auto 0}
 .hero-cta{display:flex;gap:14px;justify-content:center;margin-top:34px;flex-wrap:wrap}
@@ -1306,6 +1393,29 @@ body.theme-dark .hero-tag{color:#e8eaf2}
 .quote-who small{display:block;color:var(--muted)}
 .who-ini{width:46px;height:46px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:800;letter-spacing:.04em;background:color-mix(in srgb,var(--accent) 22%,var(--surface));color:var(--text);flex:0 0 46px}
 .photo-hole{width:100%;min-height:160px;display:flex;align-items:center;justify-content:center;text-align:center;border:1px dashed color-mix(in srgb,var(--text) 22%,transparent);border-radius:16px;background:color-mix(in srgb,var(--surface) 80%,transparent);color:var(--muted);font-size:.85rem;font-weight:700;letter-spacing:.02em}
+/* reviews suite */
+.review-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px;margin:26px 0}
+.review{margin:0;padding:22px;display:flex;flex-direction:column;gap:10px}
+.review-stars{color:var(--accent);letter-spacing:.12em;font-size:.95rem}
+.review-stars .stars-off{opacity:.25}
+.review blockquote{margin:0;font-size:1.02rem;line-height:1.55}
+.review figcaption strong{display:block;font-size:.92rem}
+.review figcaption small{color:var(--muted)}
+.review-form-card{max-width:560px;margin:0 auto;padding:24px;display:grid;gap:12px}
+.rv-form{display:grid;gap:10px}
+.rv-form input,.rv-form select,.rv-form textarea{width:100%;padding:11px 14px;border-radius:10px;border:1px solid color-mix(in srgb,var(--text) 14%,transparent);background:color-mix(in srgb,var(--text) 4%,var(--surface));color:var(--text);font:inherit;font-size:.9rem}
+.rv-form textarea{resize:vertical}
+/* events suite */
+.event-list{display:grid;gap:14px;margin:26px 0;max-width:760px;margin-left:auto;margin-right:auto}
+.event-row{display:flex;gap:18px;align-items:center;padding:18px 20px}
+.event-date{flex:0 0 92px;text-align:center;font-weight:800;color:var(--primary);font-size:.9rem;line-height:1.3}
+.event-body{flex:1;min-width:0}
+.event-body p{margin:4px 0;color:var(--muted);font-size:.92rem}
+.event-body small{color:var(--muted)}
+.rsvp-card{max-width:560px;margin:0 auto;padding:24px;display:grid;gap:12px}
+.rsvp-form{display:grid;gap:10px}
+.rsvp-form input,.rsvp-form select{width:100%;padding:11px 14px;border-radius:10px;border:1px solid color-mix(in srgb,var(--text) 14%,transparent);background:color-mix(in srgb,var(--text) 4%,var(--surface));color:var(--text);font:inherit;font-size:.9rem}
+@media(max-width:640px){.event-row{flex-wrap:wrap}.event-date{flex:0 0 auto}}
 /* faq */
 .faq-list{max-width:760px;margin:0 auto;display:grid;gap:14px}
 .faq-item{background:var(--surface);border:1px solid color-mix(in srgb,var(--text) 8%,transparent);border-radius:14px;padding:0 22px;box-shadow:var(--shadow)}
@@ -1886,6 +1996,29 @@ body.theme-dark .hero-tag{color:#e8eaf2}
       else toast(r.err || 'Could not subscribe you right now.', false);
     }));
 
+    // Events Suite: RSVP buttons reveal the shared form, pre-filled with the event
+    $$('.event-row [data-rsvp]').forEach((b) => b.addEventListener('click', () => {
+      const panel = $('#rsvpPanel');
+      if (!panel) return;
+      panel.hidden = false;
+      const row = b.closest('.event-row');
+      const ev = panel.querySelector('input[name="event"]');
+      if (ev) ev.value = row ? ((row.querySelector('strong') || {}).textContent || '') : '';
+      panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const first = panel.querySelector('input[name="name"]');
+      if (first) first.focus();
+    }));
+
+    // Reviews Suite & Events RSVP — same delivery pipeline as contact/newsletter
+    $$('.rv-form, .rsvp-form').forEach((f) => f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!f.checkValidity()) { f.reportValidity(); return; }
+      if (FD.mode === 'demo') { f.reset(); toast('Thank you — we\'ve noted that! ✨', true); return; }
+      const r = await deliver(f);
+      if (r.ok) { f.reset(); toast('Sent — thank you! ✨', true); }
+      else toast(r.err || 'Could not send right now.', false);
+    }));
+
     // blog modal
     const modal = $('#postModal');
     if (modal) {
@@ -2372,6 +2505,110 @@ ${customJs}
   }
 
   // ---------------- suite application ----------------
+  // ---------------- round-trip client content editor (upgrade #3) ----------------
+  // Injected into every page of the client handoff ZIP. The client opens their
+  // site, clicks the pencil, edits text in place, and hits Save — the browser
+  // downloads a fresh copy of the page file to re-upload to their host. No
+  // backend, no build tools, no studio needed. The editor removes itself from
+  // the saved output, so the round-tripped file is a clean, pristine page.
+  function clientEditorScript() {
+    // NOTE: plain string concatenation + single quotes only — this code must
+    // survive template-literal escaping and $-pattern replacement.
+    var lines = [
+      '(function(){',
+      "  if (window.__paiManage) return; window.__paiManage = true;",
+      "  var editing = false;",
+      "  var CSS = '.pai-bar{position:fixed;right:18px;bottom:18px;z-index:2147483000;display:flex;gap:8px;align-items:center;font-family:system-ui,-apple-system,sans-serif}' +",
+      "    '.pai-bar button{border:0;border-radius:999px;padding:10px 16px;font:600 13px system-ui,sans-serif;cursor:pointer;box-shadow:0 4px 18px rgba(0,0,0,.25)}' +",
+      "    '.pai-edit-btn{background:#7c5cff;color:#fff}' +",
+      "    '.pai-save-btn{background:#10b981;color:#fff;display:none}' +",
+      "    '.pai-done-btn{background:#e5e7eb;color:#111827;display:none}' +",
+      "    '.pai-hint{background:rgba(17,24,39,.85);color:#f9fafb;border-radius:8px;padding:6px 10px;font:12px system-ui,sans-serif;display:none;max-width:260px}' +",
+      "    'body.pai-editing [contenteditable=true]:hover{outline:2px dashed rgba(124,92,255,.65);outline-offset:2px}' +",
+      "    'body.pai-editing [contenteditable=true]:focus{outline:2px solid #7c5cff;outline-offset:2px}';",
+      "  function pick(){",
+      "    var els = document.querySelectorAll('main h1, main h2, main h3, main h4, main p, main li, main blockquote, main .sub, main small');",
+      "    return Array.prototype.filter.call(els, function(el){",
+      "      if (!el || !el.closest) return false;",
+      "      if (el.closest('form') || el.closest('button')) return false;",
+      "      if (el.closest('.toast') || el.closest('.modal') || el.closest('.pai-bar')) return false;",
+      "      if (el.querySelector && el.querySelector('form')) return false;",
+      "      return true;",
+      "    });",
+      "  }",
+      "  function start(){",
+      "    editing = true; document.body.classList.add('pai-editing');",
+      "    pick().forEach(function(el){ el.setAttribute('contenteditable','true'); el.spellcheck = false; });",
+      "    saveBtn.style.display = 'block'; doneBtn.style.display = 'block'; hint.style.display = 'block'; editBtn.style.display = 'none';",
+      "  }",
+      "  function stop(){",
+      "    editing = false; document.body.classList.remove('pai-editing');",
+      "    pick().forEach(function(el){ el.removeAttribute('contenteditable'); });",
+      "    saveBtn.style.display = 'none'; doneBtn.style.display = 'none'; hint.style.display = 'none'; editBtn.style.display = 'block';",
+      "  }",
+      "  function cleanClone(){",
+      "    var root = document.documentElement.cloneNode(true);",
+      "    var kill = ['.pai-bar', 'style[data-pai]', 'script[data-pai]'];",
+      "    kill.forEach(function(sel){ var n = root.querySelector(sel); if (n && n.parentNode) n.parentNode.removeChild(n); });",
+      "    root.querySelectorAll('[contenteditable]').forEach(function(el){ el.removeAttribute('contenteditable'); el.removeAttribute('spellcheck'); });",
+      "    root.querySelectorAll('.pai-editing').forEach(function(el){ el.classList.remove('pai-editing'); });",
+      "    return '<!DOCTYPE html>\\n' + root.outerHTML;",
+      "  }",
+      "  function save(){",
+      "    var wasEditing = editing; if (wasEditing) stop();",
+      "    var html = cleanClone();",
+      "    var name = (location.pathname.split('/').pop() || 'index.html'); if (name.indexOf('.html') === -1) name = 'index.html';",
+      "    var blob = new Blob([html], { type: 'text/html' });",
+      "    var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;",
+      "    document.body.appendChild(a); a.click(); a.remove();",
+      "    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 4000);",
+      "    if (wasEditing) start();",
+      "  }",
+      "  var style = document.createElement('style'); style.setAttribute('data-pai',''); style.textContent = CSS;",
+      "  var bar = document.createElement('div'); bar.className = 'pai-bar';",
+      "  var hint = document.createElement('span'); hint.className = 'pai-hint'; hint.textContent = 'Click any text to edit it. Save downloads the updated page — upload it to your host to publish.';",
+      "  var editBtn = document.createElement('button'); editBtn.className = 'pai-edit-btn'; editBtn.textContent = '\u270f\ufe0f Edit text';",
+      "  var saveBtn = document.createElement('button'); saveBtn.className = 'pai-save-btn'; saveBtn.textContent = '\ud83d\udcbe Save changes';",
+      "  var doneBtn = document.createElement('button'); doneBtn.className = 'pai-done-btn'; doneBtn.textContent = 'Done';",
+      "  editBtn.addEventListener('click', start);",
+      "  doneBtn.addEventListener('click', function(){ if (confirm('Discard unsaved edits?')) stop(); });",
+      "  saveBtn.addEventListener('click', save);",
+      "  bar.appendChild(hint); bar.appendChild(editBtn); bar.appendChild(saveBtn); bar.appendChild(doneBtn);",
+      "  function boot(){ document.body.appendChild(style); document.body.appendChild(bar); }",
+      "  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();",
+      "  window.addEventListener('beforeunload', function(e){ if (editing) { e.preventDefault(); e.returnValue = ''; } });",
+      "})();"
+    ];
+    return '<script data-pai="client-editor">' + lines.join('\n') + '</script>';
+  }
+
+  // Wrap a built page's HTML with the client editor. Pages without a closing
+  // body tag (fragments / guides) pass through untouched. Uses a function
+  // replacement so `$` sequences in the script can never be re-interpreted.
+  function injectClientEditor(html) {
+    if (!html || typeof html !== 'string' || !/<\/body>/i.test(html)) return html;
+    if (html.indexOf('data-pai="client-editor"') !== -1) return html; // already injected
+    return html.replace(/<\/body>/i, function() { return clientEditorScript() + '</body>'; });
+  }
+
+  // Standalone how-to page for the manage mode (dropped into the handoff ZIP).
+  function manageGuideHtml(siteName) {
+    const nm = esc(siteName || 'your site');
+    return '<!DOCTYPE html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+      + '<title>How to edit ' + nm + '</title>'
+      + '<style>body{font-family:system-ui,-apple-system,sans-serif;max-width:680px;margin:40px auto;padding:0 20px;line-height:1.6;color:#1f2937}'
+      + 'h1{font-size:1.6rem}li{margin:8px 0}code{background:#f3f4f6;padding:2px 6px;border-radius:6px;font-size:.9em}'
+      + '.step{background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:16px 20px;margin:14px 0}</style></head><body>'
+      + '<h1>Editing ' + nm + '</h1>'
+      + '<p>You do not need any special software. Your website files include a built-in editor.</p>'
+      + '<div class="step"><strong>1.</strong> Open your site (for example <code>index.html</code>). A purple <strong>\u270f\ufe0f Edit text</strong> button sits in the bottom-right corner.</div>'
+      + '<div class="step"><strong>2.</strong> Click it, then click any heading or paragraph on the page and type your changes.</div>'
+      + '<div class="step"><strong>3.</strong> Click <strong>\ud83d\udcbe Save changes</strong> — your browser downloads the updated page file (e.g. <code>index.html</code>).</div>'
+      + '<div class="step"><strong>4.</strong> Upload that downloaded file to your hosting (drag-and-drop on Netlify, or your host\'s file manager) to publish.</div>'
+      + '<p style="color:#6b7280">Tip: keep a copy of the original files from this ZIP as a backup. The editor button never appears for your visitors — it only exists in this handoff copy.</p>'
+      + '</body></html>';
+  }
+
   function applySuite(project, suiteId) {
     const suite = DB.getSuite(suiteId);
     if (!suite || (project.suites || []).includes(suiteId)) return { ok: false, reason: 'already' };
@@ -2403,7 +2640,7 @@ ${customJs}
     return true;
   }
 
-  return { buildSiteHTML, buildSitePages, seoExtras, applySuite, removeSuite, esc, picsum, pages: pagesOf, slugify, pageHref, safeHref, safeEmbedUrl, safeBookingUrl };
+  return { buildSiteHTML, buildSitePages, seoExtras, applySuite, removeSuite, esc, picsum, pages: pagesOf, slugify, pageHref, safeHref, safeEmbedUrl, safeBookingUrl, injectClientEditor, manageGuideHtml };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = Builder;

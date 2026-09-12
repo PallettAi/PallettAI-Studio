@@ -2412,6 +2412,20 @@ const AI = (() => {
       });
     }
     if (!project.site.logo) logo(project);
+    // Identity pre-fill: prefer business identity stored on this device
+    try {
+      const rawId = (typeof localStorage!=='undefined') ? JSON.parse(localStorage.getItem('pallettai.settings.v1')||'{}') : null;
+      const id = rawId && typeof rawId==='object' ? rawId : null;
+      if (id) {
+        if (id.businessName && String(id.businessName).trim()) project.site.name = String(id.businessName).trim();
+        if (id.businessEmail && String(id.businessEmail).trim()) project.site.email = String(id.businessEmail).trim();
+        if (id.businessPhone && String(id.businessPhone).trim()) project.site.phone = String(id.businessPhone).trim();
+        if (id.businessAddress && String(id.businessAddress).trim()) project.site.address = String(id.businessAddress).trim();
+        if (id.businessUrl && String(id.businessUrl).trim()) project.site.url = String(id.businessUrl).trim();
+        if (id.businessHours && String(id.businessHours).trim()) project.site.hours = String(id.businessHours).trim();
+        if (id.businessSocial && String(id.businessSocial).trim()) project.site.social = String(id.businessSocial).trim();
+      }
+    } catch(e) {}
     project.site.photoPass = { status: 'pending', placed: { hero: false, about: false, gallery: 0 } };
     return project;
   }

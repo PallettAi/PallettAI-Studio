@@ -62,7 +62,7 @@ const PLANS = {
   ],
 
   // Suites that require a paid plan to install
-  suitePlan: { blog: 'pro', shop: 'pro', gallerypro: 'pro', seo: 'pro', datawidgets: 'pro' },
+  suitePlan: { blog: 'pro', shop: 'pro', gallerypro: 'pro', seo: 'pro', datawidgets: 'pro', reviews: 'pro', events: 'pro' },
 
   // Section types that require a paid plan (added via editor / copilot / integrations)
   sectionSuite: { crypto: 'datawidgets', github: 'datawidgets', fx: 'datawidgets' },

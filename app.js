@@ -66,11 +66,14 @@ const App = (() => {
   }
 
   const LS = {
+    sectionPresets: 'pallettai.sectionPresets.v1',
+    assets: 'pallettai.assets.v1',
     projects: 'pallettai.projects.v1',
     settings: 'pallettai.settings.v1',
     seeded: 'pallettai.seeded.v1',
     revs: 'pallettai.revisions.v1',
-    brandPresets: 'pallettai.brandPresets.v1'
+    brandPresets: 'pallettai.brandPresets.v1',
+    briefs: 'pallettai.briefs.v1'
   };
 
   // Projects + autosave revisions live in IndexedDB (AppStore); localStorage
@@ -122,6 +125,7 @@ const App = (() => {
     scheduleRevision(current());
     // an edit/save counts as today's qualifying action for the streak claim
     if (SUPABASE.isConfigured() && SUPABASE.signedIn()) noteStreakAction('edit');
+    scheduleVaultPush(current());
     // Defer a full dashboard rebuild out of the typing/save hot path. The dashboard
     // re-renders on view switch / explicit refresh already; rebuilding it on every
     // autosave is redundant work while the user is deep in the designer.
@@ -145,7 +149,16 @@ const App = (() => {
   }
 
   function loadSettings() {
-    try { settings = { ...DB.defaultSettings, ...JSON.parse(localStorage.getItem(LS.settings) || '{}') }; } catch (e) { settings = { ...DB.defaultSettings }; }
+    try {
+      const raw = JSON.parse(localStorage.getItem(LS.settings) || '{}');
+      settings = { ...DB.defaultSettings, ...(raw && typeof raw === 'object' ? raw : {}) };
+      // normalize new workspace keys defensively for users upgrading from older builds
+      if (!['dashboard','templates','designer','ai','database'].includes(settings.startupView)) settings.startupView = 'dashboard';
+      ['dashboardShowJobTray','dashboardShowMetrics','dashboardShowInsights','dashboardShowTemplateDoor'].forEach((k) => { if (typeof settings[k] !== 'boolean') settings[k] = DB.defaultSettings[k]; });
+      if (typeof settings.useSystemAccent !== 'boolean') settings.useSystemAccent = DB.defaultSettings.useSystemAccent;
+      if (![3,6,9,12].includes(Number(settings.dashboardRecentCount))) settings.dashboardRecentCount = 6;
+      ['businessName','businessEmail','businessPhone','businessAddress','businessUrl','businessHours','businessSocial'].forEach((k)=>{ if(typeof settings[k]!=='string') settings[k]=DB.defaultSettings[k]||''; settings[k]=String(settings[k]).slice(0,400); });
+    } catch (e) { settings = { ...DB.defaultSettings }; }
     applyTheme();
   }
   function saveSettings() {
@@ -157,11 +170,37 @@ const App = (() => {
     const systemLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
     const light = settings.theme === 'light' || (settings.theme === 'system' && systemLight);
     document.body.classList.toggle('light', light);
-    // bespoke session: accent colour, UI density, reduced motion
-    document.documentElement.style.setProperty('--accent', settings.accent || DB.defaultSettings.accent);
+    // bespoke session: accent colour, UI density, reduced motion.
+    // "Use system accent" wins over the picked colour when available.
+    let accent = settings.accent || DB.defaultSettings.accent;
+    if (settings.useSystemAccent && systemAccent) accent = systemAccent;
+    document.documentElement.style.setProperty('--accent', accent);
     document.body.classList.toggle('ui-compact', settings.density === 'compact');
     document.body.classList.toggle('no-motion', settings.reducedMotion === true);
   }
+
+  // ---- native chrome: OS accent + titlebar drag region ----
+  let systemAccent = '';
+  async function initSystemAccent() {
+    const bridge = window.pallettai;
+    if (!bridge || !bridge.getAccent) return;
+    try {
+      systemAccent = (await bridge.getAccent()) || '';
+      applyTheme();
+      if (bridge.onAccent) {
+        bridge.onAccent((hex) => {
+          systemAccent = hex || '';
+          if (settings.useSystemAccent) applyTheme();
+        });
+      }
+    } catch (e) { /* accent is a nicety — never boot-blocking */ }
+  }
+  function applyTitlebarInset() {
+    if (window.pallettai && window.pallettai.platform === 'darwin') {
+      document.body.classList.add('titlebar-inset');
+    }
+  }
+  const ELECTRON = !!(typeof window !== 'undefined' && window.pallettai && window.pallettai.isElectron);
 
   const current = () => projects.find((p) => p.id === currentId) || null;
 
@@ -175,6 +214,13 @@ const App = (() => {
   let revs = {}; // in-memory view — callers read it synchronously
   const BRAND_PRESET_LIMIT = 12;
   let brandPresets = [];
+  let sectionPresets = []; // reusable section presets (saved sections)
+  let briefs = []; // saved client briefs (repeat builds, roadmap #7)
+  const SECTION_PRESET_LIMIT = 60;
+  let assets = []; // local asset library items
+  const ASSET_LIMIT = 100;
+  const ASSET_MAX_W = 1600;
+  const ASSET_MAX_BYTES = 8 * 1024 * 1024;
   const brandNumber = (value, fallback, min, max) => {
     const n = Number(value);
     if (!Number.isFinite(n)) return fallback;
@@ -449,10 +495,16 @@ const App = (() => {
   function cloudSignedIn() {
     return SUPABASE.isConfigured() && SUPABASE.signedIn();
   }
+  // Ref of the most recent spendCredit(). Server-side meters (the DeepL proxy)
+  // key on this same ref so their own spend_credit call is idempotent with the
+  // one mirrored below instead of charging the account twice.
+  let lastCreditRef = '';
+
   function spendCredit() {
     const c = PLANS.store.creditsLeft();
     if (c.left === 0) { openPricing(); return false; }
     const ref = PLANS.store.useCredit(cloudSignedIn() ? 'cloud' : 'local');
+    lastCreditRef = ref || '';
     // mirror this spend to the registry (fire + forget; offline leaves it pending)
     if (cloudSignedIn() && ref) settleCreditSpend(ref);
     // a real AI generation counts as today's qualifying action for the streak
@@ -647,7 +699,7 @@ const App = (() => {
         ${list.map((r, i) => {
           let meta = '';
           try { const s = JSON.parse(r.snap); meta = (s.site.sections || []).length + ' sections · ' + (s.suites || []).length + ' suites'; } catch (e) {}
-          return `<div class="rev-row"><div><b>${fmt(r.t)}</b><small>${esc(meta)}</small></div><div style="display:flex;gap:6px"><button class="btn ghost small" data-rev-del="${i}">${uiIcon('trash')}</button><button class="btn primary small" data-rev-use="${i}">Restore</button></div></div>`;
+          return `<div class="rev-row"><div><b>${fmt(r.t)}</b><small>${esc(meta)}</small></div><div style="display:flex;gap:6px"><button class="btn ghost small" data-rev-diff="${i}">Diff</button><button class="btn ghost small" data-rev-del="${i}">${uiIcon('trash')}</button><button class="btn primary small" data-rev-use="${i}">Restore</button></div></div>`;
         }).join('')}
       </div>`);
     $$('[data-rev-use]').forEach((b) => b.onclick = () => {
@@ -675,6 +727,41 @@ const App = (() => {
       persistRevs(revs);
       histOpen();
     });
+    $$('[data-rev-diff]').forEach((b) => b.onclick = () => {
+      const rev = list[+b.dataset.revDiff];
+      if (!rev) return;
+      let prev = null;
+      try { prev = JSON.parse(rev.snap); } catch (e) {}
+      if (!prev || !prev.site) return toast('That snapshot could not be read');
+      openRevisionDiff(prev, c);
+    });
+  }
+
+  // Side-by-side revision diff (roadmap #8): what changed between an autosaved
+  // snapshot and the live project — summary facts first, then per-section edits.
+  function openRevisionDiff(prev, cur) {
+    const report = (typeof RevDiff !== 'undefined')
+      ? RevDiff.diff(prev, cur)
+      : { changed: false, summary: [], sections: [] };
+    if (!report.changed) {
+      return openModal('Revision diff', `<p style="color:var(--muted)">No differences — this snapshot matches the current project.</p>`);
+    }
+    const row = (ch) => `<div class="diff-row"><span class="diff-label">${esc(ch.label)}</span><span class="diff-from">${esc(String(ch.from || '—'))}</span><span class="diff-arrow">→</span><span class="diff-to">${esc(String(ch.to || '—'))}</span></div>`;
+    const secBlock = (s) => {
+      const kindTag = s.kind === 'added' ? '<span class="diff-kind add">added</span>'
+        : s.kind === 'removed' ? '<span class="diff-kind rem">removed</span>'
+          : '<span class="diff-kind edit">edited</span>';
+      const body = s.kind === 'edited'
+        ? s.changes.map(row).join('')
+        : `<div class="diff-row"><span class="diff-label">${esc(s.label)}</span><span class="diff-to">${s.kind === 'added' ? 'new in current version' : 'missing from current version'}</span></div>`;
+      return `<details class="diff-sec" ${s.kind !== 'edited' || s.changes.length <= 2 ? 'open' : ''}><summary>${kindTag} ${esc(s.label)} <small>#${s.index + 1}</small></summary><div class="diff-sec-body">${body}</div></details>`;
+    };
+    openModal('What changed — ' + esc(cur.name), `
+      <p style="color:var(--muted);margin-bottom:10px">Comparing the snapshot to the project as it is now.</p>
+      ${report.summary.length ? `<div class="diff-summary">${report.summary.map(row).join('')}</div>` : ''}
+      <div style="display:flex;flex-direction:column;gap:8px;max-height:380px;overflow:auto;margin-top:8px">
+        ${report.sections.map(secBlock).join('') || '<p style="color:var(--muted)">Only general settings changed.</p>'}
+      </div>`);
   }
 
   async function aiSectionRewrite(sec) {
@@ -1302,6 +1389,82 @@ const App = (() => {
     $('#modalDownNo').onclick = closeModal;
   }
 
+  // ---------------- cloud project vault ----------------
+  // Projects live in the local store; the vault mirrors them to the registry
+  // per account so work survives a lost device or a cleared profile. Every
+  // step is background + non-fatal: a vault failure can never block saving,
+  // rendering or the rest of the cloud sync.
+  let cloudVault = { status: 'idle', lastSync: 0, lastError: '' };
+  const vaultReady = () => typeof Vault !== 'undefined' && SUPABASE.isConfigured() && SUPABASE.signedIn();
+  const vaultTimers = {};
+  function scheduleVaultPush(c) {
+    if (!vaultReady() || !c || settings.cloudVaultEnabled === false) return;
+    clearTimeout(vaultTimers[c.id]);
+    vaultTimers[c.id] = setTimeout(() => { syncVault().catch(() => {}); }, settings.cloudVaultDelayMs || 4000);
+  }
+  async function syncVault(opts) {
+    if (!vaultReady()) return { ok: false, skipped: true };
+    const options = (opts && opts.signal) ? opts : null;
+    cloudVault.status = 'syncing';
+    try {
+      const res = await SUPABASE.getProjectBackups(options);
+      if (!res.ok) throw new Error(res.msg || 'Vault read failed');
+      const planOut = Vault.plan(projects, res.backups);
+      // Drop locals the cloud has tombstoned (deleted on another device).
+      if (planOut.toDropLocal.length) {
+        const gone = new Set(planOut.toDropLocal);
+        projects = projects.filter((p) => !gone.has(p.id));
+        if (currentId && gone.has(currentId)) currentId = null;
+        planOut.toDropLocal.forEach((id) => clearRevisions(id));
+        saveProjects();
+      }
+      // Adopt cloud-newer copies (another device won the race).
+      let adopted = 0;
+      for (const payload of planOut.toAdopt) {
+        if (!Vault.looksLikeProject(payload)) continue;
+        const row = res.backups.find((b) => b.projectId === payload.id) || {};
+        const idx = projects.findIndex((p) => p.id === payload.id);
+        const incoming = Vault.withVaultMeta(payload, row);
+        if (idx === -1) { projects.unshift(incoming); } else { projects[idx] = incoming; }
+        if (!Array.isArray(incoming.suites)) incoming.suites = [];
+        try { Builder.pages(incoming); } catch (e) { /* older payload */ }
+        adopted++;
+      }
+      if (adopted) {
+        saveProjects();
+        if (currentView === 'dashboard') renderDashboard();
+        if (currentView === 'designer') renderDesigner();
+        toast('Cloud backup restored ' + adopted + ' project' + (adopted === 1 ? '' : 's') + ' ☁', true);
+      }
+      // Push local-newer copies (this device just saved them).
+      const push = await Vault.pushAll(planOut.toPush, (id, name, payload) => SUPABASE.saveProjectBackup(id, name, payload, options));
+      cloudVault.status = 'idle';
+      cloudVault.lastSync = Date.now();
+      cloudVault.lastError = push.failed ? (push.errors[0] && push.errors[0].reason) || 'push failed' : '';
+      if (settingsTab === 'account') renderSettings();
+      return { ok: !push.failed, ...push, adopted };
+    } catch (e) {
+      cloudVault.status = 'error';
+      cloudVault.lastError = (e && e.message) || 'Vault sync failed';
+      if (settingsTab === 'account') renderSettings();
+      return { ok: false, msg: cloudVault.lastError };
+    }
+  }
+  function vaultBackupNow() {
+    if (!SUPABASE.isConfigured() || !SUPABASE.signedIn()) {
+      openModal('Cloud backup', '<p style="color:var(--muted)">Sign in to the PallettAI registry (Settings ▸ Account & billing) to back your projects up. Your work stays on this machine until then.</p>');
+      return;
+    }
+    const b = $('#btnVaultBackup');
+    if (b) { b.disabled = true; b.textContent = 'Backing up…'; }
+    syncVault().then((r) => {
+      if (b) { b.disabled = false; b.textContent = 'Back up now'; }
+      if (r && r.skipped) return;
+      if (r && r.ok) toast('Vault up to date — ' + (r.pushed || 0) + ' pushed, ' + (r.adopted || 0) + ' restored ☁', true);
+      else toast((r && r.msg) || 'Vault sync failed — try again', false);
+    }).catch(() => { if (b) { b.disabled = false; b.textContent = 'Back up now'; } toast('Vault sync failed — try again', false); });
+  }
+
   // ---------------- navigation ----------------
   function paintNav() {
     if (typeof CHROME === 'undefined' || !CHROME.view) return;
@@ -1760,6 +1923,8 @@ const App = (() => {
   function renderJobTray() {
     const root = $('#jobTray');
     if (!root) return;
+    if (settings.dashboardShowJobTray === false) { root.innerHTML = ''; root.className = 'job-tray empty'; root.hidden = true; return; }
+    root.hidden = false;
     const c = current();
     if (!c) {
       root.className = 'job-tray empty';
@@ -1888,7 +2053,8 @@ const App = (() => {
     const st4 = !projects.length
       ? 'Nothing saved yet — projects stay on this device'
       : projects.length + ' project' + (projects.length === 1 ? '' : 's') + ' + autosave history · local only';
-    stats.innerHTML =
+    if (settings.dashboardShowMetrics === false) stats.innerHTML = '';
+    else stats.innerHTML =
       makeStat('sc-projects', 'Projects', '', '<span>' + projects.length + '</span>', pSub, 'projects') +
       makeStat('sc-ai', 'Credits', '', '<span>' + (pro ? 'Unlimited' : cred.left) + '</span><small>' + (pro ? '' : ' left') + '</small>', cSub, 'ai') +
       makeStat('sc-store', 'Local data', '', '<span>' + dashFmtBytes(totB) + '</span>', st4);
@@ -1919,7 +2085,7 @@ const App = (() => {
             <div class="ch-lbl">${d.date.toLocaleDateString(undefined, { weekday: 'short' })}</div>
           </div>`;
         }).join('')}</div>`;
-    const sorted = projects.slice().sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 4);
+    const sorted = projects.slice().sort((a, b) => b.updatedAt - a.updatedAt).slice(0, (settings.dashboardRecentCount || 6));
     const recentHtml = !sorted.length
       ? `<div class="ins-empty"><p>No projects yet. Start from a template and recent work will show here.</p></div>`
       : `<div class="act-list">${sorted.map((p) => {
@@ -1940,6 +2106,7 @@ const App = (() => {
             <span class="act-open">↗</span>
           </div>`;
         }).join('')}</div>`;
+    if (settings.dashboardShowInsights === false) { ins.innerHTML = ''; return; }
     ins.innerHTML =
       `<div class="ins-card">
         <div class="ins-head"><h3>AI generations — last 7 days</h3><span class="ins-note">${signedIn ? 'tied to your registry account' : 'tracked on this device'}</span></div>
@@ -1959,6 +2126,8 @@ const App = (() => {
   function renderTemplateDoor() {
     const door = $('#dashTemplates');
     if (!door) return;
+    if (settings.dashboardShowTemplateDoor === false) { door.hidden = true; const m = $('#dashTemplatesMeta'); if (m) m.textContent=''; return; }
+    door.hidden = false;
     const total = DB.templates.length;
     const proN = (PLANS.proTemplates || []).length;
     const freeN = Math.max(0, total - proN);
@@ -2084,16 +2253,16 @@ const App = (() => {
       updatedAt: Date.now(),
       suites: [],
       site: {
-        name: tpl.name + ' Studio',
+        name: (settings.businessName && String(settings.businessName).trim()) || (tpl.name + ' Studio'),
         tagline: 'We craft memorable, animated experiences for the modern web.',
         eyebrow: 'Welcome to ' + tpl.name,
         description: '',
         ctaText: 'Get started',
         ctaLink: '',
-        email: 'hello@' + (settings.brandLink || 'pallettai.org').replace(/^https?:\/\//, '').replace(/\/.*$/, ''),
-        phone: '',
-        address: '',
-        url: '',
+        email: (settings.businessEmail && String(settings.businessEmail).trim()) || ('hello@' + (settings.brandLink || 'pallettai.org').replace(/^https?:\/\//, '').replace(/\/.*$/, '')),
+        phone: String(settings.businessPhone || '').trim(),
+        address: String(settings.businessAddress || '').trim(),
+        url: String(settings.businessUrl || '').trim(),
         palette: (tpl.id === 'blank' || custPal) ? settings.defaultPalette : tpl.palette,
         font: (tpl.id === 'blank' || custFont) ? settings.defaultFont : tpl.font,
         heroLayout: settings.defaultHeroLayout || 'centered',
@@ -2187,6 +2356,9 @@ const App = (() => {
       if (currentId === id) currentId = null;
       clearRevisions(id);
       saveProjects();
+      // Tombstone the cloud copy so other devices converge on the deletion
+      // instead of re-downloading the project on their next sync.
+      if (vaultReady()) SUPABASE.deleteProjectBackup(id).catch(() => {});
       toast('Project deleted');
     };
     if (settings.confirmDelete === false) return doDel();
@@ -2275,6 +2447,26 @@ const App = (() => {
         <div class="field"><label>Container width (px)</label><input type="number" id="dWidth" value="${s.design && Number.isFinite(Number(s.design.containerWidth)) ? s.design.containerWidth : 1140}" min="960" max="1680"></div>
         <div class="field"><label>Corner radius (px)</label><input type="number" id="dRadius" value="${s.design && Number.isFinite(Number(s.design.radius)) ? s.design.radius : 20}" min="0" max="48"></div>
         <div class="field"><label>Section spacing (px)</label><input type="number" id="dSpacing" value="${s.design && Number.isFinite(Number(s.design.spacing)) ? s.design.spacing : 96}" min="32" max="220"></div>
+        <div class="panel" id="typoLab" style="margin:14px 0">
+          <h3 style="margin-bottom:2px">Typography Lab</h3>
+          <p class="set-desc" style="margin:0 0 8px">Heading + body pairing, scale, line-height and tracking — preview live below.</p>
+          <div class="field"><label>Heading font</label><select id="typoHead">${DB.fonts.map(f=>`<option value="${f.id}">${f.name}</option>`).join('')}</select></div>
+          <div class="field"><label>Body font</label><select id="typoBody">${DB.fonts.map(f=>`<option value="${f.id}">${f.name}</option>`).join('')}</select></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="field"><label>Scale (heading size)</label><input type="range" id="typoScale" min="0.9" max="1.25" step="0.02"><small id="typoScaleVal" class="set-desc"></small></div>
+            <div class="field"><label>Spacing</label><input type="range" id="typoTrack" min="-0.04" max="0.06" step="0.005"><small id="typoTrackVal" class="set-desc"></small></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="field"><label>Heading line-height</label><input type="range" id="typoLh" min="1.0" max="1.6" step="0.05"><small id="typoLhVal" class="set-desc"></small></div>
+            <div class="field"><label>Body line-height</label><input type="range" id="typoBodyLh" min="1.4" max="2.0" step="0.05"><small id="typoBodyLhVal" class="set-desc"></small></div>
+          </div>
+          <div id="typoPreview" style="margin-top:10px;border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--surface2);overflow:hidden"></div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn primary small" id="typoApply">Apply to project</button>
+            <button class="btn ghost small" id="typoReset">Reset</button>
+            <label style="display:flex;gap:6px;align-items:center;font-size:.78rem;margin-left:auto"><input type="checkbox" id="typoSync"> Sync pairing with site font</label>
+          </div>
+        </div>
         <div class="field"><label>Hero layout</label>
           <select id="dHero"><option value="centered" ${(s.heroLayout || 'centered') === 'centered' ? 'selected' : ''}>Centered (image bg)</option><option value="split" ${s.heroLayout === 'split' ? 'selected' : ''}>Split (text + image)</option><option value="minimal" ${s.heroLayout === 'minimal' ? 'selected' : ''}>Minimal (clean)</option></select>
         </div>
@@ -2337,6 +2529,16 @@ const App = (() => {
 
       <div class="panel">
         <div class="pages-bar" id="pagesBar"></div>
+        <div class="panel" id="navBuilder" style="margin:10px 0 12px">
+          <h3 style="margin-bottom:6px">Navigation</h3>
+          <p class="set-desc" style="margin:0 0 8px">Reorder pages, hide from nav, and edit header links. Drag pages to reorder.</p>
+          <div id="navBuilderList"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
+            <div class="field" style="margin:0"><label>Add header link</label><div style="display:flex;gap:6px"><input id="navAddLabel" placeholder="Label" style="flex:1"><input id="navAddHref" placeholder="/about or https://…" style="flex:1"></div></div>
+            <div class="field" style="margin:0"><label>Footer note</label><input id="navFooterNote" value="${esc(s.footerNote||'')}" placeholder="© Your studio — all rights reserved"></div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:8px"><button class="btn primary small" id="navAddBtn">Add link</button><button class="btn ghost small" id="navSave">Save</button></div>
+        </div>
         <h3>Sections <span style="color:var(--muted);font-weight:600">(${c.site.sections.length})</span>${multiPg ? '<span class="chip" style="margin-left:6px">📄 ' + esc(pgNow.name) + ' page</span>' : ''}</h3>
         <div class="add-sec-row">
           <select id="addSecType">${Object.entries(DB.sectionTypes).map(([k, v]) => `<option value="${k}">${v.icon} ${v.name}</option>`).join('')}</select>
@@ -2464,10 +2666,44 @@ const App = (() => {
       renderEditor();
     };
     $('#addSecType').onchange = () => {};
+    // Typography Lab init
+    (function(){
+      const c2 = c; // current project
+      const headSel = document.getElementById('typoHead');
+      const bodySel = document.getElementById('typoBody');
+      const sc = document.getElementById('typoScale');
+      const tr = document.getElementById('typoTrack');
+      const lh = document.getElementById('typoLh');
+      const blh = document.getElementById('typoBodyLh');
+      const pv = document.getElementById('typoPreview');
+      if (!headSel || !bodySel || !sc || !tr || !lh || !blh || !pv) return;
+      const defaults = { head: c2.site.font||'inter', body: (c2.site.fontBody||c2.site.font||'inter'), scale: Number(c2.site.typoScale||1), track: Number(c2.site.typoTracking||0), lh: Number(c2.site.typoHeadingLh||1.12), blh: Number(c2.site.typoBodyLh||1.65) };
+      headSel.value = DB.getFont(defaults.head).id; bodySel.value = DB.getFont(defaults.body).id;
+      sc.value = String(defaults.scale); tr.value = String(defaults.track); lh.value=String(defaults.lh); blh.value=String(defaults.blh);
+      const updVals=()=>{ const sv=document.getElementById('typoScaleVal'); const tv=document.getElementById('typoTrackVal'); const lv=document.getElementById('typoLhVal'); const bv=document.getElementById('typoBodyLhVal'); if(sv) sv.textContent=(Number(sc.value).toFixed(2)+'×'); if(tv) tv.textContent=(Number(tr.value).toFixed(3)+'em'); if(lv) lv.textContent=Number(lh.value).toFixed(2); if(bv) bv.textContent=Number(blh.value).toFixed(2); };
+      const renderPv=()=>{
+        const hf = DB.getFont(headSel.value)||DB.getFont('inter'); const bf = DB.getFont(bodySel.value)||DB.getFont('inter');
+        const scale=Number(sc.value)||1; const track=Number(tr.value)||0; const hlh=Number(lh.value)||1.12; const bllh=Number(blh.value)||1.65;
+        updVals();
+        pv.innerHTML = '<div style="font-family:'+ (hf.css||'sans-serif') +';font-size:'+ (1.6*scale).toFixed(2)+'rem;letter-spacing:'+track+'em;line-height:'+hlh+';font-weight:700">Quick brown fox — heading</div><div style="font-family:'+ (bf.css||'sans-serif') +';font-size:.92rem;line-height:'+bllh+';color:var(--muted);margin-top:6px">Body copy preview — The studio builds sites that ship. Try pairings until it feels right, then apply.</div>';
+        // live apply if sync checked
+        const sync = document.getElementById('typoSync');
+        if (sync && sync.checked) {
+          c2.site.font = hf.id; c2.site.fontBody = bf.id; c2.site.typoScale=scale; c2.site.typoTracking=track; c2.site.typoHeadingLh=hlh; c2.site.typoBodyLh=bllh; touch(c2);
+        }
+      };
+      ['change','input'].forEach(ev=>{ headSel.addEventListener(ev, renderPv); bodySel.addEventListener(ev, renderPv); sc.addEventListener(ev, renderPv); tr.addEventListener(ev, renderPv); lh.addEventListener(ev, renderPv); blh.addEventListener(ev, renderPv); });
+      const ap = document.getElementById('typoApply');
+      if (ap) ap.onclick = ()=>{ const hf=DB.getFont(headSel.value)||DB.getFont('inter'); const bf=DB.getFont(bodySel.value)||DB.getFont('inter'); histCapture(); c2.site.font=hf.id; c2.site.fontBody=bf.id; c2.site.typoScale=Number(sc.value)||1; c2.site.typoTracking=Number(tr.value)||0; c2.site.typoHeadingLh=Number(lh.value)||1.12; c2.site.typoBodyLh=Number(blh.value)||1.65; touch(c2); toast('Typography applied ✓', true); };
+      const rs = document.getElementById('typoReset');
+      if (rs) rs.onclick = ()=>{ headSel.value=DB.getFont(c2.site.font||'inter').id; bodySel.value=DB.getFont(c2.site.font||'inter').id; sc.value='1'; tr.value='0'; lh.value='1.12'; blh.value='1.65'; renderPv(); };
+      renderPv(); updVals();
+    })();
     const pageSel = $('#previewPageSel');
     if (pageSel) pageSel.onchange = () => setActivePage(pageSel.value);
 
     renderPagesBar();
+    try{ renderNavBuilder(); }catch(e){}
     renderSecList();
     renderEditor();
     schedulePreview();
@@ -2608,6 +2844,7 @@ const App = (() => {
           <button class="icon-btn" data-sec-up="${i}" title="Move up">↑</button>
           <button class="icon-btn" data-sec-down="${i}" title="Move down">↓</button>
           <button class="icon-btn" data-sec-dup="${i}" title="Duplicate">${uiIcon('dup')}</button>
+          <button class="icon-btn" data-preset-save="${i}" title="Save as preset">${uiIcon('save')}</button>
           <button class="icon-btn" data-sec-del="${i}" title="Delete">${uiIcon('trash')}</button>
         </div>
       </div>`;
@@ -2650,6 +2887,7 @@ const App = (() => {
     $$('[data-sec-up]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); histCapture(); moveSec(+b.dataset.secUp, -1); });
     $$('[data-sec-down]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); histCapture(); moveSec(+b.dataset.secDown, 1); });
     $$('[data-sec-dup]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); histCapture(); dupSec(+b.dataset.secDup); });
+    $$('[data-preset-save]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); saveSectionAsPreset(+b.dataset.presetSave); });
     $$('[data-sec-del]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); histCapture(); delSec(+b.dataset.secDel); });
     $$('[data-add-sec-type]').forEach((b) => b.onclick = (e) => {
       e.stopPropagation();
@@ -2723,6 +2961,58 @@ const App = (() => {
     return slug;
   };
 
+  function renderNavBuilder(){
+    const c=current(); const wrap=document.getElementById('navBuilderList'); if(!c||!wrap) return;
+    const pages=Builder.pages(c);
+    const links = Array.isArray(c.site.navLinks)? c.site.navLinks : [];
+    // Ensure navLinks mirrors pages by default if empty
+    const items = links.length ? links : pages.map(pg=>({label: pg.name, href: pg.slug==='index'? '/' : '/'+pg.slug+'.html', pageId: pg.id, visible: true}));
+    wrap.innerHTML = items.map((it, idx)=> `
+      <div class="nav-row" draggable="true" data-nav-idx="${idx}" style="display:flex;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface2);margin-bottom:6px">
+        <span style="cursor:grab">☰</span>
+        <input value="${esc(it.label||'')}" data-nav-label="${idx}" style="flex:1;min-width:80px">
+        <input value="${esc(it.href||'')}" data-nav-href="${idx}" style="flex:1;min-width:120px">
+        <label style="display:flex;gap:4px;align-items:center;font-size:.78rem"><input type="checkbox" data-nav-vis="${idx}" ${it.visible!==false?'checked':''}> show</label>
+        <button class="icon-btn" data-nav-del="${idx}">${uiIcon('trash')}</button>
+      </div>`).join('') || '<div class="set-desc">No nav links — add one above.</div>';
+    // drag reorder
+    wrap.querySelectorAll('.nav-row').forEach(row=>{
+      row.addEventListener('dragstart', e=>{ e.dataTransfer.setData('text/plain', row.dataset.navIdx); row.classList.add('dragging'); });
+      row.addEventListener('dragend', ()=> row.classList.remove('dragging'));
+      row.addEventListener('dragover', e=>{ e.preventDefault(); row.classList.add('drag-over'); });
+      row.addEventListener('dragleave', ()=> row.classList.remove('drag-over'));
+      row.addEventListener('drop', e=>{
+        e.preventDefault(); row.classList.remove('drag-over');
+        const from=+e.dataTransfer.getData('text/plain'); const to=+row.dataset.navIdx;
+        if (isNaN(from)||from===to) return;
+        const c2=current(); if(!c2) return;
+        const arr = Array.isArray(c2.site.navLinks) && c2.site.navLinks.length ? c2.site.navLinks : Builder.pages(c2).map(pg=>({label: pg.name, href: pg.slug==='index'? '/' : '/'+pg.slug+'.html', pageId: pg.id, visible:true}));
+        const [it]=arr.splice(from,1); arr.splice(to,0,it);
+        c2.site.navLinks = arr; touch(c2); renderNavBuilder();
+      });
+    });
+    wrap.querySelectorAll('[data-nav-label]').forEach(inp=> inp.addEventListener('change', e=>{
+      const c2=current(); const idx=+inp.dataset.navLabel; const arr=c2.site.navLinks||[]; if(arr[idx]) arr[idx].label=String(e.target.value).slice(0,60); touch(c2);
+    }));
+    wrap.querySelectorAll('[data-nav-href]').forEach(inp=> inp.addEventListener('change', e=>{
+      const c2=current(); const idx=+inp.dataset.navHref; const arr=c2.site.navLinks||[]; if(arr[idx]) arr[idx].href=String(e.target.value).slice(0,200); touch(c2);
+    }));
+    wrap.querySelectorAll('[data-nav-vis]').forEach(cb=> cb.addEventListener('change', e=>{
+      const c2=current(); const idx=+cb.dataset.navVis; const arr=c2.site.navLinks||[]; if(arr[idx]) arr[idx].visible=e.target.checked; touch(c2);
+    }));
+    wrap.querySelectorAll('[data-nav-del]').forEach(btn=> btn.addEventListener('click', ()=>{
+      const c2=current(); const idx=+btn.dataset.navDel; const arr=c2.site.navLinks||[]; arr.splice(idx,1); c2.site.navLinks=arr; touch(c2); renderNavBuilder();
+    }));
+    const addBtn=document.getElementById('navAddBtn'); const addL=document.getElementById('navAddLabel'); const addH=document.getElementById('navAddHref');
+    if(addBtn) addBtn.onclick=()=>{
+      const c2=current(); if(!c2) return; c2.site.navLinks = Array.isArray(c2.site.navLinks)&&c2.site.navLinks.length? c2.site.navLinks : Builder.pages(c2).map(pg=>({label: pg.name, href: pg.slug==='index'? '/' : '/'+pg.slug+'.html', pageId: pg.id, visible:true}));
+      const label=String(addL&&addL.value||'').trim()||'New link'; const href=String(addH&&addH.value||'').trim()||'#';
+      c2.site.navLinks.push({label, href, visible:true}); if(addL) addL.value=''; if(addH) addH.value=''; touch(c2); renderNavBuilder(); toast('Link added ✓', true);
+    };
+    const fNote=document.getElementById('navFooterNote');
+    if(fNote){ fNote.value = String(c.site.footerNote||''); fNote.oninput=()=>{ c.site.footerNote = String(fNote.value).slice(0,200); touch(c); }; }
+    const save=document.getElementById('navSave'); if(save) save.onclick=()=> toast('Navigation saved ✓', true);
+  }
   function renderPagesBar() {
     const c = current();
     const bar = $('#pagesBar');
@@ -3286,7 +3576,7 @@ const App = (() => {
         return openQualityGate(() => openHandoff({ skipQuality: true }), c);
       }
     }
-    openModal('Client handoff', `        <p style="color:var(--muted);margin-bottom:12px">One ZIP with the live site files, a hosting guide, the brand kit, and an optional invoice. Pro+ removes PallettAI attribution from the pack.</p>
+    openModal('Client handoff', `        <p style="color:var(--muted);margin-bottom:12px">One ZIP with the live site files <b>plus a built-in content editor</b> (clients edit text on their live site — see <code>how-to-edit.html</code>), a hosting guide, the brand kit, and an optional invoice. Pro+ removes PallettAI attribution from the pack.</p>
       <div class="field"><label>Client / business name</label><input id="hoClient" placeholder="e.g. Willow Café Ltd." value="${esc((c.name || '').replace(/ Site$/, ''))}"></div>
       <div class="field"><label>Invoice amount £ (optional — blank = no invoice)</label><input id="hoAmount" type="number" min="0" step="0.01" placeholder="e.g. 450"></div>
       <div style="display:flex;gap:10px;margin-top:16px">
@@ -3297,7 +3587,11 @@ const App = (() => {
       const amount = parseFloat($('#hoAmount').value);
       const br = handoffBrand(c);
       br.invoice = (client || amount > 0) ? { client: client || c.name, amount: isNaN(amount) ? 0 : amount, date: new Date().toLocaleDateString() } : null;
-      const files = sitePageFiles(c).map((f) => ({ name: f.slug + '.html', content: f.html }));
+      // Round-trip handoff (upgrade #3): every site page ships with the built-in
+      // content editor so the client can edit text on their live site and re-upload.
+      const editable = typeof Builder.injectClientEditor === 'function';
+      const files = sitePageFiles(c).map((f) => ({ name: f.slug + '.html', content: editable ? Builder.injectClientEditor(f.html) : f.html }));
+      if (editable) files.push({ name: 'how-to-edit.html', content: Builder.manageGuideHtml(c.site.name || c.name) });
       files.push({ name: 'hosting-guide.html', content: '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hosting guide</title></head><body>' + handoffPage(c, br) + '</body></html>' });
       const pal = DB.getPalette(c.site.palette);
       const f2 = DB.getFont(c.site.font);
@@ -3622,6 +3916,10 @@ const App = (() => {
         <h3>Generate a site from a prompt</h3>
         <p class="sub">One click. A complete first draft: logo, ranked photos, and a layout that fits the business. Drop your own photos on the preview to swap them.</p>
         <textarea id="aiPrompt" placeholder="e.g. A modern bakery in Paris with a cozy, artisanal feel…"></textarea>
+        <div id="briefStrip" style="display:${briefs.length ? 'flex' : 'none'};gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">
+          <span style="font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)">Client briefs</span>
+          <div id="briefChips" style="display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:200px"></div>
+        </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
           <input id="aiName" placeholder="Business name (optional — e.g. “Rustica”) — or just say it in the prompt" autocomplete="off" spellcheck="false" style="flex:1;min-width:200px;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font:inherit;font-size:.85rem">
           <input id="aiArea" placeholder="Town / area served (optional — e.g. “Leeds”) — powers local SEO" autocomplete="off" spellcheck="false" style="flex:1;min-width:200px;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font:inherit;font-size:.85rem">
@@ -3674,6 +3972,7 @@ const App = (() => {
         <div class="ai-gen-actions">
           <button class="btn primary ai-run" id="aiRun" ${aiBusy ? 'disabled' : ''}>Generate site</button>
           <button class="btn ghost ai-directions" id="aiDirections" ${aiBusy ? 'disabled' : ''}>Explore 3 directions <small>(1 credit)</small></button>
+          <button class="btn ghost" id="aiSaveBrief" title="Save this prompt and brief for repeat client builds">💾 Save brief</button>
         </div>
         <div class="ai-progress" id="aiProgress" hidden></div>
         <div class="ai-result" id="aiResult" hidden></div>
@@ -3722,6 +4021,57 @@ const App = (() => {
     quick.innerHTML = ['A modern bakery in Paris', 'A fitness studio for busy professionals', 'A travel agency for mountain adventures']
       .map((q) => `<li><span>${esc(q)}</span><button class="btn ghost small" data-quick="${esc(q)}">Use</button></li>`).join('');
     $$('[data-quick]').forEach((b) => b.onclick = () => { $('#aiPrompt').value = b.dataset.quick; $('#aiRun').scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+
+    // ---------- saved client briefs (roadmap #7) ----------
+    const briefChipBox = $('#briefChips');
+    if (briefChipBox) {
+      briefChipBox.innerHTML = briefs.map((b) =>
+        `<span class="chip-btn" style="display:inline-flex;gap:6px;align-items:center">
+          <button class="linkish" data-brief-use="${b.id}" title="Load “${esc(b.name)}” into the form" style="color:inherit">${esc(b.name.length > 22 ? b.name.slice(0, 22) + '…' : b.name)}</button>
+          <button class="linkish" data-brief-del="${b.id}" title="Delete brief" aria-label="Delete brief ${esc(b.name)}" style="opacity:.55">✕</button>
+        </span>`).join('');
+      $$('[data-brief-use]').forEach((b) => b.onclick = () => {
+        const rec = briefs.find((x) => x.id === b.dataset.briefUse);
+        if (!rec) return;
+        applyBriefToForm(rec);
+        toast('Brief loaded — “' + rec.name + '” ✍️', true);
+      });
+      $$('[data-brief-del]').forEach((b) => b.onclick = () => {
+        briefs = Briefs.remove(briefs, b.dataset.briefDel);
+        persistBriefs();
+        renderAI();
+        toast('Brief deleted');
+      });
+    }
+    const saveBriefBtn = $('#aiSaveBrief');
+    if (saveBriefBtn) saveBriefBtn.onclick = () => {
+      const prompt = ($('#aiPrompt') && $('#aiPrompt').value.trim()) || '';
+      const brief = collectAiBrief();
+      if (!prompt && !AiBrief.briefFilled(brief)) return toast('Write a prompt or fill the brief first — nothing to save yet');
+      const opts = {
+        prompt,
+        brief,
+        packId: ($('#aiPack') && $('#aiPack').value) || '',
+        photoMode: ($('#aiPhoto') && $('#aiPhoto').value) || 'real',
+        photoGrade: !!( $('#aiPhotoGrade') && $('#aiPhotoGrade').checked ),
+        onePager: !!( $('#aiOnePager') && $('#aiOnePager').checked ),
+        layouts: ($('#aiFlavor') && $('#aiFlavor').value) === 'classic' ? 'classic' : 'auto'
+      };
+      openModal('Save client brief', `
+        <p style="color:var(--muted);margin-bottom:12px">Saved briefs pre-fill the generator — ideal for repeat clients and seasonal rebuilds.</p>
+        <div class="field"><label>Brief name</label><input id="briefNameIn" placeholder="e.g. Rustica — spring refresh" value="${esc(opts.brief.name || '')}" maxlength="80"></div>
+        <div style="display:flex;gap:10px;margin-top:14px">
+          <button class="btn primary small" id="briefSaveGo">Save brief</button>
+        </div>`);
+      $('#briefSaveGo').onclick = () => {
+        const nm = ($('#briefNameIn') && $('#briefNameIn').value.trim()) || opts.brief.name || 'Untitled brief';
+        briefs = Briefs.upsert(briefs, Briefs.fromOptions(opts, nm));
+        persistBriefs();
+        closeModal();
+        renderAI();
+        toast('Brief saved — reuse it any time 💾', true);
+      };
+    };
 
     const urlInp = $('#aiSiteUrl');
     if (urlInp) {
@@ -3903,6 +4253,28 @@ const App = (() => {
       voice: ($('#aiVoice') && $('#aiVoice').value) || 'warm'
     };
     return Brief ? Brief.normalizeBrief(raw) : raw;
+  }
+
+  // Fill the AI generator form from a saved brief (roadmap #7).
+  function applyBriefToForm(rec) {
+    if (!rec) return;
+    const setVal = (id, v) => { const el = $('#' + id); if (el) el.value = v || ''; };
+    setVal('aiPrompt', rec.prompt);
+    const b = rec.brief || {};
+    setVal('aiName', b.name);
+    setVal('aiArea', b.area);
+    setVal('aiOffer', b.offer);
+    setVal('aiCta', b.cta);
+    setVal('aiVoice', b.voice || 'warm');
+    const proofs = Array.isArray(b.proofs) ? b.proofs : ['', '', ''];
+    setVal('aiProof1', proofs[0]);
+    setVal('aiProof2', proofs[1]);
+    setVal('aiProof3', proofs[2]);
+    if (rec.packId != null) setVal('aiPack', rec.packId);
+    if (rec.photoMode) setVal('aiPhoto', rec.photoMode);
+    const one = $('#aiOnePager'); if (one) one.checked = rec.onePager === true;
+    const grade = $('#aiPhotoGrade'); if (grade) grade.checked = rec.photoGrade === true;
+    if (rec.layouts) setVal('aiFlavor', rec.layouts);
   }
 
   function competitorUrls() {
@@ -4461,7 +4833,7 @@ const App = (() => {
       let provider = '';
       let out = null;
       if (SUPABASE.signedIn && SUPABASE.signedIn() && SUPABASE.translateSite) {
-        const r = await SUPABASE.translateSite(texts, lang.toUpperCase(), 'EN');
+        const r = await SUPABASE.translateSite(texts, lang.toUpperCase(), 'EN', { ref: lastCreditRef });
         if (r && r.ok && Array.isArray(r.texts) && r.texts.length === texts.length && r.texts.every(Boolean)) {
           out = r.texts;
           provider = 'deepl';
@@ -5038,6 +5410,12 @@ const App = (() => {
       });
     } else if (dbTab === 'palettes') {
       items.push(`
+        <div class="db-item" style="border-style:dashed;align-items:center;justify-content:center;text-align:center;cursor:pointer" id="extractPalCard">
+          <div class="tile-mark">${uiIcon('image')}</div>
+          <h5>Extract from an image</h5>
+          <p>Drop a client photo, logo or screenshot — AI builds an AA-safe palette from it.</p>
+        </div>`);
+      items.push(`
         <div class="db-item" style="border-style:dashed;align-items:center;justify-content:center;text-align:center;cursor:pointer" id="newPalCard">
           <div class="tile-mark">${uiIcon('swatch')}</div>
           <h5>Create a palette</h5>
@@ -5148,6 +5526,61 @@ const App = (() => {
           <div class="src-results" id="int-${it.id}"></div>
         </div>`);
       });
+    } else if (dbTab === 'presets') {
+      items.push(`
+        <div class="db-item" style="border-style:dashed;align-items:center;justify-content:center;text-align:center">
+          <div class="tile-mark">${uiIcon('layers')}</div>
+          <h5>Your section presets</h5>
+          <p>Save any section from the Designer, then insert it into any project.</p>
+        </div>`);
+      const filteredP = sectionPresets.filter(a=> !q || ((a.name||'')+' '+(a.type||'')+' '+(a.desc||'')).toLowerCase().includes(q));
+      if (!filteredP.length) items.push(`<div class="db-item" style="grid-column:1/-1;text-align:center;color:var(--muted);font-size:.82rem;padding:18px">No presets yet — open the Designer, edit a section, and “Save as preset”.</div>`);
+      filteredP.forEach(pr=>{
+        const t = (DB.sectionTypes[pr.type]||{name:pr.type}).name;
+        items.push(`
+        <div class="db-item">
+          <span class="chip" style="font-size:.68rem">${esc(t)} · ${esc(pr.type)}</span>
+          <h5 style="margin-top:6px">${esc(pr.name||pr.type)}</h5>
+          ${pr.desc?`<p style="font-size:.82rem;color:var(--muted)">${esc(pr.desc)}</p>`:''}
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+            <button class="btn primary small" data-preset-insert="${pr.id}">Insert</button>
+            <button class="btn ghost small" data-preset-rename="${pr.id}">Rename</button>
+            <button class="btn danger small" data-preset-del="${pr.id}">${uiIcon('trash')}</button>
+          </div>
+        </div>`);
+      });
+    } else if (dbTab === 'assets') {
+      items.push(`
+        <div class="db-item" style="border-style:dashed;align-items:center;justify-content:center;text-align:center" id="assetDrop">
+          <div class="tile-mark">${uiIcon('upload')}</div>
+          <h5>Drop images here</h5>
+          <p>Drag & drop or choose files. Optimised to WebP/JPEG and kept on this device.</p>
+          <label class="btn ghost small" for="assetFile">Choose files</label>
+          <input type="file" id="assetFile" accept="image/*" multiple hidden>
+        </div>`);
+      const filtered = assets.filter((a)=> !q || ((a.name||'')+' '+(a.alt||'')+' '+(a.tags||'')).toLowerCase().includes(q));
+      if (!filtered.length && assets.length) {
+        items.push(`<div class="db-item" style="grid-column:1/-1;text-align:center;color:var(--muted);font-size:.82rem;padding:18px">No assets match “${esc(q)}”.</div>`);
+      } else if (!filtered.length) {
+        items.push(`<div class="db-item" style="grid-column:1/-1;text-align:center;color:var(--muted);font-size:.82rem;padding:18px">No assets yet — drop an image above to start your library.</div>`);
+      }
+      filtered.forEach((a)=>{
+        items.push(`
+        <div class="db-item">
+          <img src="${esc(assetThumb(a))}" alt="${esc(a.alt||a.name||'asset')}" style="width:100%;height:120px;object-fit:cover;border-radius:10px;border:1px solid var(--border)" loading="lazy">
+          <h5 style="margin-top:8px">${esc(a.name||'Untitled')}</h5>
+          <p style="font-size:.72rem;color:var(--muted)">${a.w||''}${a.w?'×':''}${a.h||''} · ${a.type||'image'}</p>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+            <input type="text" data-asset-alt="${a.id}" value="${esc(a.alt||'')}" placeholder="Alt text" style="flex:1;min-width:120px">
+            <input type="text" data-asset-tags="${a.id}" value="${esc(a.tags||'')}" placeholder="tags, comma-separated" style="flex:1;min-width:120px">
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+            <button class="btn ghost small" data-asset-use="${a.id}">Use in project</button>
+            <button class="btn ghost small" data-asset-copy="${a.id}">Copy URL</button>
+            <button class="btn danger small" data-asset-del="${a.id}">${uiIcon('trash')}</button>
+          </div>
+        </div>`);
+      });
     } else if (dbTab === 'layouts') {
       DB.layouts.forEach((l) => {
         const tname = (DB.sectionTypes[l.type] || { name: l.type }).name;
@@ -5224,8 +5657,73 @@ const App = (() => {
       switchView('designer');
       toast(`“${L.name}” added — edit it like any section 🎨`, true);
     });
+    // assets tab bindings
+    (function(){
+      const drop=$('#assetDrop'); const inp=$('#assetFile');
+      const handleFiles=async (files)=>{
+        const list = Array.from(files||[]).filter(f=> f && f.type && f.type.startsWith('image/')).slice(0, 12);
+        if(!list.length) return toast('Choose image files (PNG/JPG/WebP)', false);
+        if(assets.length + list.length > ASSET_LIMIT) return toast('Asset library limit is '+ASSET_LIMIT+' items', false);
+        for(const file of list){
+          try{
+            const {dataUrl,w,h} = await compressImageFile(file);
+            const item={ id:'asset_'+uid(), name:String(file.name||'asset').slice(0,120), dataUrl, w, h, type: file.type||'image', alt:'', tags:'', at: Date.now()};
+            assets.unshift(item);
+          }catch(e){ toast('Could not add '+ (file.name||'image') + (e&&e.message==='too large'?' — too large (8 MB limit)':''), false); }
+        }
+        persistAssets(); renderDbList(); toast('Assets added ✓', true);
+      };
+      if(drop){
+        ['dragenter','dragover'].forEach(ev=> drop.addEventListener(ev, (e)=>{ e.preventDefault(); drop.style.borderColor='var(--accent)'; }));
+        ['dragleave','drop'].forEach(ev=> drop.addEventListener(ev, (e)=>{ e.preventDefault(); drop.style.borderColor=''; }));
+        drop.addEventListener('drop', (e)=>{ const files=e.dataTransfer&&e.dataTransfer.files; handleFiles(files); });
+      }
+      if(inp) inp.addEventListener('change', (e)=> handleFiles(e.target.files));
+      $$('[data-asset-use]').forEach(b=> b.onclick=()=>{
+        const a=assets.find(x=>x.id===b.dataset.assetUse); if(!a) return; const c=current();
+        if(!c) return toast('Open a project first');
+        // Insert as gallery item if gallery exists, else append image to first about/hero gallery presence
+        const gal = c.site.sections.find(s=> s.type==='gallery');
+        const sec = gal || c.site.sections.find(s=> s.type==='about' || s.type==='hero') || c.site.sections[0];
+        if(!sec) return toast('No section to use the image in');
+        // For gallery, push item; for others set image
+        if(sec.type==='gallery'){
+          sec.items = sec.items || []; sec.items.push({ text: a.alt||a.name||'', extra: '', image: assetThumb(a) });
+        } else {
+          sec.image = assetThumb(a); sec.imageAlt = a.alt||a.name||'';
+        }
+        touch(c); toast('Asset inserted into project ✓', true);
+      });
+      $$('[data-asset-copy]').forEach(b=> b.onclick=()=>{
+        const a=assets.find(x=>x.id===b.dataset.assetCopy); if(!a) return;
+        const url=assetThumb(a);
+        if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(()=> toast('Copied image data ✓', true), ()=> toast('Could not copy', false));
+        else { const ta=document.createElement('textarea'); ta.value=url; document.body.appendChild(ta); ta.select(); try{ document.execCommand('copy'); toast('Copied ✓', true);}catch(e){ toast('Copy failed', false);} ta.remove(); }
+      });
+      $$('[data-asset-del]').forEach(b=> b.onclick=()=>{
+        const id=b.dataset.assetDel; assets=assets.filter(x=>x.id!==id); persistAssets(); renderDbList(); toast('Asset removed');
+      });
+      $$('[data-asset-alt]').forEach(inp=> inp.addEventListener('change', (e)=>{ const a=assets.find(x=>x.id===inp.dataset.assetAlt); if(!a) return; a.alt=String(e.target.value).slice(0,200); persistAssets(); }));
+      $$('[data-asset-tags]').forEach(inp=> inp.addEventListener('change', (e)=>{ const a=assets.find(x=>x.id===inp.dataset.assetTags); if(!a) return; a.tags=String(e.target.value).slice(0,200); persistAssets(); }));
+      $$('[data-preset-insert]').forEach(b=> b.onclick=()=>{
+        const pr=sectionPresets.find(x=>x.id===b.dataset.presetInsert); if(!pr) return; const c=current(); if(!c) return toast('Open a project first');
+        if (!canAddSection()) return;
+        const sec = JSON.parse(JSON.stringify(pr.section||{type:pr.type})); sec.id=uid();
+        const last=c.site.sections[c.site.sections.length-1]; const at = last && last.type==='contact' ? c.site.sections.length-1 : c.site.sections.length;
+        c.site.sections.splice(at,0,sec); selectedSec=at; touch(c); switchView('designer'); toast('Preset inserted ✓', true);
+      });
+      $$('[data-preset-del]').forEach(b=> b.onclick=()=>{ sectionPresets=sectionPresets.filter(x=>x.id!==b.dataset.presetDel); persistSectionPresets(); renderDbList(); toast('Preset removed'); });
+      $$('[data-preset-rename]').forEach(b=> b.onclick=()=>{
+        const pr=sectionPresets.find(x=>x.id===b.dataset.presetRename); if(!pr) return;
+        openModal('Rename preset', `<div class="field"><label>Name</label><input id="prName" value="${esc(pr.name||'')}"></div><div class="field"><label>Description</label><input id="prDesc" value="${esc(pr.desc||'')}"></div><div style="display:flex;gap:8px;margin-top:10px"><button class="btn primary small" id="prSave">Save</button><button class="btn ghost small" id="prCancel">Cancel</button></div>`);
+        document.getElementById('prCancel').onclick=closeModal;
+        document.getElementById('prSave').onclick=()=>{ pr.name=String(document.getElementById('prName').value||pr.name).slice(0,80); pr.desc=String(document.getElementById('prDesc').value||'').slice(0,160); persistSectionPresets(); closeModal(); renderDbList(); toast('Preset updated ✓', true); };
+      });
+    })();
     const newPal = $('#newPalCard');
     if (newPal) newPal.onclick = openPaletteBuilder;
+    const extractPal = $('#extractPalCard');
+    if (extractPal) extractPal.onclick = openPaletteExtractor;
     $$('[data-del-pal]').forEach((b) => b.onclick = () => {
       DB.customPalettes = (DB.customPalettes || []).filter((x) => x.id !== b.dataset.delPal);
       localStorage.setItem('pallettai.customPalettes.v1', JSON.stringify(DB.customPalettes));
@@ -5323,6 +5821,19 @@ const App = (() => {
     if (rm) rm.onclick = () => { delete c.site.chatWidget; touch(c); closeModal(); toast('Chat widget removed'); };
   }
 
+  function saveSectionAsPreset(idx){
+      const c=current(); if(!c || c.site.sections[idx]==null) return toast('Select a section first');
+      const sec=c.site.sections[idx]; const t=(DB.sectionTypes[sec.type]||{name:sec.type}).name;
+      openModal('Save section as preset', `<div class="field"><label>Preset name</label><input id="presetName" value="${esc((sec.title||t)+' preset')}"></div><div class="field"><label>Description</label><input id="presetDesc" placeholder="e.g. Pricing with 3 tiers"></div><div style="display:flex;gap:8px;margin-top:10px"><button class="btn primary small" id="presetSave">Save preset</button><button class="btn ghost small" id="presetCancel">Cancel</button></div>`);
+      document.getElementById('presetCancel').onclick=closeModal;
+      document.getElementById('presetSave').onclick=()=>{
+        const name=String(document.getElementById('presetName').value||t).slice(0,80);
+        const desc=String(document.getElementById('presetDesc').value||'').slice(0,160);
+        const entry={ id:'preset_'+uid(), name, desc, type: sec.type, section: JSON.parse(JSON.stringify(sec)), at: Date.now() };
+        sectionPresets.unshift(entry); if(sectionPresets.length>SECTION_PRESET_LIMIT) sectionPresets.length=SECTION_PRESET_LIMIT;
+        persistSectionPresets(); closeModal(); toast('Preset “'+name+'” saved ✓', true);
+      };
+    }
   function openPaletteBuilder() {
     openModal('Create your own palette', `
       <div class="checkout-form">
@@ -5335,25 +5846,46 @@ const App = (() => {
           <div><label>Primary</label><input type="color" id="palPrimary" value="#7c5cff"></div>
           <div><label>Accent</label><input type="color" id="palAccent" value="#22d3ee"></div>
         </div>
-        <div class="set-row"><div><label>Dark site (light text)</label></div>
-          <label class="switch"><input type="checkbox" id="palDark"><span class="slider"></span></label></div>
+        <div class="cf-row">
+          <div><label>Text</label><input type="color" id="palText" value="#0f172a"></div>
+          <div><label>Muted</label><input type="color" id="palMuted" value="#5b6b84"></div>
+        </div>
+        <div class="set-row"><div><label>Auto text (follow background)</label><div class="set-desc">Keeps contrast readable as you tweak.</div></div>
+          <label class="switch"><input type="checkbox" id="palAuto" checked><span class="slider"></span></label></div>
+        <div id="palPreview" style="height:64px;border-radius:12px;border:1px solid var(--border);overflow:hidden;display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;margin:2px 0 10px"></div>
         <div style="display:flex;gap:10px">
           <button class="btn primary small" id="palSave" style="flex:1;justify-content:center">Save palette</button>
           <button class="btn ghost small" id="palCancel">Cancel</button>
         </div>
       </div>`);
+    const syncPalPreview = () => {
+      const bg = $('#palBg') && $('#palBg').value || '#f6f7fb';
+      const surf = $('#palSurface') && $('#palSurface').value || '#ffffff';
+      const pri = $('#palPrimary') && $('#palPrimary').value || '#7c5cff';
+      const acc = $('#palAccent') && $('#palAccent').value || '#22d3ee';
+      const box = $('#palPreview'); if (!box) return;
+      box.innerHTML = '<span style="background:'+esc(bg)+'" title="Background"></span><span style="background:'+esc(surf)+'" title="Surface"></span><span style="background:linear-gradient(135deg,'+esc(pri)+','+esc(acc)+')" title="Gradient"></span>';
+      if ($('#palAuto') && $('#palAuto').checked) {
+        const darkBg = DB.luminance(bg) < 0.5;
+        if ($('#palText')) $('#palText').value = darkBg ? '#eef1fb' : '#0f172a';
+        if ($('#palMuted')) $('#palMuted').value = darkBg ? '#9aa3c0' : '#5b6b84';
+      }
+    };
+    ['palBg','palSurface','palPrimary','palAccent','palAuto'].forEach((id)=>{ const el=$('#'+id); if(el) el.addEventListener('input', syncPalPreview); if(el) el.addEventListener('change', syncPalPreview); });
+    setTimeout(syncPalPreview, 30);
     $('#palSave').onclick = () => {
       const name = $('#palName').value.trim() || 'My Palette';
+      const bg = $('#palBg').value;
       const pal = {
         id: 'custom_' + uid(),
         name,
-        bg: $('#palBg').value,
+        bg,
         surface: $('#palSurface').value,
         primary: $('#palPrimary').value,
         accent: $('#palAccent').value,
-        text: $('#palDark').checked ? '#eef1fb' : '#0f172a',
-        muted: $('#palDark').checked ? '#9aa3c0' : '#5b6b84',
-        dark: $('#palDark').checked
+        text: $('#palText').value,
+        muted: $('#palMuted').value,
+        dark: DB.luminance(bg) < 0.5
       };
       DB.customPalettes = DB.customPalettes || [];
       DB.customPalettes.push(pal);
@@ -5364,6 +5896,96 @@ const App = (() => {
       toast('Palette “' + name + '” saved 🎨', true);
     };
     $('#palCancel').onclick = closeModal;
+  }
+
+  // ---------------- AI palette extraction (Palette Lab) ----------------
+  function openPaletteExtractor() {
+    if (typeof PaletteLab === 'undefined') return toast('Palette engine not loaded', false);
+    openModal('Extract a palette from an image', `
+      <div class="checkout-form">
+        <p class="set-desc">Drop a client photo, logo or screenshot — the dominant colours become a site-ready palette, and text roles are tuned to clear WCAG AA automatically. Nothing is uploaded: the image is analysed on this machine.</p>
+        <div id="palDropZone" style="border:1.5px dashed var(--border);border-radius:14px;padding:26px 16px;text-align:center;cursor:pointer;color:var(--muted)">
+          <b style="color:var(--text)">Drop an image here</b> or click to choose<br><small>JPG · PNG · WebP — analysed locally</small>
+        </div>
+        <input type="file" id="palFile" accept="image/*" hidden>
+        <div id="palExtractResult" hidden>
+          <div id="palExtractPreview" style="display:flex;gap:6px;margin:14px 0 10px"></div>
+          <div class="set-row"><div><label>Palette name</label></div><input type="text" id="palExtractName" value="Extracted palette" maxlength="80"></div>
+          <div style="display:flex;gap:10px">
+            <button class="btn primary small" id="palExtractSave" style="flex:1;justify-content:center">Save to palette library</button>
+            <button class="btn ghost small" id="palExtractApply">Save + apply to open project</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:12px"><button class="btn ghost small" id="palExtractCancel">Close</button></div>
+      </div>`);
+    $('#palExtractCancel').onclick = closeModal;
+    $('#palExtractSave').onclick = () => saveExtractedPalette(false);
+    $('#palExtractApply').onclick = () => saveExtractedPalette(true);
+    const zone = $('#palDropZone');
+    const fileInput = $('#palFile');
+    zone.onclick = () => fileInput.click();
+    zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.style.borderColor = 'var(--accent)'; });
+    zone.addEventListener('dragleave', () => { zone.style.borderColor = 'var(--border)'; });
+    zone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      zone.style.borderColor = 'var(--border)';
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) runPaletteExtraction(f);
+    });
+    fileInput.onchange = () => { const f = fileInput.files && fileInput.files[0]; if (f) runPaletteExtraction(f); };
+  }
+
+  function runPaletteExtraction(file) {
+    if (!file || !file.type || !file.type.startsWith('image/')) return toast('That is not an image file', false);
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      try {
+        // Sample down to ≤96px on the long edge — quantization needs few pixels.
+        const scale = Math.min(1, 96 / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        const ctx = cv.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, w, h);
+        const px = ctx.getImageData(0, 0, w, h);
+        const res = PaletteLab.extract({ data: px.data, width: w, height: h });
+        if (!res.ok) {
+          toast(res.reason === 'no-opaque-pixels' ? 'That image is fully transparent — nothing to extract' : 'Could not read colours from that image', false);
+          return;
+        }
+        window.__palExtractResult = res;
+        const chips = [['Background', res.palette.bg], ['Surface', res.palette.surface], ['Primary', res.palette.primary], ['Accent', res.palette.accent], ['Text', res.palette.text], ['Muted', res.palette.muted]];
+        $('#palExtractPreview').innerHTML = chips.map(([label, hex]) => `
+          <div style="flex:1;text-align:center"><div style="height:44px;border-radius:10px;border:1px solid var(--border);background:${esc(hex)}" title="${label} ${esc(hex)}"></div><small style="color:var(--muted);font-size:.62rem">${esc(hex)}</small></div>`).join('');
+        $('#palExtractResult').hidden = false;
+        toast('Palette extracted — all text roles clear WCAG AA ✓', true);
+      } catch (e) {
+        toast('Could not analyse that image', false);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); toast('Could not load that image', false); };
+    img.src = url;
+  }
+
+  function saveExtractedPalette(apply) {
+    const res = window.__palExtractResult;
+    if (!res || !res.ok) return toast('Extract a palette first', false);
+    const name = (($('#palExtractName') && $('#palExtractName').value) || 'Extracted palette').trim() || 'Extracted palette';
+    const pal = PaletteLab.paletteObject(res, name);
+    DB.customPalettes = DB.customPalettes || [];
+    DB.customPalettes.push(pal);
+    try { localStorage.setItem('pallettai.customPalettes.v1', JSON.stringify(DB.customPalettes)); } catch (e) { /* non-fatal */ }
+    DB.palettes.push(pal);
+    const c = current();
+    if (apply && c) { c.site.palette = pal.id; touch(c); }
+    delete window.__palExtractResult;
+    closeModal();
+    renderDbList();
+    toast('Palette “' + name + '” saved' + (apply && c ? ' + applied 🎨' : ' 🎨'), true);
   }
 
   let iconTimer = null;
@@ -5496,6 +6118,7 @@ const App = (() => {
       </div>`;
     const SET_ICO = {
       account: uiIcon('user'),
+      identity: uiIcon('info'),
       appearance: uiIcon('swatch'),
       branding: uiIcon('layers'),
       defaults: uiIcon('sliders'),
@@ -5505,7 +6128,7 @@ const App = (() => {
       about: uiIcon('info')
     };
     const TABS = [
-      ['account', 'Account & billing'], ['appearance', 'Appearance'], ['branding', 'Branding'],
+      ['account', 'Account & billing'], ['identity', 'Identity'], ['appearance', 'Appearance'], ['branding', 'Branding'],
       ['defaults', 'Project defaults'], ['export', 'Export'], ['online', 'Online data'],
       ['studio', 'Studio'], ['about', 'About']
     ];
@@ -5539,6 +6162,20 @@ const App = (() => {
           <span id="setCreditsTxt" class="set-desc"></span>
           <div class="credits-bar" title="AI Studio credits used"><span id="creditsBar" style="width:0%"></span></div>
         </div>
+      </div>
+
+      <div class="settings-card">
+        <h3>Cloud backup</h3>
+        ${!signedIn
+          ? '<p class="sub">Sign in above and every project is mirrored to your PallettAI account automatically — a lost laptop or a cleared browser never loses client work.</p>'
+          : `<p class="sub">Signed in as ${esc(ses.email)} — projects save to your account a few seconds after each edit and restore automatically on any machine.</p>
+        <div class="set-row"><div><label>Automatic backup</label><div class="set-desc">Mirror projects to the vault after each save.</div></div>
+          <label class="switch"><input type="checkbox" id="setVaultEnabled" ${settings.cloudVaultEnabled !== false ? 'checked' : ''}><span class="slider"></span></label></div>
+        <div class="vault-status">
+          <span>${cloudVault.status === 'syncing' ? '☁ Syncing…' : cloudVault.lastError ? '⚠ ' + esc(cloudVault.lastError) : cloudVault.lastSync ? '✓ Vault up to date' : '☁ Ready — projects sync automatically'}</span>
+          ${cloudVault.lastSync ? `<small>Last synced ${new Date(cloudVault.lastSync).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small>` : ''}
+        </div>
+        <div class="acc-row"><button class="btn ghost small" id="btnVaultBackup">Back up now</button></div>`}
       </div>
 
       <div class="settings-card">
@@ -5583,10 +6220,27 @@ const App = (() => {
             <input type="color" id="setAccent" value="${esc(s.accent || '#22d3ee')}" title="Pick any colour" style="width:44px;height:32px;padding:2px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;cursor:pointer">
             <span style="display:flex;gap:6px">${['#22d3ee', '#7c5cff', '#f43f5e', '#f59e0b', '#10b981', '#3b82f6'].map((c) => `<span class="acc-swatch" data-acc="${c}" style="background:${c}${c === (s.accent || '#22d3ee') ? ';outline:2px solid var(--text);outline-offset:2px' : ''}"></span>`).join('')}</span>
           </div></div>
+        ${ELECTRON ? `
+        <div class="set-row"><div><label>Use system accent</label><div class="set-desc">Follow the accent colour set on this ${window.pallettai.platform === 'darwin' ? 'Mac' : 'PC'}.</div></div>
+          <label class="switch"><input type="checkbox" id="setSysAccent" ${s.useSystemAccent ? 'checked' : ''}><span class="slider"></span></label></div>` : ''}
         <div class="set-row"><div><label>UI density</label><div class="set-desc">Compact keeps more panels on screen at once.</div></div>
           <select id="setDensity"><option value="comfortable" ${s.density !== 'compact' ? 'selected' : ''}>Comfortable</option><option value="compact" ${s.density === 'compact' ? 'selected' : ''}>Compact</option></select></div>
         <div class="set-row"><div><label>Reduce motion in the studio</label><div class="set-desc">Turns off transitions & animations inside this app.</div></div>
           <label class="switch"><input type="checkbox" id="setMotion" ${s.reducedMotion ? 'checked' : ''}><span class="slider"></span></label></div>
+      </div>
+`) +
+      cards('identity', `
+      <div class="settings-card">
+        <h3>Business identity</h3>
+        <p class="sub">Used to pre-fill new projects, templates and AI drafts. Stored only on this device.</p>
+        <div class="set-row"><div><label>Business name</label></div><input type="text" id="setBizName" value="${esc(s.businessName||'')}" placeholder="e.g. Hearth Bakery"></div>
+        <div class="set-row"><div><label>Email</label></div><input type="email" id="setBizEmail" value="${esc(s.businessEmail||'')}" placeholder="hello@example.com" autocomplete="email"></div>
+        <div class="set-row"><div><label>Phone</label></div><input type="tel" id="setBizPhone" value="${esc(s.businessPhone||'')}" placeholder="+44 20 7123 4567"></div>
+        <div class="set-row"><div><label>Address</label></div><input type="text" id="setBizAddress" value="${esc(s.businessAddress||'')}" placeholder="123 High Street, London"></div>
+        <div class="set-row"><div><label>Website</label></div><input type="url" id="setBizUrl" value="${esc(s.businessUrl||'')}" placeholder="https://example.com"></div>
+        <div class="set-row"><div><label>Hours</label><div class="set-desc">Shown in contact blocks on new sites.</div></div><input type="text" id="setBizHours" value="${esc(s.businessHours||'')}" placeholder="Mon–Sat 8am–5pm"></div>
+        <div class="set-row"><div><label>Social</label><div class="set-desc">One per line or comma-separated — shown on new sites.</div></div><input type="text" id="setBizSocial" value="${esc(s.businessSocial||'')}" placeholder="instagram.com/hearth, x.com/hearth"></div>
+        <div class="set-row"><div><label></label></div><button class="btn ghost small" id="btnBizApplyOpen">Apply to open project</button></div>
       </div>
 `) +
       cards('branding', `
@@ -5674,6 +6328,22 @@ const App = (() => {
         <div class="set-row"><div><label>Guided tour</label><div class="set-desc">Run the welcome tour again any time.</div></div>
           <button class="btn ghost small" id="btnReTour">Run the tour</button></div>
       </div>
+      <div class="settings-card">
+        <h3>Workspace & startup</h3>
+        <p class="sub">Choose what opens first and which parts of the Dashboard you see.</p>
+        <div class="set-row"><div><label>Startup view</label><div class="set-desc">Where Studio lands when you open it.</div></div>
+          <select id="setStartupView"><option value="dashboard" ${s.startupView === 'dashboard' ? 'selected' : ''}>Dashboard</option><option value="templates" ${s.startupView === 'templates' ? 'selected' : ''}>Templates</option><option value="designer" ${s.startupView === 'designer' ? 'selected' : ''}>Designer</option><option value="ai" ${s.startupView === 'ai' ? 'selected' : ''}>AI Studio</option><option value="database" ${s.startupView === 'database' ? 'selected' : ''}>Database</option></select></div>
+        <div class="set-row"><div><label>Show current job</label><div class="set-desc">The tray card at the top of Dashboard.</div></div>
+          <label class="switch"><input type="checkbox" id="setDashJobTray" ${s.dashboardShowJobTray !== false ? 'checked' : ''}><span class="slider"></span></label></div>
+        <div class="set-row"><div><label>Show metrics strip</label><div class="set-desc">Projects / credits / local data.</div></div>
+          <label class="switch"><input type="checkbox" id="setDashMetrics" ${s.dashboardShowMetrics !== false ? 'checked' : ''}><span class="slider"></span></label></div>
+        <div class="set-row"><div><label>Show insight cards</label><div class="set-desc">AI generations & recent activity.</div></div>
+          <label class="switch"><input type="checkbox" id="setDashInsights" ${s.dashboardShowInsights !== false ? 'checked' : ''}><span class="slider"></span></label></div>
+        <div class="set-row"><div><label>Show Templates door</label><div class="set-desc">The templates shortcut on Dashboard.</div></div>
+          <label class="switch"><input type="checkbox" id="setDashTplDoor" ${s.dashboardShowTemplateDoor !== false ? 'checked' : ''}><span class="slider"></span></label></div>
+        <div class="set-row"><div><label>Recent work count</label><div class="set-desc">How many recent projects to list.</div></div>
+          <select id="setDashRecentCount"><option value="3" ${String(s.dashboardRecentCount) === '3' ? 'selected' : ''}>3</option><option value="6" ${String(s.dashboardRecentCount||6) === '6' ? 'selected' : ''}>6</option><option value="9" ${String(s.dashboardRecentCount) === '9' ? 'selected' : ''}>9</option><option value="12" ${String(s.dashboardRecentCount) === '12' ? 'selected' : ''}>12</option></select></div>
+      </div>
 `) +
       cards('about', `
       <div class="settings-card">
@@ -5696,6 +6366,7 @@ const App = (() => {
     set('#btnManagePlan', (el) => { el.onclick = openPricing; });
     set('#btnBillingPortal', (el) => { el.onclick = openBillingPortalFlow; });
     on('#setTheme', 'change', (e) => { settings.theme = e.target.value; saveSettings(); });
+    on('#setSysAccent', 'change', (e) => { settings.useSystemAccent = e.target.checked; saveSettings(); });
     on('#setBrandFooter', 'change', (e) => { settings.brandFooter = e.target.checked; saveSettings(); renderPreview(); });
     on('#setBrandText', 'input', (e) => { settings.brandFooterText = e.target.value; saveSettings(); schedulePreview(); });
     on('#setBrandLink', 'input', (e) => { settings.brandLink = e.target.value; saveSettings(); schedulePreview(); });
@@ -5733,6 +6404,20 @@ const App = (() => {
     on('#setWidgetRefresh', 'change', (e) => { settings.widgetRefreshSec = +e.target.value || 0; saveSettings(); });
     on('#setAutosave', 'change', (e) => { settings.autosave = e.target.checked; saveSettings(); });
     on('#setAutosaveMs', 'change', (e) => { settings.autosaveMs = +e.target.value || 2000; saveSettings(); });
+    on('#setStartupView', 'change', (e) => { settings.startupView = e.target.value; saveSettings(); });
+    on('#setDashJobTray', 'change', (e) => { settings.dashboardShowJobTray = e.target.checked; saveSettings(); renderDashOverview(); });
+    on('#setDashMetrics', 'change', (e) => { settings.dashboardShowMetrics = e.target.checked; saveSettings(); renderDashOverview(); });
+    on('#setDashInsights', 'change', (e) => { settings.dashboardShowInsights = e.target.checked; saveSettings(); renderDashOverview(); });
+    on('#setDashTplDoor', 'change', (e) => { settings.dashboardShowTemplateDoor = e.target.checked; saveSettings(); renderDashOverview(); renderTemplateDoor(); });
+    on('#setDashRecentCount', 'change', (e) => { settings.dashboardRecentCount = +e.target.value || 6; saveSettings(); renderDashboard(); });
+    on('#setBizName', 'input', (e)=>{ settings.businessName=String(e.target.value).slice(0,400); saveSettings(); });
+    on('#setBizEmail', 'input', (e)=>{ settings.businessEmail=String(e.target.value).slice(0,400); saveSettings(); });
+    on('#setBizPhone', 'input', (e)=>{ settings.businessPhone=String(e.target.value).slice(0,400); saveSettings(); });
+    on('#setBizAddress', 'input', (e)=>{ settings.businessAddress=String(e.target.value).slice(0,400); saveSettings(); });
+    on('#setBizUrl', 'input', (e)=>{ settings.businessUrl=String(e.target.value).slice(0,400); saveSettings(); });
+    on('#setBizHours', 'input', (e)=>{ settings.businessHours=String(e.target.value).slice(0,400); saveSettings(); });
+    on('#setBizSocial', 'input', (e)=>{ settings.businessSocial=String(e.target.value).slice(0,400); saveSettings(); });
+    on('#btnBizApplyOpen', 'click', ()=>{ const c=current(); if(!c) return toast('No project open — create or open one first'); if(typeof c.site==='object'){ if(settings.businessName) c.site.name=String(settings.businessName).trim(); if(settings.businessEmail) c.site.email=String(settings.businessEmail).trim(); if(settings.businessPhone) c.site.phone=String(settings.businessPhone).trim(); if(settings.businessAddress) c.site.address=String(settings.businessAddress).trim(); if(settings.businessUrl) c.site.url=String(settings.businessUrl).trim(); if(settings.businessHours) c.site.hours=String(settings.businessHours).trim(); if(settings.businessSocial) c.site.social=String(settings.businessSocial).trim(); touch(c); toast('Identity applied to open project ✓', true);} });
     on('#setConfirmDel', 'change', (e) => { settings.confirmDelete = e.target.checked; saveSettings(); });
     on('#btnReTour', 'click', () => { try { localStorage.removeItem(TOUR_KEY); } catch (e) {} startTour(); toast('Tour restarted 🎓', true); });
     on('#btnResetSettings', 'click', () => {
@@ -5826,6 +6511,15 @@ const App = (() => {
       if ($('#accNewPass2')) $('#accNewPass2').value = '';
       toast('Password updated', true);
     };
+    // cloud project vault
+    on('#setVaultEnabled', 'change', (e) => {
+      settings.cloudVaultEnabled = e.target.checked;
+      saveSettings();
+      if (e.target.checked && vaultReady()) syncVault().catch(() => {});
+      renderSettings();
+    });
+    const vaultBtn = $('#btnVaultBackup');
+    if (vaultBtn) vaultBtn.onclick = vaultBackupNow;
     const reviewBtn = $('#btnReviewClaim');
     if (reviewBtn) reviewBtn.onclick = async () => {
       const name = ($('#revName') && $('#revName').value) || '';
@@ -5884,6 +6578,66 @@ const App = (() => {
     try { list = JSON.parse(localStorage.getItem('pallettai.customPalettes.v1') || '[]'); } catch (e) { list = []; }
     DB.customPalettes = list;
     list.forEach((p) => { if (!DB.palettes.find((x) => x.id === p.id)) DB.palettes.push(p); });
+  }
+  async function hydrateAssets(){
+    let raw=null;
+    if(bootStoreOK){ try{ raw=await AppStore.get(LS.assets);}catch(e){ bootStoreOK=false; } }
+    if(raw==null){ try{ raw=localStorage.getItem(LS.assets);}catch(e){ raw=null; }
+      if(raw!=null && bootStoreOK){ try{ await AppStore.put(LS.assets, raw); localStorage.removeItem(LS.assets);}catch(e){ bootStoreOK=false; } }
+    }
+    try{ const parsed=JSON.parse(raw||'[]'); assets=Array.isArray(parsed)?parsed.filter(x=>x&&typeof x==='object').slice(0,ASSET_LIMIT):[]; }catch(e){ assets=[]; }
+  }
+  function persistAssets(){
+    try{
+      const json=JSON.stringify(assets.slice(0,ASSET_LIMIT));
+      if(bootStoreOK) AppStore.schedule(LS.assets, ()=>json);
+      else localStorage.setItem(LS.assets, json);
+    }catch(e){ try{ toast('Asset library could not be saved — storage full', false);}catch(e2){} }
+  }
+  async function hydrateSectionPresets(){
+    let raw=null;
+    if(bootStoreOK){ try{ raw=await AppStore.get(LS.sectionPresets);}catch(e){ bootStoreOK=false; } }
+    if(raw==null){ try{ raw=localStorage.getItem(LS.sectionPresets);}catch(e){ raw=null; }
+      if(raw!=null && bootStoreOK){ try{ await AppStore.put(LS.sectionPresets, raw); localStorage.removeItem(LS.sectionPresets);}catch(e){ bootStoreOK=false; } }
+    }
+    try{ const parsed=JSON.parse(raw||'[]'); sectionPresets=Array.isArray(parsed)?parsed.filter(x=>x&&x.type).slice(0,SECTION_PRESET_LIMIT):[]; }catch(e){ sectionPresets=[]; }
+  }
+  function persistSectionPresets(){
+    try{ const json=JSON.stringify(sectionPresets.slice(0,SECTION_PRESET_LIMIT)); if(bootStoreOK) AppStore.schedule(LS.sectionPresets, ()=>json); else localStorage.setItem(LS.sectionPresets, json);}catch(e){}
+  }
+  async function hydrateBriefs(){
+    let raw=null;
+    if(bootStoreOK){ try{ raw=await AppStore.get(LS.briefs);}catch(e){ bootStoreOK=false; } }
+    if(raw==null){ try{ raw=localStorage.getItem(LS.briefs);}catch(e){ raw=null; } }
+    try{
+      const parsed=JSON.parse(raw||'[]');
+      briefs = Array.isArray(parsed) ? parsed.slice(0, Briefs.MAX_BRIEFS).map((b)=>Briefs.normalize(b)) : [];
+    }catch(e){ briefs=[]; }
+  }
+  function persistBriefs(){
+    try{
+      const json=JSON.stringify(briefs.slice(0, Briefs.MAX_BRIEFS));
+      if(bootStoreOK) AppStore.schedule(LS.briefs, ()=>json);
+      else localStorage.setItem(LS.briefs, json);
+    }catch(e){ /* briefs must never block a save */ }
+  }
+  function assetThumb(a){ return a.dataUrl || a.url || ''; }
+  async function compressImageFile(file){
+    if(!file || !file.type || !file.type.startsWith('image/')) throw new Error('not image');
+    if(file.size > ASSET_MAX_BYTES) throw new Error('too large');
+    const url = URL.createObjectURL(file);
+    try{
+      const img = await new Promise((res, rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=rej; im.src=url; });
+      const scale = Math.min(1, ASSET_MAX_W / Math.max(img.naturalWidth||img.width||1, img.naturalHeight||img.height||1));
+      const w = Math.max(1, Math.round((img.naturalWidth||img.width) * scale));
+      const h = Math.max(1, Math.round((img.naturalHeight||img.height) * scale));
+      const canvas = document.createElement('canvas'); canvas.width=w; canvas.height=h;
+      const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, w, h);
+      // Prefer webp if supported, else jpeg
+      let dataUrl='';
+      try{ dataUrl = canvas.toDataURL('image/webp', 0.82); if(!dataUrl || dataUrl==='data:,') throw new Error('webp fail'); }catch(e){ dataUrl = canvas.toDataURL('image/jpeg', 0.82); }
+      return { dataUrl, w, h };
+    } finally { try{ URL.revokeObjectURL(url);}catch(e){} }
   }
 
   // ============================================================
@@ -6836,6 +7590,11 @@ const App = (() => {
     loadSettings();
     loadCustomPalettes();
     await hydrateBrandPresets();
+    await hydrateAssets();
+    await hydrateSectionPresets();
+    await hydrateBriefs();
+    initSystemAccent();
+    applyTitlebarInset();
     seed();
     paintNav();
     const chatSpark = document.querySelector('.chat-spark');
@@ -6903,7 +7662,7 @@ const App = (() => {
       renderDbList();
     });
     $('#dbSearch').oninput = renderDbList;
-    switchView('dashboard');
+    (function(){ const v=['dashboard','templates','designer','ai','database'].includes(settings.startupView)?settings.startupView:'dashboard'; switchView(v); })();
     // first visit: offer the 2-minute guided tour after the UI settles
     try { if (!localStorage.getItem(TOUR_KEY)) setTimeout(startTour, 700); } catch (e) {}
     // what's new: once per version, after the UI settles (skip first-ever run —
@@ -6913,6 +7672,12 @@ const App = (() => {
       if (whatsNewPending(RELEASE_NOTES.version) && !firstEver) setTimeout(() => openWhatsNew(true), 900);
     } catch (e) {}
     SUPABASE.ensureOfficial();
+    // Cloud project vault: after the account session restores, converge the
+    // local project list with the account's vault (restore here, push there).
+    // Background + best-effort — never blocks the studio from being usable.
+    if (vaultReady() && settings.cloudVaultEnabled !== false) {
+      setTimeout(() => { syncVault().catch((e) => console.warn('Vault sync failed:', e)); }, 1500);
+    }
     // Electron-only: move the Supabase session (refresh token) out of
     // localStorage and into the OS keystore via safeStorage. The browser build
     // has no preload, so window.pallettai is absent and the module keeps using

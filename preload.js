@@ -19,6 +19,14 @@ contextBridge.exposeInMainWorld('pallettai', {
   },
   secretsGet: (key) => ipcRenderer.invoke('secrets-get', key),
   secretsSet: (key, value) => ipcRenderer.invoke('secrets-set', key, value),
+  // OS accent colour (Electron only): hex without '#' (e.g. '22d3ee'), '' when
+  // unavailable. onAccent subscribes to live OS accent changes.
+  getAccent: () => ipcRenderer.invoke('get-accent'),
+  onAccent: (cb) => {
+    const listener = (_e, color) => cb(color);
+    ipcRenderer.on('accent-changed', listener);
+    return () => ipcRenderer.removeListener('accent-changed', listener);
+  },
   // Electron-only: a safeStorage-backed session store so the Supabase module
   // can move the refresh token out of localStorage. The methods route through
   // sync IPC channels that validate the sender in main; the browser build has

@@ -10,7 +10,8 @@ Each item is a verifiable check. Status legend:
 - ☐ not started
 - ✗ n/a or intentionally deferred
 
-Current tally: 44 ✅ / 13 ⏳ / 3 ☐ (60 items total).
+Current tally: 44 ✅ / 13 ⏳ / 3 ☐ (60 items total). See §11 for the 2026-09-11 audit
+cycle, which resolved some of the items below — where the two disagree, §11 is newer.
 
 ---
 
@@ -136,8 +137,10 @@ Current tally: 44 ✅ / 13 ⏳ / 3 ☐ (60 items total).
       website release separately; the electron-updater manifest is the `latest-*.yml` file).
       Confirm the auto-update path actually works end-to-end (a released update is
       discovered + installable) before relying on it for security.
-- [ ☐ ] **Windows `verifyUpdateCodeSignature`** — confirm it's enabled for electron-updater
-      (so updates are verified before install). Check electron-builder.yml / updater config.
+- [ ✅ ] **Windows `verifyUpdateCodeSignature`** — resolved 2026-09-11: `main.js` now sets
+      `updater.verifyUpdateCodeSignature = true` explicitly instead of relying on the library
+      default, so the intent survives an updater upgrade. (macOS relies on the Developer ID
+      signature + notarization instead.)
 
 ---
 
@@ -306,3 +309,64 @@ Current tally: 44 ✅ / 13 ⏳ / 3 ☐ (60 items total).
 *Last updated: 2026-09-07. Reflects the P0 hardening (CSP + main.js handlers) and
 Electron Fuses (electron-builder.yml) implemented in this cycle, plus the CI fuses-verification
 step added to `build-mac.yml`. Items marked ⏳/☐ are the remaining pre-release work.*
+
+---
+
+## 11. 2026-09-11 audit cycle
+
+Full rationale, evidence and the remaining operational steps live in
+**`docs/SECURITY-HARDENING.md`**. Summary:
+
+**Fixed in code**
+
+- CI actions pinned to commit SHAs in `build-mac.yml` / `build-windows.yml`.
+  `RELEASE_TOKEN` can publish the electron-updater feed, so a moving tag on a third-party
+  action was a direct path to shipping a malicious update. **Still to do: rotate that token
+  and re-issue it fine-grained (`contents: write` on the website repo only).**
+- Edge functions: CORS is now an allowlist (site origins + the Electron `null`/`file://`
+  origin + localhost) instead of `*`, on both `translate` and `billing-portal`.
+- `translate`: the DeepL proxy is **metered server-side** (`spend_credit` keyed on the same
+  `ref` the client already mirrors, so honest clients are never double-charged; refunded on
+  DeepL failure). Any account could previously use the paid key without spending anything.
+  Request caps + per-account throttle added; the function now fails *closed*.
+  `app.js` keeps `lastCreditRef`; `modules/supabase.js` forwards it as `options.ref`.
+- Grader Worker: second budget added (per-isolate ceiling, not just per-IP), `Retry-After` on
+  429. `grader/README.md` documents the required Cloudflare rate-limiting Rule — in-Worker
+  counters are per isolate, so the edge rule is still the real cap.
+- `server.js` (live copy **and** the stale root copy) binds `127.0.0.1` by default; the root
+  copy's weaker traversal check now matches the hardened one.
+- `main.js`: `setPermissionCheckHandler(() => false)`; `isSafeExternalUrl` is https-only
+  (loopback excepted) so project data can't hand `file:`/`javascript:`/`data:` to the OS;
+  `app.on('web-contents-created')` applies deny-by-default webview/window-open/permission
+  policy to every webContents; `verifyUpdateCodeSignature = true` made explicit.
+
+**Independently re-verified (no change needed)**
+
+- Supabase §1: RLS on all 10 tables, every policy ownership-scoped, and **all 14 functions**
+  revoked from `public, anon` (function-grant list diffed against the function definition
+  list — zero gaps). Every `security definer` function carries `set search_path = public`.
+- Stripe webhook: HMAC-SHA256 with timestamp tolerance + constant-time compare, idempotent
+  per event id, service-role only, `verify_jwt = false` (the signature *is* the auth).
+- Grader SSRF: per-hop redirect revalidation via DoH, private/loopback/link-local/CGNAT/6to4
+  blocked, timeouts, byte caps.
+- Renderer: no `eval`/`new Function`; the 92 `innerHTML` sinks carry escaped data; AI output
+  cannot reach `customJs` (unknown section types dropped, `<script>`/`<style>` stripped).
+- No hardcoded secrets anywhere in the app, site or workflows.
+
+**Accepted risk — the one real hole left**
+
+- The Designer preview iframe is **unsandboxed and same-origin** (`app.js` — no `sandbox`
+  attribute, `srcdoc` from `Builder.buildSiteHTML`, and the app reads `f.contentDocument`).
+  Built sites include the project's `customJs` as a real `<script>`, so script in the preview
+  can reach `parent.pallettai` (`secretsGet` publish tokens, `sessionStore`) and
+  `parent.localStorage`. Deliberately deferred this cycle because the fix is a small
+  `postMessage` refactor (see `docs/SECURITY-HARDENING.md` §2) and breaking the editor was
+  the worse trade. Until it lands, treat an unfamiliar `.pallettai.json` as untrusted code.
+- Related: **no IPC channel requires a user gesture.** If the preview is ever left unsandboxed,
+  that omission is what turns a preview-execution bug into silent token theft.
+
+**Not verifiable in the audit environment (no `node`/`npm`)**
+
+- `npm audit` (§8) still outstanding.
+- The JS/TS edits were diff-reviewed and delimiter-balanced against `HEAD`, but not executed.
+  Run the smoke scripts listed in `docs/SECURITY-HARDENING.md` §5 before tagging.

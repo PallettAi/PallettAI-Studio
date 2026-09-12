@@ -1048,4 +1048,112 @@ grant execute on function public.claim_review_reward(text, text) to authenticate
 revoke all on table public.review_rewards from anon, public;
 grant select on table public.review_rewards to authenticated;
 
+-- ============================================================
+-- PART 6 — Cloud project vault (backup / sync)
+-- Each account stores its studio projects as JSON snapshots so
+-- work survives a lost device or a cleared profile. One row per
+-- project (idempotent upsert); deletes tombstone so other devices
+-- converge instead of resurrecting the project on next sync.
+-- Every statement below is idempotent — re-run the whole file anytime.
+-- ============================================================
+
+-- ---------- 28. project_backups: one row per (account, project) ----------
+create table if not exists public.project_backups (
+  id uuid not null default gen_random_uuid(),
+  owner_id uuid not null references auth.users (id) on delete cascade,
+  project_id text not null,             -- the studio's project id (client-generated)
+  project_name text not null default '',
+  payload jsonb not null,               -- the full project model (site, pages, suites…)
+  updated_at timestamptz not null default now(),
+  deleted_at timestamptz,               -- tombstone: newer than updated_at wins on merge
+  primary key (owner_id, project_id)
+);
+
+alter table public.project_backups enable row level security;
+
+drop policy if exists "own vault rows" on public.project_backups;
+create policy "own vault rows" on public.project_backups
+  for all using (auth.uid() = owner_id)
+  with check (auth.uid() = owner_id);
+
+-- ---------- 29. save_project_backup RPC: the single vault-write path ----------
+-- All writes flow through this security-definer RPC (no direct table grants),
+-- locked per (account, project) so a double-click or two devices racing to
+-- save the same project can never interleave two half-written payloads.
+create or replace function public.save_project_backup(p_project_id text, p_name text, p_payload jsonb)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_id text := left(btrim(coalesce(p_project_id, '')), 80);
+  v_name text := left(btrim(coalesce(p_name, '')), 200);
+  v_payload jsonb := p_payload;
+  v_row public.project_backups%rowtype;
+begin
+  if auth.uid() is null then
+    return jsonb_build_object('outcome', 'not-signed-in');
+  end if;
+  if v_id = '' or v_id = 'null' then
+    return jsonb_build_object('outcome', 'bad-input', 'reason', 'project-id');
+  end if;
+  if v_payload is null or jsonb_typeof(v_payload) <> 'object' then
+    return jsonb_build_object('outcome', 'bad-input', 'reason', 'payload');
+  end if;
+  -- Hard ceiling per project (jsonb is capped at 1 GB; 6 MB is far beyond any
+  -- real studio project — inline fonts/photos can approach a few MB).
+  if octet_length(v_payload::text) > 6291456 then
+    return jsonb_build_object('outcome', 'too-large', 'maxBytes', 6291456);
+  end if;
+
+  perform pg_advisory_xact_lock(hashtext('pallettai.vault:' || auth.uid()::text || ':' || v_id)::bigint);
+
+  insert into public.project_backups (owner_id, project_id, project_name, payload, updated_at)
+  values (auth.uid(), v_id, v_name, v_payload, now())
+  on conflict (owner_id, project_id) do update
+    set project_name = excluded.project_name,
+        payload = excluded.payload,
+        updated_at = now(),
+        deleted_at = null;   -- re-saving a deleted project resurrects it deliberately
+
+  select * into v_row from public.project_backups
+  where owner_id = auth.uid() and project_id = v_id;
+
+  return jsonb_build_object('outcome', 'saved', 'updatedAt', v_row.updated_at);
+end $$;
+
+-- ---------- 30. delete_project_backup RPC: tombstone, never a hard wipe ----------
+-- Soft-deleting (deleted_at = now()) keeps other devices from re-uploading
+-- the project on their next sync. A later save of the same project id clears
+-- the tombstone (see the upsert above).
+create or replace function public.delete_project_backup(p_project_id text)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_id text := left(btrim(coalesce(p_project_id, '')), 80);
+begin
+  if auth.uid() is null then
+    return jsonb_build_object('outcome', 'not-signed-in');
+  end if;
+  if v_id = '' then
+    return jsonb_build_object('outcome', 'bad-input', 'reason', 'project-id');
+  end if;
+
+  perform pg_advisory_xact_lock(hashtext('pallettai.vault:' || auth.uid()::text || ':' || v_id)::bigint);
+
+  update public.project_backups set deleted_at = now()
+  where owner_id = auth.uid() and project_id = v_id and deleted_at is null;
+
+  return jsonb_build_object('outcome', 'deleted');
+end $$;
+
+-- ---------- 31. Permissions ----------
+revoke all on function public.save_project_backup(text, text, jsonb) from public, anon;
+revoke all on function public.delete_project_backup(text) from public, anon;
+grant execute on function public.save_project_backup(text, text, jsonb) to authenticated;
+grant execute on function public.delete_project_backup(text) to authenticated;
+
+-- The client only ever reads its own vault through REST (RLS-scoped SELECT).
+-- No INSERT/UPDATE/DELETE grants: writes exist only via the RPCs above.
+revoke all on table public.project_backups from anon, public;
+grant select on table public.project_backups to authenticated;
+
 notify pgrst, 'reload schema';

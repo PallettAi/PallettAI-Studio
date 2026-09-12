@@ -1,6 +1,6 @@
 // PallettAI Studio — desktop shell (macOS first-class, Windows/Linux run too).
 // Distribution is direct-download (Developer ID + notarized DMG), NOT the Mac App Store.
-const { app, BrowserWindow, Menu, shell, dialog, ipcMain, safeStorage } = require('electron');
+const { app, BrowserWindow, Menu, shell, dialog, ipcMain, safeStorage, nativeTheme, systemPreferences } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -64,6 +64,9 @@ function main() {
       title: 'PallettAI Studio',
       backgroundColor: '#0f1020',
       show: false,
+      // macOS: hiddenInset titlebar lets the studio topbar flow under the
+      // traffic lights for a native feel. Windows/Linux keep the standard bar.
+      ...(isMac ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 14 } } : {}),
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
         contextIsolation: true,
@@ -119,6 +122,50 @@ function main() {
       callback(false);
     });
 
+    // Native right-click menus (upgrade #7). The renderer tags contextmenu
+    // events with data-ctx on the closest interactive element; main builds a
+    // native Menu from a strict allow-list. No renderer-supplied menu text is
+    // ever shown — only these known actions run, so a compromised renderer
+    // cannot inject arbitrary menu content.
+    win.webContents.on('context-menu', (_e, params) => {
+      const mid = params.midpoint || { x: params.x, y: params.y };
+      void mid;
+      const items = [];
+      const editable = params.isEditable;
+      const hasSel = !!params.selectionText.trim();
+      const link = params.linkURL && /^https?:\/\//i.test(params.linkURL) ? params.linkURL : '';
+      const media = params.mediaType === 'image' ? params.srcURL : '';
+      if (editable) {
+        items.push(
+          { role: 'cut', enabled: hasSel, label: 'Cut' },
+          { role: 'copy', enabled: hasSel, label: 'Copy' },
+          { role: 'paste', label: 'Paste' },
+          { role: 'selectAll', label: 'Select All' }
+        );
+      } else if (hasSel) {
+        items.push(
+          { role: 'copy', label: 'Copy' },
+          { type: 'separator' },
+          { role: 'selectAll', label: 'Select All' }
+        );
+      }
+      if (link) {
+        if (items.length) items.push({ type: 'separator' });
+        items.push({ label: 'Open Link in Browser', click: () => { if (isSafeExternalUrl(link)) shell.openExternal(link); } },
+          { label: 'Copy Link Address', click: () => { try { require('electron').clipboard.writeText(link); } catch (_) {} } });
+      }
+      if (media) {
+        if (items.length) items.push({ type: 'separator' });
+        items.push({ label: 'Copy Image Address', click: () => { try { require('electron').clipboard.writeText(media); } catch (_) {} } });
+      }
+      if (!items.length) return; // no useful actions → keep the default (no menu)
+      Menu.buildFromTemplate(items).popup({ window: win });
+    });
+    // The *check* side (navigator.permissions.query and synchronous capability
+    // probes) is a separate Electron hook — denying only requests leaves those
+    // reporting a better answer than the request would have got. Deny both.
+    win.webContents.session.setPermissionCheckHandler(() => false);
+
     win.webContents.on('will-navigate', (e, url) => {
       if (url !== win.webContents.getURL() && isSafeExternalUrl(url)) {
         e.preventDefault();
@@ -131,10 +178,16 @@ function main() {
     win.on('closed', () => { win = null; });
   }
 
+  // Only real web links leave the app, and only over TLS — with the single
+  // exception of loopback, which the dev workflow uses. This value can come
+  // from project data, so everything else (file:, javascript:, data:, smb:,
+  // custom app schemes) is refused rather than handed to the OS opener.
   function isSafeExternalUrl(url) {
     try {
       const parsed = new URL(String(url || ''));
-      return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+      if (parsed.protocol === 'https:') return true;
+      if (parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')) return true;
+      return false;
     } catch (_) {
       return false;
     }
@@ -246,6 +299,35 @@ function main() {
       deleteSes();
       event.returnValue = true;
     });
+  }
+
+  // OS accent colour → renderer (Settings ▸ Appearance ▸ "Use system accent").
+  // Returns a hex string without '#', or '' when unavailable. Pushed live when
+  // the user changes their OS accent while the studio is open.
+  function osAccentHex() {
+    try {
+      if (isMac) {
+        // macOS returns a NSColor; toHex gives 'RRGGBB'.
+        const sys = systemPreferences.getAccentColor ? systemPreferences.getAccentColor() : '';
+        return /^[0-9A-Fa-f]{6}$/.test(sys || '') ? '#' + sys : '';
+      }
+      if (process.platform === 'win32' && systemPreferences.isAeroGlassEnabled && systemPreferences.isAeroGlassEnabled()) {
+        const c = systemPreferences.getAccentColor ? systemPreferences.getAccentColor() : '';
+        if (/^[0-9A-Fa-f]{6}$/.test(c || '')) return '#' + c;
+      }
+    } catch (_) { /* accent colour is a nicety, never a crash */ }
+    return '';
+  }
+  function registerAccentIpc() {
+    ipcMain.handle('get-accent', (event) => {
+      if (!win || event.sender !== win.webContents) return '';
+      return osAccentHex();
+    });
+    try {
+      systemPreferences.on('accent-color-changed', () => {
+        if (win && !win.isDestroyed()) win.webContents.send('accent-changed', osAccentHex());
+      });
+    } catch (_) { /* not supported on every platform */ }
   }
 
   function screenBoundsContain(b) {
@@ -372,6 +454,10 @@ function main() {
       // before the update is installed. Manual checks use this same path.
       updater.autoDownload = false;
       updater.autoInstallOnAppQuit = true;
+      // Windows: refuse an installer whose Authenticode publisher can't be
+      // verified (macOS relies on the Developer ID signature + notarization).
+      // Explicit rather than leaning on the library default.
+      updater.verifyUpdateCodeSignature = true;
       updater.on('checking-for-update', () => {
         if (startupUpdateRunning) setStartupStatus('Checking for updates…', 'Looking for the latest Studio release.');
       });
@@ -580,6 +666,21 @@ function main() {
   // ---------------------------------------------------------------- lifecycle
   app.whenReady().then(() => {
     app.setName('PallettAI Studio');
+
+    // Defence in depth for every webContents the app ever creates — the main
+    // window, the startup splash, and anything added later: no <webview>, no
+    // popups, no OS permissions. The main window installs its own
+    // window-open handler in createWindow() a moment later, which replaces the
+    // deny-all below so external links still open in the system browser.
+    app.on('web-contents-created', (_event, contents) => {
+      contents.on('will-attach-webview', (e) => { e.preventDefault(); });
+      contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      const session = contents.session;
+      if (session) {
+        session.setPermissionRequestHandler((_request, callback) => callback(false));
+        session.setPermissionCheckHandler(() => false);
+      }
+    });
     if (isMac) {
       app.setAboutPanelOptions({
         applicationName: 'PallettAI Studio',
@@ -591,6 +692,7 @@ function main() {
     initUpdater();
     buildMenu();
     registerSecretIpc();
+    registerAccentIpc();
     app.on('activate', () => {
       if (startupUpdateRunning) {
         if (startupWindow && !startupWindow.isDestroyed()) startupWindow.focus();

@@ -5,6 +5,10 @@ const path = require('path');
 
 const ROOT = __dirname;
 const PORT = (process.env.PORT && process.env.PORT !== '0' && +process.env.PORT > 0) ? +process.env.PORT : 4173;
+// Loopback by default: this serves the whole Studio directory, so binding to
+// 0.0.0.0 would publish it to every device on the network (café wifi included).
+// Set HOST=0.0.0.0 deliberately if you ever want LAN access.
+const HOST = process.env.HOST || '127.0.0.1';
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -51,7 +55,7 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   const addr = server.address();
-  console.log(`PallettAI Studio running at http://localhost:${addr.port}`);
+  console.log(`PallettAI Studio running at http://localhost:${addr.port} (bound to ${HOST})`);
 });
