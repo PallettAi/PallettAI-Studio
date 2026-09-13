@@ -57,8 +57,12 @@ REQUIRED.forEach((id) => assert(html.indexOf('data-view="' + id + '"') !== -1, '
 assert(/nav-chip/.test(html) || /nav-chip/.test(app), 'chip rail markup exists');
 assert(/IBM Plex Sans/.test(css) && /IBM Plex Mono/.test(css), 'UI type is IBM Plex');
 assert(/--radius-ctrl:\s*6px/.test(css) && /--radius-tray:\s*10px/.test(css), 'instrument radii are 6px / 10px');
-assert(/--primary:\s*#7c5cff/.test(css) && /--accent:\s*#22d3ee/.test(css), 'brand violet and cyan stay locked');
-assert(/\.btn\.primary\{[^}]*background:\s*var\(--primary\)/.test(css.replace(/\s+/g, '')), 'primary buttons are flat violet');
+// Brand lock. The ice palette is the PallettAI identity, shared with the website
+// and the app icon — if these drift, the app stops looking like the product.
+assert(/--primary:\s*#7cc0f8/.test(css) && /--accent:\s*#9fd4ff/.test(css), 'brand ice blue stays locked');
+// The one primary action keeps the pale CTA gradient (it carries ink text);
+// everything else uses --grad so the UI doesn't turn white.
+assert(/\.btn\.primary\{[^}]*background:\s*var\(--grad-cta\)/.test(css.replace(/\s+/g, '')), 'primary buttons use the pale ice CTA gradient');
 assert(!/CORE TOOLS/.test(app) && !/Everything you need to ship/.test(app), 'generic CORE TOOLS dashboard is gone');
 assert(!/Design stunning/.test(html), 'marketing hero line is gone');
 assert(/id="dashTemplates"/.test(html) && /id="btnNewProject"/.test(html), 'dashboard keeps Templates doorway and New project');

@@ -173,6 +173,12 @@ const App = (() => {
     // bespoke session: accent colour, UI density, reduced motion.
     // "Use system accent" wins over the picked colour when available.
     let accent = settings.accent || DB.defaultSettings.accent;
+    // Brand migration: '#22d3ee' was the previous default accent, and the whole
+    // settings object is persisted on every preference change — so an established
+    // install has it stored and would keep the old cyan forever. Exactly that
+    // value is treated as "never chosen" so it picks up the ice default; any other
+    // stored accent is left alone.
+    if (accent === '#22d3ee') accent = DB.defaultSettings.accent;
     if (settings.useSystemAccent && systemAccent) accent = systemAccent;
     document.documentElement.style.setProperty('--accent', accent);
     document.body.classList.toggle('ui-compact', settings.density === 'compact');
@@ -1788,7 +1794,7 @@ const App = (() => {
     ctx.fill();
     ctx.beginPath();
     ctx.arc(cx, cy, 32, 0, Math.PI * 2);
-    ctx.fillStyle = 'var(--grad, linear-gradient(135deg,#7c5cff,#22d3ee))';
+    ctx.fillStyle = 'var(--grad, linear-gradient(135deg,#7cc0f8,#9fd4ff))';
     ctx.fill();
   }
   function segIndexForPrize(p) {
@@ -1798,7 +1804,7 @@ const App = (() => {
   function burstConfetti() {
     const zone = $('#wheelConfetti');
     if (!zone) return;
-    const cols = ['#7c5cff', '#22d3ee', '#f59e0b', '#34d399', '#f43f5e', '#fff'];
+    const cols = ['#7cc0f8', '#9fd4ff', '#f59e0b', '#34d399', '#f43f5e', '#fff'];
     for (let i = 0; i < 28; i++) {
       const s = document.createElement('i');
       s.className = 'confetti';
@@ -1965,7 +1971,7 @@ const App = (() => {
     });
     const activityPath = activityPoints.map((point, i) => (i ? 'L' : 'M') + point[0] + ' ' + point[1]).join(' ');
     const activityFill = activityPath + ' L275 92 L12 92 Z';
-    const swatches = ['#a855f7', '#7c3aed', '#c084fc', '#4c1d95', '#d8b4fe', '#6d28d9', '#9333ea', '#2e1065'];
+    const swatches = ['#7cc0f8', '#5aa9ea', '#a9d8ff', '#134a7a', '#d3ebff', '#2f7fd0', '#8fcaf9', '#153a5f'];
     const svg = (content, cls) => `<svg class="tool-svg ${cls || ''}" viewBox="0 0 320 100" aria-hidden="true">${content}</svg>`;
     const card = (cls, icon, title, desc, body, action) => `
       <article class="core-tool ${cls}">
@@ -4920,7 +4926,7 @@ const App = (() => {
     const shapeable = (AI.LOGO_STYLES.find((s) => s.id === p.style) || {}).shapeable;
     const pairs = AI.LOGO_DUOTONES.map((d) => {
       const active = d.id === 'auto' && p.pair === undefined ? true : p.pair === d.id;
-      const sw = d.c ? d.c.map((col) => `<span style="background:${col}"></span>`).join('') : `<span style="background:linear-gradient(135deg,#7c5cff,#22d3ee)"></span>`;
+      const sw = d.c ? d.c.map((col) => `<span style="background:${col}"></span>`).join('') : `<span style="background:linear-gradient(135deg,#7cc0f8,#9fd4ff)"></span>`;
       return `<button class="lo-pair ${active ? 'active' : ''}" data-pair="${d.id}" title="${esc(d.name)}">${sw}</button>`;
     }).join('');
     openModal('Logo studio', `
@@ -5843,8 +5849,8 @@ const App = (() => {
           <div><label>Surface (cards)</label><input type="color" id="palSurface" value="#ffffff"></div>
         </div>
         <div class="cf-row">
-          <div><label>Primary</label><input type="color" id="palPrimary" value="#7c5cff"></div>
-          <div><label>Accent</label><input type="color" id="palAccent" value="#22d3ee"></div>
+          <div><label>Primary</label><input type="color" id="palPrimary" value="#7cc0f8"></div>
+          <div><label>Accent</label><input type="color" id="palAccent" value="#9fd4ff"></div>
         </div>
         <div class="cf-row">
           <div><label>Text</label><input type="color" id="palText" value="#0f172a"></div>
@@ -5861,8 +5867,8 @@ const App = (() => {
     const syncPalPreview = () => {
       const bg = $('#palBg') && $('#palBg').value || '#f6f7fb';
       const surf = $('#palSurface') && $('#palSurface').value || '#ffffff';
-      const pri = $('#palPrimary') && $('#palPrimary').value || '#7c5cff';
-      const acc = $('#palAccent') && $('#palAccent').value || '#22d3ee';
+      const pri = $('#palPrimary') && $('#palPrimary').value || '#7cc0f8';
+      const acc = $('#palAccent') && $('#palAccent').value || '#9fd4ff';
       const box = $('#palPreview'); if (!box) return;
       box.innerHTML = '<span style="background:'+esc(bg)+'" title="Background"></span><span style="background:'+esc(surf)+'" title="Surface"></span><span style="background:linear-gradient(135deg,'+esc(pri)+','+esc(acc)+')" title="Gradient"></span>';
       if ($('#palAuto') && $('#palAuto').checked) {
@@ -6217,8 +6223,8 @@ const App = (() => {
           <select id="setTheme"><option value="dark" ${s.theme === 'dark' ? 'selected' : ''}>Dark</option><option value="light" ${s.theme === 'light' ? 'selected' : ''}>Light</option><option value="system" ${s.theme === 'system' ? 'selected' : ''}>System</option></select></div>
         <div class="set-row"><div><label>Accent colour</label><div class="set-desc">The highlight colour across the whole studio UI.</div></div>
           <div style="display:flex;gap:8px;align-items:center">
-            <input type="color" id="setAccent" value="${esc(s.accent || '#22d3ee')}" title="Pick any colour" style="width:44px;height:32px;padding:2px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;cursor:pointer">
-            <span style="display:flex;gap:6px">${['#22d3ee', '#7c5cff', '#f43f5e', '#f59e0b', '#10b981', '#3b82f6'].map((c) => `<span class="acc-swatch" data-acc="${c}" style="background:${c}${c === (s.accent || '#22d3ee') ? ';outline:2px solid var(--text);outline-offset:2px' : ''}"></span>`).join('')}</span>
+            <input type="color" id="setAccent" value="${esc(s.accent || '#9fd4ff')}" title="Pick any colour" style="width:44px;height:32px;padding:2px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;cursor:pointer">
+            <span style="display:flex;gap:6px">${['#9fd4ff', '#7cc0f8', '#f43f5e', '#f59e0b', '#10b981', '#3b82f6'].map((c) => `<span class="acc-swatch" data-acc="${c}" style="background:${c}${c === (s.accent || '#9fd4ff') ? ';outline:2px solid var(--text);outline-offset:2px' : ''}"></span>`).join('')}</span>
           </div></div>
         ${ELECTRON ? `
         <div class="set-row"><div><label>Use system accent</label><div class="set-desc">Follow the accent colour set on this ${window.pallettai.platform === 'darwin' ? 'Mac' : 'PC'}.</div></div>
@@ -6994,7 +7000,7 @@ const App = (() => {
             const pal = cleanBrandPalette(p.paletteData, p.palette) || DB.getPalette(p.palette);
             const font = brandFontInfo(p, p.font);
             const display = p.fontDisplay ? brandFontInfo(p, p.fontDisplay) : null;
-            const swatches = ['bg', 'surface', 'primary', 'accent'].map((key) => `<span style="display:inline-block;width:15px;height:15px;border-radius:5px;background:${esc((pal && pal[key]) || '#7c5cff')};border:1px solid rgba(255,255,255,.16)"></span>`).join('');
+            const swatches = ['bg', 'surface', 'primary', 'accent'].map((key) => `<span style="display:inline-block;width:15px;height:15px;border-radius:5px;background:${esc((pal && pal[key]) || '#7cc0f8')};border:1px solid rgba(255,255,255,.16)"></span>`).join('');
             return `<div class="rev-row" style="align-items:center">
               <div style="display:flex;gap:10px;align-items:center;min-width:0">
                 <div style="display:flex;gap:3px;flex:none">${swatches}</div>
@@ -7700,7 +7706,7 @@ const App = (() => {
       console.warn('Cloud session restore failed:', e);
       renderStreakWidget();
     });
-    console.log('%c◆ PallettAI Studio', 'color:#7c5cff;font-weight:bold;font-size:14px');
+    console.log('%cP/ PallettAI Studio', 'color:#7cc0f8;font-weight:bold;font-size:14px');
     // Best-effort flush of debounced IndexedDB writes when the window closes.
     window.addEventListener('pagehide', () => { try { AppStore.flush().catch(() => {}); } catch (e) {} });
     document.addEventListener('visibilitychange', () => {

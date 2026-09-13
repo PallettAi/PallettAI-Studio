@@ -1,14 +1,24 @@
 // Generates build/icon.png (1024x1024 RGBA) with zero dependencies:
-// a rounded-square brand tile with a soft violet glow and the white ◆ mark.
+// a rounded-square brand tile with a soft ice glow and the P/ mark.
 // Usage: node scripts/make-icon.js [out.png]
+//
+// The mark geometry is lifted verbatim from the website's signal-mark.svg so the
+// app icon, the dock, the DMG and the browser tab are all the same drawing. The
+// three strokes are modelled as distance-to-centreline fields, which gives the
+// round caps and joins of the SVG for free.
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 
 const SIZE = 1024;
 const RADIUS = 232;      // rounded-corner radius of the tile
-const DIAMOND_R = 300;   // half-diagonal of the ◆
 const GLOW_R = 560;      // radial glow radius
+
+// The mark is authored in a 48x48 viewBox. Scale it to 2/3 of the tile and centre
+// it, matching the proportion used for the Apple touch icon.
+const MARK_BOX = SIZE * (2 / 3);
+const MARK_SCALE = MARK_BOX / 48;
+const MARK_OFF = (SIZE - MARK_BOX) / 2;
 
 const out = process.argv[2] || path.join(__dirname, '..', 'build', 'icon.png');
 
@@ -17,11 +27,60 @@ function lerp(a, b, t) { return a + (b - a) * t; }
 function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 
 // Background gradient stops (top -> bottom)
-const BG_TOP = [27, 31, 62];      // #1b1f3e
-const BG_BOT = [10, 11, 24];      // #0a0b18
-const GLOW = [124, 92, 255];      // soft violet
-const GLOW_MAX = 0.42;            // peak glow alpha added over bg
-const MARK = [255, 255, 255];     // ◆
+const BG_TOP = [5, 21, 47];       // #05152f
+const BG_BOT = [2, 12, 28];       // #020c1c
+const GLOW = [159, 212, 255];     // ice halo
+const GLOW_MAX = 0.26;            // peak glow alpha added over bg
+
+// Mark gradient, the same three stops as signal-mark.svg
+const MARK_A = [234, 245, 255];   // #eaf5ff
+const MARK_B = [169, 216, 255];   // #a9d8ff  @ .45
+const MARK_C = [124, 192, 248];   // #7cc0f8
+
+function markColor(t) {
+  if (t < 0.45) {
+    const k = t / 0.45;
+    return [lerp(MARK_A[0], MARK_B[0], k), lerp(MARK_A[1], MARK_B[1], k), lerp(MARK_A[2], MARK_B[2], k)];
+  }
+  const k = (t - 0.45) / 0.55;
+  return [lerp(MARK_B[0], MARK_C[0], k), lerp(MARK_B[1], MARK_C[1], k), lerp(MARK_B[2], MARK_C[2], k)];
+}
+
+// ------------------------------------------------ the P/ mark, in viewBox units
+const STROKE = 3;                                  // half of the 6/48 stroke width
+const STEM = [[14, 39], [14, 10]];                 // upright
+const SLASH = [[27.5, 39.8], [38, 9]];             // the / through it
+const BOWL_TOP = [[14, 10], [20.2, 10]];           // bowl, upper arm
+const BOWL_BOT = [[14, 24.6], [20.2, 24.6]];       // bowl, lower arm
+const BOWL_C = [20.2, 17.3];                       // bowl curve centre
+const BOWL_R = 7.3;                                // bowl curve radius
+// bounding box of the stroked mark, used for the gradient axis
+const BOX_X0 = 11, BOX_W = 30, BOX_Y0 = 6, BOX_H = 36.8;
+
+function distToSeg(px, py, a, b) {
+  const vx = b[0] - a[0], vy = b[1] - a[1];
+  const wx = px - a[0], wy = py - a[1];
+  const len2 = vx * vx + vy * vy;
+  let t = len2 ? (wx * vx + wy * vy) / len2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const dx = wx - t * vx, dy = wy - t * vy;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function markDist(x, y) {
+  let d = Math.min(
+    distToSeg(x, y, STEM[0], STEM[1]),
+    distToSeg(x, y, SLASH[0], SLASH[1]),
+    distToSeg(x, y, BOWL_TOP[0], BOWL_TOP[1]),
+    distToSeg(x, y, BOWL_BOT[0], BOWL_BOT[1])
+  );
+  // the bowl's rounded end is the right half of a circle centred on BOWL_C
+  if (x >= BOWL_C[0]) {
+    const dc = Math.abs(Math.sqrt((x - BOWL_C[0]) ** 2 + (y - BOWL_C[1]) ** 2) - BOWL_R);
+    if (dc < d) d = dc;
+  }
+  return d;
+}
 
 function roundRectHit(x, y, half, rad) {
   // x,y are distances from tile centre, in [-half, half]
@@ -48,7 +107,7 @@ function sampleColor(px, py) {
   let g = lerp(BG_TOP[1], BG_BOT[1], t);
   let b = lerp(BG_TOP[2], BG_BOT[2], t);
 
-  // radial violet glow behind the mark
+  // radial ice glow behind the mark
   const d = Math.sqrt(cx * cx + cy * cy);
   const glow = clamp01(1 - d / GLOW_R);
   const ga = Math.pow(glow, 2.2) * GLOW_MAX;
@@ -61,12 +120,15 @@ function sampleColor(px, py) {
   const sh = sheen * sheen * 0.08;
   r += sh; g += sh; b += sh;
 
-  // white diamond ◆ : |dx| + |dy| <= R
-  if (Math.abs(cx) + Math.abs(cy) <= DIAMOND_R) {
-    // soft edge via one-pixel falloff
-    const edge = clamp01(DIAMOND_R - (Math.abs(cx) + Math.abs(cy)) + 1.2);
-    return [MARK[0], MARK[1], MARK[2], Math.round(255 * edge)];
+  // the mark, drawn on top (hard threshold — the caller supersamples for AA)
+  const vx = (px - MARK_OFF) / MARK_SCALE;
+  const vy = (py - MARK_OFF) / MARK_SCALE;
+  if (markDist(vx, vy) <= STROKE) {
+    const gt = clamp01(((vx - BOX_X0) / BOX_W + (vy - BOX_Y0) / BOX_H) / 2);
+    const mc = markColor(gt);
+    return [mc[0], mc[1], mc[2], 255];
   }
+
   const c = (v) => Math.max(0, Math.min(255, Math.round(v)));
   return [c(r), c(g), c(b), 255];
 }

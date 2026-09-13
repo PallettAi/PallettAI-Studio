@@ -10,7 +10,7 @@ const CHROME_VIEWS = [
     blurb: 'Current job, recent work, and next actions.',
     icon: 'home',
     group: 'work',
-    chip: ['#7c5cff', '#22d3ee', '#9d6bff', '#34d399']
+    chip: ['#7cc0f8', '#9fd4ff', '#8fcaf9', '#34d399']
   },
   {
     id: 'templates',
@@ -18,7 +18,7 @@ const CHROME_VIEWS = [
     blurb: 'Start a site from a finished layout.',
     icon: 'grid',
     group: 'work',
-    chip: ['#22d3ee', '#7c5cff', '#cdb4ff', '#181a33'],
+    chip: ['#9fd4ff', '#7cc0f8', '#c9e7ff', '#08203c'],
     tile: { title: 'Templates', blurb: 'Browse the catalog.', view: 'templates' }
   },
   {
@@ -27,7 +27,7 @@ const CHROME_VIEWS = [
     blurb: 'Edit the open project on the canvas.',
     icon: 'pen',
     group: 'work',
-    chip: ['#7c5cff', '#cdb4ff', '#22d3ee', '#9d6bff']
+    chip: ['#7cc0f8', '#c9e7ff', '#9fd4ff', '#8fcaf9']
   },
   {
     id: 'ai',
@@ -35,7 +35,7 @@ const CHROME_VIEWS = [
     blurb: 'Generate a complete first draft from a brief.',
     icon: 'spark',
     group: 'make',
-    chip: ['#9d6bff', '#c296ff', '#7c5cff', '#22d3ee'],
+    chip: ['#8fcaf9', '#b3dcff', '#7cc0f8', '#9fd4ff'],
     tile: { title: 'Generate', blurb: 'Describe the site you need.', view: 'ai' }
   },
   {
@@ -44,7 +44,7 @@ const CHROME_VIEWS = [
     blurb: 'Add blog, shop, SEO, or motion after the build.',
     icon: 'layers',
     group: 'make',
-    chip: ['#22d3ee', '#34d399', '#7c5cff', '#9d6bff']
+    chip: ['#9fd4ff', '#34d399', '#7cc0f8', '#8fcaf9']
   },
   {
     id: 'database',
@@ -52,7 +52,7 @@ const CHROME_VIEWS = [
     blurb: 'Local library and live source feeds.',
     icon: 'cylinder',
     group: 'library',
-    chip: ['#34d399', '#22d3ee', '#7c5cff', '#181a33']
+    chip: ['#34d399', '#9fd4ff', '#7cc0f8', '#08203c']
   },
   {
     id: 'qr',
@@ -60,7 +60,7 @@ const CHROME_VIEWS = [
     blurb: 'Make a code for a URL, Wi-Fi network, or card.',
     icon: 'qr',
     group: 'library',
-    chip: ['#22d3ee', '#181a33', '#7c5cff', '#9d6bff']
+    chip: ['#9fd4ff', '#08203c', '#7cc0f8', '#8fcaf9']
   },
   {
     id: 'settings',
@@ -68,7 +68,7 @@ const CHROME_VIEWS = [
     blurb: 'Account, appearance, and studio defaults.',
     icon: 'gear',
     group: 'studio',
-    chip: ['#9aa1c4', '#7c5cff', '#22d3ee', '#181a33']
+    chip: ['#9fb8d6', '#7cc0f8', '#9fd4ff', '#08203c']
   }
 ];
 

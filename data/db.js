@@ -1274,7 +1274,7 @@ DB.sectionsFromTemplate = (template) =>
 // Default settings
 DB.defaultSettings = {
   theme: 'dark',
-  accent: '#22d3ee',
+  accent: '#9fd4ff',
   useSystemAccent: false,
   density: 'comfortable',
   reducedMotion: false,
