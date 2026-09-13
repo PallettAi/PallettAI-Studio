@@ -154,9 +154,24 @@ base64 -i pallettai-signing.p12 | pbcopy   # paste into the CSC_LINK secret
 
 The workflow guard only fails on a missing `CSC_LINK`/`CSC_KEY_PASSWORD`; a
 missing `APPLE_*` set produces a warning, not an error, and electron-builder
-skips notarization by itself. This works because the `Developer ID Application`
-certificate lookup in electron-builder falls back to *any non-Apple certificate*
-in the keychain it builds from `CSC_LINK`.
+skips notarization by itself.
+
+**A self-signed certificate only signs on a machine that trusts it**, and this
+is the one thing that breaks silently. electron-builder looks for a *valid*
+identity, and macOS reports an untrusted certificate as invalid
+(`CSSMERR_TP_NOT_TRUSTED`), so it warns and skips signing instead of failing:
+
+```
+• skipped macOS application code signing
+  allIdentities= 1) "PallettAI Studio (Self-Signed)" (CSSMERR_TP_NOT_TRUSTED)
+```
+
+That yields a release that installs normally and can then **never auto-update**,
+because Squirrel.Mac compares code signatures. Your Mac already has this trust
+(from §2); a fresh CI runner has never seen the certificate. So `build-mac.yml`
+adds the trust itself before building, proves the identity is usable in a
+throwaway keychain first, and finally verifies the finished `.app` really does
+carry a signature — because electron-builder's skip is only a warning.
 
 > **Do not mix the two paths across releases.** Auto-update (Squirrel.Mac)
 > requires the new build's signature to match the installed one, so a shift from
@@ -215,6 +230,8 @@ also provides **Check for Updates…** for a manual retry.
 |---|---|
 | "cannot be opened because the developer cannot be verified" | Build wasn't notarized — check `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID` were set, then rebuild. Expected on Path B: notarization needs a paid Apple account, so a self-signed release always shows this on a fresh download. |
 | CI fails with `cannot find valid "Developer ID Application" identity` | `CSC_LINK` is empty, or the exported `.p12` is missing its **private key**. Re-export the certificate *with* its key. |
+| Log warns `skipped macOS application code signing ... (CSSMERR_TP_NOT_TRUSTED)` | The machine does not trust the certificate. Locally, re-run the `add-trusted-cert` command from §2. In CI the workflow does this for you — if that step fails, the identity is unusable and the build would be unsigned. |
+| CI fails at `Verify the build is really code-signed` | Signing was skipped further up the log. A release published in this state could never auto-update, so the workflow refuses to continue. |
 | Notarization fails with `-17663` / auth errors | App-specific password must be created *after* enabling 2FA on the Apple ID; Team ID must be the 10-char membership code. |
 | "You already have a current Mac App Distribution certificate…" | You picked the wrong cert type — the export must be **Developer ID Application**, not Mac App Distribution. |
 | App doesn't auto-update | `latest-mac.yml` must be attached to the GitHub release next to the zips, the ZIP filenames must match its entries, and `repository.url` must match the real repo. Startup checks are only enabled in packaged builds. |

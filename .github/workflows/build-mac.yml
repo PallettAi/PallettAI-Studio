@@ -57,10 +57,8 @@ jobs:
           # Code signing is required even without an Apple Developer account.
           # Squirrel.Mac refuses to install an update whose code signature does
           # not match the installed app, so an unsigned build can never ship an
-          # auto-update. A self-signed certificate satisfies this — for the
-          # "Developer ID Application" cert type electron-builder falls back to
-          # any non-Apple certificate it finds in the keychain it just built
-          # from CSC_LINK (see codeSign/macCodeSign.js).
+          # auto-update. A self-signed certificate satisfies that, provided the
+          # runner trusts it — see the trust step below, which is not optional.
           for name in CSC_LINK CSC_KEY_PASSWORD; do
             if [ -z "${!name:-}" ]; then
               echo "::error::Missing required Actions secret: $name"
@@ -88,6 +86,83 @@ jobs:
           fi
           if [ "$apple_set" -eq 0 ]; then
             echo "::warning title=Release will not be notarized::No Apple credentials configured. The build will be signed but not notarized, so first launch of a downloaded DMG shows a Gatekeeper prompt."
+          fi
+
+      # electron-builder signs with a non-Apple certificate only if the machine
+      # already trusts it. A developer Mac was given that trust once by hand
+      # (`security add-trusted-cert`); a fresh runner has never seen the
+      # certificate, so macOS marks every identity it holds as invalid and
+      # electron-builder SILENTLY SKIPS signing instead of failing:
+      #
+      #   • skipped macOS application code signing
+      #     allIdentities= 1) "PallettAI Studio (Self-Signed)" (CSSMERR_TP_NOT_TRUSTED)
+      #
+      # An unsigned build installs fine and then can never auto-update, so the
+      # failure is invisible until users are stuck on an old version. Trusting
+      # the leaf here is what makes CI match a developer machine; it affects
+      # only this disposable runner, and CA-issued certificates are left alone.
+      - name: Make the runner trust the signing certificate
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CSC_LINK:-}" ]; then
+            echo "No CSC_LINK configured; nothing to trust."
+            exit 0
+          fi
+
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+
+          # Decode the way electron-builder does, so wrapped base64 is fine too.
+          CSC_LINK="$CSC_LINK" node -e \
+            'process.stdout.write(Buffer.from(process.env.CSC_LINK, "base64"))' > "$work/signing.p12"
+          printf '%s' "$CSC_KEY_PASSWORD" > "$work/password"
+          openssl pkcs12 -in "$work/signing.p12" -nokeys -clcerts \
+            -passin file:"$work/password" -out "$work/signing.pem"
+
+          subject="$(openssl x509 -in "$work/signing.pem" -noout -subject | sed 's/^subject= *//')"
+          issuer="$(openssl x509 -in "$work/signing.pem" -noout -issuer | sed 's/^issuer= *//')"
+          if [ -z "$subject" ]; then
+            echo "::error::Could not read a certificate out of CSC_LINK — is the secret the base64 of a .p12 that includes its private key?"
+            exit 1
+          fi
+
+          if [ "$subject" = "$issuer" ]; then
+            echo "Self-signed certificate — trusting it for this runner."
+            sudo security add-trusted-cert -d -p codeSign -r trustRoot \
+              -k /Library/Keychains/System.keychain "$work/signing.pem"
+          else
+            echo "Certificate is CA-issued ($subject); the system trust store already covers it."
+          fi
+
+          # Ask the exact question the build will ask, against the exact
+          # command electron-builder uses, so a trust problem costs seconds
+          # instead of a ten-minute build that produces an unusable release.
+          probe="$work/probe.keychain"
+          probe_password="probe"
+          security create-keychain -p "$probe_password" "$probe"
+          security unlock-keychain -p "$probe_password" "$probe"
+          # Mirror electron-builder's import exactly, partition list included,
+          # so this probe cannot pass where the real signing step would fail.
+          security import "$work/signing.p12" -k "$probe" \
+            -T /usr/bin/codesign -T /usr/bin/productbuild -P "$CSC_KEY_PASSWORD"
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$probe_password" "$probe" >/dev/null
+
+          found="$(security find-identity -v -p codesigning "$probe" 2>&1 || true)"
+          security delete-keychain "$probe" >/dev/null 2>&1 || true
+          printf '%s\n' "$found"
+
+          # Assert positively on an identity entry, not on the absence of a
+          # "0 valid" line — "10 valid identities found" contains that too.
+          if printf '%s' "$found" | grep -qE '^[[:space:]]*[0-9]+\)[[:space:]]'; then
+            echo "Runner can sign with this certificate."
+          else
+            echo "::error::This runner cannot use the CSC_LINK certificate for code signing, so electron-builder would skip signing and the release could never auto-update."
+            exit 1
           fi
 
       # Also notarizes, but only when the APPLE_* secrets above are present.
@@ -121,6 +196,51 @@ jobs:
             }
           done
           echo "Built PallettAI Studio ${version} for arm64 and x64; updater manifest matches artifacts"
+
+      # The guard that was missing. electron-builder treats an unusable signing
+      # identity as a warning, not an error, so a broken trust setup produces a
+      # green build with an unsigned app inside it. Check the artifact itself.
+      - name: Verify the build is really code-signed
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          app_name="PallettAI Studio.app"
+
+          zip="dist/PallettAI-Studio-${version}-mac-arm64.zip"
+          if [ ! -f "$zip" ]; then
+            zip="dist/PallettAI-Studio-${version}-mac-x64.zip"
+          fi
+          if [ ! -f "$zip" ]; then
+            echo "::error::No macOS build zip found to check"
+            exit 1
+          fi
+
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+          unzip -q -o "$zip" -d "$tmpdir"
+          app="$(find "$tmpdir" -name "$app_name" -type d | head -n 1)"
+          if [ -z "$app" ]; then
+            echo "::error::Could not find $app_name inside $(basename "$zip")"
+            exit 1
+          fi
+
+          info="$(codesign -dv --verbose=4 "$app" 2>&1 || true)"
+          printf '%s\n' "$info"
+
+          # An unsigned or ad-hoc-signed bundle has no Authority line at all.
+          authority="$(printf '%s\n' "$info" | sed -n 's/^Authority=//p' | head -n 1)"
+          if [ -z "$authority" ]; then
+            echo "::error::The build is NOT code-signed. Squirrel.Mac will refuse to auto-update it, so this release must not be published."
+            exit 1
+          fi
+
+          codesign --verify --deep --strict "$app" || {
+            echo "::error::codesign verification failed — a signature is present but it is not valid"
+            exit 1
+          }
+
+          echo "Signed by: $authority"
 
       - name: Verify Electron Fuses (macOS)
         if: runner.os != 'macOS' || true
