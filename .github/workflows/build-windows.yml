@@ -1,9 +1,18 @@
 name: Build and publish PallettAI Studio for Windows
 
+# Tag-triggered Windows releases are deliberately disabled for now.
+#
+# Both workflows read the same CSC_LINK secret, but macOS needs an Apple .p12
+# while Windows needs a .pfx — a single secret cannot be both. So a `v*` tag
+# also fired this workflow, which then failed its own credential guard and left
+# a red X on every release. Run it manually from the Actions tab instead: a
+# manual run uploads artifacts and does not publish a release.
+#
+# Re-add a `push: { tags: ['v*'] }` trigger once there is a Windows code-
+# signing certificate. Give Windows its own secret (e.g. WIN_CSC_LINK) rather
+# than sharing CSC_LINK, so tagging cannot sign a build with the wrong cert.
 on:
   workflow_dispatch:
-  push:
-    tags: ['v*']
 
 # The Studio source can live in its own repository. Releases are published to
 # the public website repository so pallettai.org/downloads has stable links.

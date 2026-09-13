@@ -58,7 +58,8 @@ That's the whole one-time setup. Everything below is automated afterwards.
 > The self-signed identity is stored in the login keychain
 > (`~/PallettAI-Studio-mac-signing/` holds the key/cert/p12 + password).
 > electron-builder will sign with it automatically; notarization is skipped
-> (no `APPLE_ID` env). CI still requires real Developer ID secrets.
+> (no `APPLE_ID` env). **The same certificate works in CI** — see *Path B* in
+> §4. The only thing you give up is notarization.
 
 ---
 
@@ -109,27 +110,67 @@ The website checkout is already connected to
 
 ### One-time GitHub setup
 
-1. Put the Studio source and `.github/workflows/build-mac.yml` in the GitHub
-   repository that will own the source tags.
-2. In that source repository, open **Settings → Secrets and variables →
-   Actions** and add:
-   - `CSC_LINK` — base64 contents of the Developer ID `.p12`
-   - `CSC_KEY_PASSWORD` — the `.p12` password
-   - `APPLE_ID` — Apple ID email
-   - `APPLE_APP_SPECIFIC_PASSWORD` — app-specific password
-   - `APPLE_TEAM_ID` — 10-character Apple Developer team ID
-   - `RELEASE_TOKEN` — a fine-grained GitHub token with **Contents: read and
-     write** access to `PallettAi/pallettai-website` only
-3. Never commit any of those values or place them in the website files.
+The source repo is `PallettAi/PallettAI-Studio`. Open **Settings → Secrets and
+variables → Actions** and add the secrets for the path you are on. Never commit
+any of those values or place them in the website files.
 
-### First release: v0.3.6
+`RELEASE_TOKEN` is required on **both** paths — it is what lets the build attach
+assets to the release on `PallettAi/pallettai-website`, which is also the
+auto-update feed. Make it a fine-grained token with **Contents: read and write**
+on that one repository and nothing else.
+
+#### Path A — Developer ID + notarization (needs a paid Apple account)
+
+All six secrets. Users see no Gatekeeper prompt at all.
+
+| Secret | Value |
+|---|---|
+| `CSC_LINK` | base64 of the **Developer ID Application** `.p12` |
+| `CSC_KEY_PASSWORD` | the `.p12` password |
+| `APPLE_ID` | Apple ID email |
+| `APPLE_APP_SPECIFIC_PASSWORD` | app-specific password |
+| `APPLE_TEAM_ID` | 10-character Apple Developer team ID |
+| `RELEASE_TOKEN` | fine-grained token, `pallettai-website` contents:write |
+
+#### Path B — self-signed, no Apple account needed
+
+Only two secrets are **required**; the three `APPLE_*` ones are optional and
+simply leave the release signed-but-not-notarized.
+
+| Secret | Required | Value |
+|---|---|---|
+| `CSC_LINK` | yes | base64 of the self-signed `.p12` |
+| `CSC_KEY_PASSWORD` | yes | the `.p12` password |
+| `RELEASE_TOKEN` | yes | fine-grained token, `pallettai-website` contents:write |
+| `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | optional | omit all three, or add all three to also notarize |
+
+Export the self-signed certificate **with its private key** — Keychain Access →
+*login* keychain → right-click **PallettAI Studio (Self-Signed)** → *Export
+Items…* → save as `pallettai-signing.p12` with a password — then:
+
+```bash
+base64 -i pallettai-signing.p12 | pbcopy   # paste into the CSC_LINK secret
+```
+
+The workflow guard only fails on a missing `CSC_LINK`/`CSC_KEY_PASSWORD`; a
+missing `APPLE_*` set produces a warning, not an error, and electron-builder
+skips notarization by itself. This works because the `Developer ID Application`
+certificate lookup in electron-builder falls back to *any non-Apple certificate*
+in the keychain it builds from `CSC_LINK`.
+
+> **Do not mix the two paths across releases.** Auto-update (Squirrel.Mac)
+> requires the new build's signature to match the installed one, so a shift from
+> the self-signed certificate to a Developer ID certificate will not auto-update
+> existing installs — they will need one manual download first.
+
+### Releasing a version
 
 The tag must match `package.json` exactly. From the Studio source repository:
 
 ```bash
-node -p "require('./package.json').version"  # 0.3.6
-git tag v0.3.6
-git push origin v0.3.6
+node -p "require('./package.json').version"  # 0.4.0
+git tag v0.4.0
+git push origin v0.4.0
 ```
 
 The workflow verifies the tag before building. A manual workflow run is also
@@ -137,8 +178,8 @@ available for testing; it uploads artifacts without creating a public release.
 
 The release attaches these files:
 
-- `PallettAI-Studio-0.3.6-mac-arm64.dmg` — Apple Silicon
-- `PallettAI-Studio-0.3.6-mac-x64.dmg` — Intel
+- `PallettAI-Studio-0.4.0-mac-arm64.dmg` — Apple Silicon
+- `PallettAI-Studio-0.4.0-mac-x64.dmg` — Intel
 - `PallettAI-Studio-mac-arm64.dmg` — stable Apple Silicon alias
 - `PallettAI-Studio-mac-x64.dmg` — stable Intel alias
 - versioned `.zip` files and `latest-mac.yml` for auto-updates
@@ -172,7 +213,8 @@ also provides **Check for Updates…** for a manual retry.
 
 | Symptom | Fix |
 |---|---|
-| "cannot be opened because the developer cannot be verified" | Build wasn't notarized — check `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID` were set, then rebuild. Never tell customers to right-click → Open. |
+| "cannot be opened because the developer cannot be verified" | Build wasn't notarized — check `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID` were set, then rebuild. Expected on Path B: notarization needs a paid Apple account, so a self-signed release always shows this on a fresh download. |
+| CI fails with `cannot find valid "Developer ID Application" identity` | `CSC_LINK` is empty, or the exported `.p12` is missing its **private key**. Re-export the certificate *with* its key. |
 | Notarization fails with `-17663` / auth errors | App-specific password must be created *after* enabling 2FA on the Apple ID; Team ID must be the 10-char membership code. |
 | "You already have a current Mac App Distribution certificate…" | You picked the wrong cert type — the export must be **Developer ID Application**, not Mac App Distribution. |
 | App doesn't auto-update | `latest-mac.yml` must be attached to the GitHub release next to the zips, the ZIP filenames must match its entries, and `repository.url` must match the real repo. Startup checks are only enabled in packaged builds. |
@@ -184,4 +226,8 @@ also provides **Check for Updates…** for a manual retry.
 
 1. Bump `version` in `package.json`.
 2. Tag + push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-3. CI builds/signs/notarizes both DMGs and drafts the release notes.
+3. CI builds and signs both DMGs (notarizing them too on Path A) and drafts the
+   release notes on the website repository.
+4. The site needs no follow-up commit: `downloads.html` reads the newest release
+   from the GitHub API at runtime, so the version label and both DMG links
+   switch over on their own once the release is published.

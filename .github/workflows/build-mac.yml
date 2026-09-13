@@ -54,14 +54,44 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+          # Code signing is required even without an Apple Developer account.
+          # Squirrel.Mac refuses to install an update whose code signature does
+          # not match the installed app, so an unsigned build can never ship an
+          # auto-update. A self-signed certificate satisfies this — for the
+          # "Developer ID Application" cert type electron-builder falls back to
+          # any non-Apple certificate it finds in the keychain it just built
+          # from CSC_LINK (see codeSign/macCodeSign.js).
+          for name in CSC_LINK CSC_KEY_PASSWORD; do
             if [ -z "${!name:-}" ]; then
               echo "::error::Missing required Actions secret: $name"
               exit 1
             fi
           done
+          # Notarization is optional and needs a paid Apple Developer account.
+          # electron-builder skips it on its own when none of these are set
+          # (MacTargetHelper.getNotarizeOptions returns undefined), so simply
+          # not configuring them is the supported way to ship a signed-but-
+          # not-notarized build. That build still updates itself: auto-update
+          # only compares code signatures, which is why CSC_LINK is required.
+          #
+          # It is all-or-nothing, though — a partial set makes electron-builder
+          # throw halfway through the build, so fail early and clearly instead.
+          apple_set=0
+          for name in APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -n "${!name:-}" ]; then
+              apple_set=$((apple_set + 1))
+            fi
+          done
+          if [ "$apple_set" -ne 0 ] && [ "$apple_set" -ne 3 ]; then
+            echo "::error::Notarization credentials are all-or-nothing — set APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID together, or leave all three unset."
+            exit 1
+          fi
+          if [ "$apple_set" -eq 0 ]; then
+            echo "::warning title=Release will not be notarized::No Apple credentials configured. The build will be signed but not notarized, so first launch of a downloaded DMG shows a Gatekeeper prompt."
+          fi
 
-      - name: Build, sign & notarize (arm64 + x64)
+      # Also notarizes, but only when the APPLE_* secrets above are present.
+      - name: Build & sign macOS artifacts (arm64 + x64)
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
