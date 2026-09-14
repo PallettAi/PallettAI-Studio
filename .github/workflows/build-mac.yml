@@ -51,8 +51,8 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # RELEASE_REPOSITORY comes from the workflow-level env below.
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          RELEASE_REPOSITORY: ${{ env.RELEASE_REPOSITORY }}
         shell: bash
         run: |
           set -euo pipefail
