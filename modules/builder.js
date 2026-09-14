@@ -63,11 +63,14 @@ body.photo-grade{
 }`;
   }
 
-  // A deterministic, on-theme hero placeholder used when a project has no hero
-  // image of its own. It keeps a free user's first export from shipping a random
-  // stock photo as the hero background by surprise — instead the hero shows the site
-  // name on a subtle gradient that reacts to the chosen palette (dark sites get a
-  // dark gradient, light sites get a light one).
+  // A deterministic, on-theme placeholder used when a project has no image of its
+  // own. It keeps a free user's first export from shipping a random stock photo as
+  // the hero background by surprise — instead the site shows its own name on a
+  // subtle gradient that reacts to the chosen palette (dark sites get a dark
+  // gradient, light sites get a light one).
+  // This now fills a media column rather than a whole hero: a finished site with no
+  // hero photo gets the Signature artwork as its backdrop instead, and only AI
+  // drafts draw a full-bleed panel (as a "photo goes here" hint).
   function heroPlaceholder(p, s, i, kind) {
     if (isAiDraft(p)) return photoHole(kind === 'about' ? '4/3' : '16/9', kind === 'about' ? 'About photo' : 'Hero photo');
     const pal = (p.site || {}).palette || 'midnight';
@@ -77,7 +80,7 @@ body.photo-grade{
       ? 'linear-gradient(135deg,#0b1020 0%,#161c33 55%,#1d2447 100%)'
       : 'linear-gradient(135deg,#f6f1e7 0%,#efe6d6 55%,#e7dccd 100%)';
     const fg = isDark ? '#eef0ff' : '#2a2318';
-    return `<div class="hero-placeholder" style="background:${bg};color:${fg};width:100%;height:100%;min-height:380px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px;font-family:inherit">
+    return `<div class="hero-placeholder" style="background:${bg};color:${fg};width:100%;height:100%;min-height:380px;border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px;font-family:inherit">
         <span style="font-size:3rem;letter-spacing:.02em;opacity:.5;display:block;margin-bottom:14px">◆</span>
         <h1 style="font-size:clamp(1.8rem,4.5vw,3rem);font-weight:700;margin:0 0 10px;line-height:1.1">${esc(name)}</h1>
         <p style="color:${isDark ? 'rgba(238,240,255,.7)' : 'rgba(42,35,24,.6)'};max-width:520px">Built with PallettAI Studio</p>
@@ -236,6 +239,33 @@ body.photo-grade{
     return (section.items && section.items.length ? section.items : defs || []);
   }
 
+  // Signature artwork: deterministic, palette-seeded SVG generated per brand.
+  // Replaces the old `.orb-*` / `.aurora-blob` circles, which were the same three
+  // blurred blobs on every site and one of which carried a hardcoded pink that no
+  // palette could reach. Artwork is part of the design, not a Pro animation extra,
+  // so it is emitted on every hero regardless of installed suites.
+  function signatureBG(p, direction) {
+    if (typeof Signature === 'undefined' || !Signature) return '';
+    const site = (p && p.site) || {};
+    const chosen = (site.signature && typeof site.signature === 'object') ? site.signature : {};
+    const palette = DB.getPalette(site.palette);
+    try {
+      const out = Signature.background({
+        palette: palette,
+        paletteId: palette.id,
+        name: site.name || '',
+        engine: chosen.engine,
+        variation: chosen.variation,
+        intensity: chosen.intensity,
+        direction: direction
+      });
+      return (out && out.html) || '';
+    } catch (err) {
+      // Artwork is decoration; a bad palette must never break a client's site.
+      return '';
+    }
+  }
+
   // ---------------- section renderers ----------------
 
   const contactIndex = (p) => {
@@ -248,8 +278,14 @@ body.photo-grade{
     const hasImg = !!(s.image || '').trim();
     const bg = s.image || '';
     const placeholder = hasImg ? '' : heroPlaceholder(p, s, i);
-    const pro = (p.suites || []).includes('animation');
-    const glow = pro ? '<span class="orb orb-a"></span><span class="orb orb-b"></span>' : '';
+    // Full-bleed placeholder panel for a hero with no image of its own. It is only
+    // drawn for AI drafts, where it is a design-time "photo goes here" hint: on a
+    // finished site it would sit on top of the Signature artwork and repeat the
+    // site name as a second headline, so the artwork is the backdrop instead.
+    const heroBackdrop = hasImg
+      ? `<div class="hero-bg${photoGradeOn(p) ? ' media-grade' : ''}" style="background-image:url('${esc(bg)}');background-size:cover;background-position:center;background-repeat:no-repeat"></div>
+      <div class="hero-shade"></div>`
+      : (isAiDraft(p) ? placeholder : '');
     const desc = s.text || p.site.description;
     const cta2 = `<a class="btn ghost" href="${contactRef(p)}">Get in touch</a>`;
     const cta1 = `<a class="btn solid" href="${esc(safeHref(s.extra || p.site.ctaLink, contactRef(p)))}">${esc(p.site.ctaText || 'Get started')}</a>`;
@@ -259,6 +295,9 @@ body.photo-grade{
     const d = desc ? `<p class="hero-desc">${esc(desc)}</p>` : '';
     const cta = `<div class="hero-cta">${cta1} ${cta2}</div>`;
     const layout = s.layout || p.site.heroLayout || 'centered';
+    // Text sits on the left in split and terminal heroes, so the legibility scrim
+    // falls from the left there and the artwork keeps its right-hand strength.
+    const sig = signatureBG(p, layout === 'split' || layout === 'terminal' ? 'left' : 'both');
     const anim = s.animation === 'none' ? '' : 'reveal';
     const animCss = esc((DB.getAnimation(s.animation) || {}).css || '');
     const scrollHint = `<a class="scroll-hint" href="#sec-${(p.site.sections[1] || p.site.sections[0] || { type: 'features', id: 'x' }).type}-${Math.min(1, Math.max(0, p.site.sections.length - 1))}"><span></span></a>`;
@@ -267,7 +306,7 @@ body.photo-grade{
       const pal = (p.site.palette || 'midnight').replace(/^custom_/, '');
       return `
     <section id="sec-hero-${i}" class="section sec-hero layout-terminal">
-      ${glow}
+      ${sig}
       <div class="container hero-inner term ${anim}" data-anim-css="${animCss}">
         ${badge}${title}${tag}
         <div class="term-window">
@@ -286,7 +325,7 @@ body.photo-grade{
     if (layout === 'split') {
       return `
     <section id="sec-hero-${i}" class="section sec-hero layout-split">
-      ${glow}
+      ${sig}
       <div class="container hero-split">
         <div class="hero-split-body ${anim}" data-anim-css="${animCss}">
           ${badge}${title}${tag}${d}${cta}
@@ -300,7 +339,7 @@ body.photo-grade{
     if (layout === 'minimal') {
       return `
     <section id="sec-hero-${i}" class="section sec-hero layout-minimal">
-      ${glow}
+      ${sig}
       <div class="container hero-inner minimal ${anim}" data-anim-css="${animCss}">
         ${badge}${title}${tag}${d}${cta}
       </div>
@@ -310,7 +349,7 @@ body.photo-grade{
     if (layout === 'aurora') {
       return `
     <section id="sec-hero-${i}" class="section sec-hero layout-aurora">
-      <span class="aurora-blob ab-1"></span><span class="aurora-blob ab-2"></span><span class="aurora-blob ab-3"></span>
+      ${sig}
       <div class="container hero-inner ${anim}" data-anim-css="${animCss}">
         ${badge}${title}${tag}${d}${cta}
       </div>
@@ -319,11 +358,8 @@ body.photo-grade{
     }
     return `
     <section id="sec-hero-${i}" class="section sec-hero layout-centered">
-      ${hasImg
-        ? `<div class="hero-bg${photoGradeOn(p) ? ' media-grade' : ''}" style="background-image:url('${esc(bg)}');background-size:cover;background-position:center;background-repeat:no-repeat"></div>
-      <div class="hero-shade"></div>`
-        : placeholder}
-      ${glow}
+      ${sig}
+      ${heroBackdrop}
       <div class="container hero-inner ${anim}" data-anim-css="${animCss}">
         ${badge}${title}${tag}${d}${cta}
       </div>
@@ -1204,6 +1240,17 @@ body.photo-grade{
   const siteCSS = (p, settings) => {
     const pal = DB.getPalette(p.site.palette);
     const isDark = pal.dark;
+    // Hero copy sits on top of palette-generated artwork, so it has to follow the
+    // palette. These were hardcoded for dark palettes, which made a light-palette
+    // hero render a white headline on a near-white background whenever the theme
+    // toggle was switched off (no body class is applied in that case).
+    const heroH1 = isDark
+      ? 'linear-gradient(120deg,#fff 20%,color-mix(in srgb,var(--accent) 70%,#fff))'
+      : 'linear-gradient(120deg,#14172b 25%,color-mix(in srgb,var(--primary) 60%,#14172b))';
+    const heroShadow = isDark ? '0 20px 60px rgba(0,0,0,.4)' : '0 12px 40px rgba(20,25,60,.14)';
+    const heroTag = isDark ? '#e8eaf2' : '#343a52';
+    const heroDesc = isDark ? 'color-mix(in srgb,#fff 75%,transparent)' : 'var(--muted)';
+    const heroOnArt = isDark ? 'rgba(255,255,255,.4)' : 'color-mix(in srgb,var(--text) 40%,transparent)';
     const f = siteFont(p.site, p.site.font);
     // optional display/heading family (AI Studio design DNA) — falls back to body
     const fd = (p.site.fontDisplay && p.site.fontDisplay !== p.site.font) ? siteFont(p.site, p.site.fontDisplay) : null;
@@ -1332,17 +1379,19 @@ body.theme-dark .hero-tag{color:#e8eaf2}
 .hero-shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.55),rgba(0,0,0,.35) 60%,var(--bg))}
 .sec-hero .container{position:relative;z-index:2}
 .hero-badge{display:inline-block;background:color-mix(in srgb,var(--primary) 25%,transparent);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);padding:7px 18px;border-radius:999px;font-size:.8rem;font-weight:700;letter-spacing:.08em;margin-bottom:22px}
-.sec-hero h1{font-size:calc(clamp(2.6rem,7vw,4.8rem) * var(--typo-scale));line-height:1.05;letter-spacing:-.03em;background:linear-gradient(120deg,#fff 20%,color-mix(in srgb,var(--accent) 70%,#fff));-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:0 20px 60px rgba(0,0,0,.4)}
-.hero-tag{font-size:clamp(1.15rem,2.6vw,1.6rem);color:#e8eaf2;margin-top:14px;font-weight:500}
-.hero-desc{color:color-mix(in srgb,#fff 75%,transparent);max-width:620px;margin:18px auto 0}
+.sec-hero h1{font-size:calc(clamp(2.6rem,7vw,4.8rem) * var(--typo-scale));line-height:1.05;letter-spacing:-.03em;background:${heroH1};-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:${heroShadow}}
+.hero-tag{font-size:clamp(1.15rem,2.6vw,1.6rem);color:${heroTag};margin-top:14px;font-weight:500}
+.hero-desc{color:${heroDesc};max-width:620px;margin:18px auto 0}
 .hero-cta{display:flex;gap:14px;justify-content:center;margin-top:34px;flex-wrap:wrap}
-.sec-hero .btn.ghost{color:#fff;border-color:rgba(255,255,255,.4)}
-.orb{position:absolute;border-radius:50%;filter:blur(90px);opacity:.5;z-index:1}
-.orb-a{width:420px;height:420px;background:var(--primary);top:-120px;left:-120px;animation:drift 14s ease-in-out infinite alternate}
-.orb-b{width:360px;height:360px;background:var(--accent);bottom:-100px;right:-100px;animation:drift 18s ease-in-out infinite alternate-reverse}
-@keyframes drift{to{transform:translate(70px,50px) scale(1.15)}}
-.scroll-hint{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);z-index:3;width:26px;height:42px;border:2px solid rgba(255,255,255,.5);border-radius:14px}
-.scroll-hint span{position:absolute;top:7px;left:50%;width:4px;height:8px;margin-left:-2px;background:#fff;border-radius:4px;animation:wheel 1.6s infinite}
+.sec-hero .btn.ghost{color:var(--text);border-color:${heroOnArt}}
+/* signature artwork (data/signature.js) — palette-bound SVG, drawn once.
+   Replaces the old blurred glow circles, which animated forever and forced a
+   large offscreen rasterisation on every frame. */
+.sig-bg{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+.sig-bg svg{position:absolute;inset:0;width:100%;height:100%;display:block}
+.sig-bg-scrim{position:absolute;inset:0}
+.scroll-hint{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);z-index:3;width:26px;height:42px;border:2px solid ${heroOnArt};border-radius:14px}
+.scroll-hint span{position:absolute;top:7px;left:50%;width:4px;height:8px;margin-left:-2px;background:var(--text);border-radius:4px;animation:wheel 1.6s infinite}
 @keyframes wheel{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(14px)}}
 /* features */
 .feat-icon{width:56px;height:56px;border-radius:16px;display:grid;place-items:center;font-size:1.6rem;background:color-mix(in srgb,var(--primary) 16%,transparent);margin-bottom:18px}
@@ -1654,12 +1703,9 @@ body.theme-dark .hero-tag{color:#e8eaf2}
 .backtop.show{opacity:1;pointer-events:auto}
 .progress{position:fixed;top:0;left:0;height:3px;background:var(--grad);z-index:60;width:0}
 /* --- layout catalog v2 variants --- */
-/* hero: aurora mesh */
-.sec-hero.layout-aurora{min-height:92vh;padding:150px 0 90px;background:color-mix(in srgb,var(--bg) 92%,#05060f)}
-.aurora-blob{position:absolute;border-radius:50%;filter:blur(110px);opacity:.5;z-index:1}
-.aurora-blob.ab-1{width:540px;height:540px;background:var(--primary);top:-170px;left:-150px;animation:drift 16s ease-in-out infinite alternate}
-.aurora-blob.ab-2{width:470px;height:470px;background:var(--accent);bottom:-150px;right:-130px;animation:drift 20s ease-in-out infinite alternate-reverse}
-.aurora-blob.ab-3{width:380px;height:380px;background:#ec4899;top:38%;left:58%;opacity:.28;animation:drift 26s ease-in-out infinite alternate}
+/* hero: aurora — the Signature artwork supplies the backdrop, so this variant
+   is now purely a taller, roomier hero rather than its own colour treatment. */
+.sec-hero.layout-aurora{min-height:92vh;padding:150px 0 90px}
 /* features: strip */
 .strip-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0}
 .strip-col{padding:10px 30px;border-right:1px solid color-mix(in srgb,var(--text) 10%,transparent)}
@@ -1787,6 +1833,10 @@ body.theme-dark .hero-tag{color:#e8eaf2}
   function siteScript() {
     /* runs inside the generated page; CFG injected before this script */
     const CFG = window.__CFG__ || {};
+    // Respect the visitor's motion preference. The stylesheet already switches off
+    // keyframe animation, but the counters, the hero parallax and smooth scrolling
+    // are driven from JS and were still animating for reduced-motion visitors.
+    const REDUCED = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
     const $ = (sel, root) => (root || document).querySelector(sel);
     // All generated-site network calls use one bounded request path so a
     // third-party service cannot leave a form or widget waiting forever.
@@ -1867,6 +1917,8 @@ body.theme-dark .hero-tag{color:#e8eaf2}
     function count(el) {
       const target = parseFloat(el.dataset.count || '0');
       const suffix = el.dataset.suffix || '';
+      // Land on the final value immediately rather than counting up to it.
+      if (REDUCED) { el.textContent = (Number.isInteger(target) ? target : target.toFixed(1)) + suffix; return; }
       const dur = 1400, t0 = performance.now();
       const step = (t) => {
         const k = Math.min(1, (t - t0) / dur);
@@ -1891,9 +1943,9 @@ body.theme-dark .hero-tag{color:#e8eaf2}
       const max = h.scrollHeight - h.clientHeight;
       prog.style.width = (max > 0 ? (h.scrollTop / max) * 100 : 0) + '%';
       backTop.classList.toggle('show', h.scrollTop > 600);
-      if (heroBg && CFG.proAnimations) heroBg.style.transform = 'scale(1.06) translateY(' + Math.min(0, h.scrollTop * 0.25) + 'px)';
+      if (heroBg && CFG.proAnimations && !REDUCED) heroBg.style.transform = 'scale(1.06) translateY(' + Math.min(0, h.scrollTop * 0.25) + 'px)';
     }, { passive: true });
-    backTop.addEventListener('click', () => scrollTo({ top: 0, behavior: 'smooth' }));
+    backTop.addEventListener('click', () => scrollTo({ top: 0, behavior: REDUCED ? 'auto' : 'smooth' }));
 
     // countdown timer
     const cd = $('.countdown');

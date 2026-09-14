@@ -115,6 +115,9 @@ const SMOKES = [
   ['scripts/ai-compose-smoke.js', 'AI compose smoke'],
   ['scripts/palette-lab-smoke.js', 'Palette Lab smoke'],
   ['scripts/briefs-smoke.js', 'Saved briefs smoke'],
+  // Offline and self-contained: guards determinism, palette binding and the size
+  // budgets of the exported artwork.
+  ['scripts/signature-smoke.js', 'Signature artwork smoke'],
   ['scripts/revdiff-smoke.js', 'Revision diff smoke'],
   ['scripts/suites-reviews-events-smoke.js', 'Reviews & Events suites smoke'],
   ['scripts/client-handoff-smoke.js', 'Client handoff editor smoke']
@@ -192,6 +195,9 @@ function checkBuilder() {
     ONLINE = require(path.join(ROOT, 'data', 'online.js'));
     global.DB = DB;
     global.ONLINE = ONLINE;
+    // Generates the hero artwork, so the compiled output here is the same shape
+    // as a real export rather than one with the artwork silently missing.
+    global.Signature = require(path.join(ROOT, 'data', 'signature.js'));
     Builder = require(path.join(ROOT, 'modules', 'builder.js'));
   } catch (e) {
     fail('builder dependencies could not be loaded: ' + e.message);

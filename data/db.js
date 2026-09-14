@@ -576,7 +576,7 @@ const DB = {
   suites: [
     {
       id: 'animation', name: 'Animation Pack', icon: '🪄', tag: 'Motion',
-      desc: 'Unlocks every animation preset plus scroll progress bar, floating hero glow and parallax tilt on cards.',
+      desc: 'Unlocks every entrance animation preset plus the scroll progress bar and hero parallax.',
       sections: [], features: { proAnimations: true }
     },
     {
@@ -1055,7 +1055,7 @@ DB.layouts = [
   // ---- Free tier expansions ----
   {
     id: 'hero-aurora', name: 'Aurora Mesh', icon: '🌌', type: 'hero', tag: 'Pro', tier: 'pro',
-    desc: 'A living gradient-mesh backdrop with drifting light orbs — zero images, maximum mood.',
+    desc: 'A tall, roomy hero over the brand\u2019s own generated artwork — zero images, maximum mood.',
     preset: {
       type: 'hero', layout: 'aurora', animation: 'fade-in',
       title: 'Ideas made luminous',

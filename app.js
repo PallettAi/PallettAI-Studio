@@ -2474,8 +2474,16 @@ const App = (() => {
           </div>
         </div>
         <div class="field"><label>Hero layout</label>
-          <select id="dHero"><option value="centered" ${(s.heroLayout || 'centered') === 'centered' ? 'selected' : ''}>Centered (image bg)</option><option value="split" ${s.heroLayout === 'split' ? 'selected' : ''}>Split (text + image)</option><option value="minimal" ${s.heroLayout === 'minimal' ? 'selected' : ''}>Minimal (clean)</option></select>
+          <select id="dHero"><option value="centered" ${(s.heroLayout || 'centered') === 'centered' ? 'selected' : ''}>Centered (image bg)</option><option value="split" ${s.heroLayout === 'split' ? 'selected' : ''}>Split (text + image)</option><option value="minimal" ${s.heroLayout === 'minimal' ? 'selected' : ''}>Minimal (clean)</option><option value="terminal" ${s.heroLayout === 'terminal' ? 'selected' : ''}>Terminal window</option><option value="aurora" ${s.heroLayout === 'aurora' ? 'selected' : ''}>Aurora (taller, roomier)</option></select>
         </div>
+        <div class="field"><label>Hero artwork</label>
+          <select id="dSigEngine">${(typeof Signature === 'undefined' ? [] : Signature.ENGINES).map((e) => `<option value="${e.id}" ${sigNow(c).engine === e.id ? 'selected' : ''}>${esc(e.name)} — ${esc(e.note)}</option>`).join('')}</select>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn ghost small" id="dSigRoll">${uiIcon('redo')} Reroll artwork</button>
+          <span class="set-desc" id="dSigNote"></span>
+        </div>
+        <div class="set-desc" style="margin-top:2px">Drawn from this project\u2019s palette and seeded by the site name, so it stays the same on every export until you reroll it.</div>
         <div class="set-row"><div><label>Sticky nav</label></div><label class="switch"><input type="checkbox" id="dSticky" ${s.navSticky !== false ? 'checked' : ''}><span class="slider"></span></label></div>
         <div class="set-row"><div><label>Transparent nav</label></div><label class="switch"><input type="checkbox" id="dNavT" ${s.navStyle === 'transparent' ? 'checked' : ''}><span class="slider"></span></label></div>
         <div class="set-row"><div><label>Theme toggle in site</label><div class="set-desc">Visitors can switch dark/light</div></div><label class="switch"><input type="checkbox" id="dTheme" ${s.themeToggle !== false ? 'checked' : ''}><span class="slider"></span></label></div>
@@ -2573,6 +2581,23 @@ const App = (() => {
     bindD('dWidth', 'containerWidth'); bindD('dRadius', 'radius'); bindD('dSpacing', 'spacing');
     const dHero = $('#dHero');
     if (dHero) dHero.onchange = () => { histCapture(); c.site.heroLayout = dHero.value; touch(c); };
+    const dSigEngine = $('#dSigEngine');
+    if (dSigEngine) dSigEngine.onchange = () => {
+      histCapture();
+      c.site.signature = Object.assign({}, c.site.signature, { engine: dSigEngine.value });
+      touch(c);
+      paintSigNote(c);
+    };
+    const dSigRoll = $('#dSigRoll');
+    if (dSigRoll) dSigRoll.onclick = () => {
+      histCapture();
+      const now = Number(c.site.signature && c.site.signature.variation) || 0;
+      c.site.signature = Object.assign({}, c.site.signature, { variation: now + 1 });
+      touch(c);
+      paintSigNote(c);
+      toast('Artwork rerolled \u2728', true);
+    };
+    paintSigNote(c);
     const dSticky = $('#dSticky');
     if (dSticky) dSticky.onchange = () => { histCapture(); c.site.navSticky = dSticky.checked; touch(c); };
     const dNavT = $('#dNavT');
@@ -2731,6 +2756,30 @@ const App = (() => {
     clearTimeout(previewTimer);
     previewTimer = setTimeout(renderPreview, 200);
   }
+  // Signature artwork settings for a project, with the engine default filled in so
+  // the Designer selects always match what the builder will actually draw.
+  function sigNow(c) {
+    const raw = (c && c.site && c.site.signature && typeof c.site.signature === 'object') ? c.site.signature : {};
+    const fallback = (typeof Signature !== 'undefined' && Signature.DEFAULT_ENGINE) || 'signal';
+    return { engine: raw.engine || fallback, variation: Number(raw.variation) || 0 };
+  }
+
+  // Surface the piece's own hash so Reroll has visible feedback — and so the same
+  // hash twice proves the artwork really is deterministic rather than random luck.
+  function paintSigNote(c) {
+    const note = $('#dSigNote');
+    if (!note || !c) return;
+    if (typeof Signature === 'undefined') { note.textContent = ''; return; }
+    const cur = sigNow(c);
+    if (cur.engine === 'none') { note.textContent = 'No artwork on this project'; return; }
+    const pal = DB.getPalette(c.site.palette);
+    const art = Signature.build({
+      palette: pal, paletteId: pal.id, name: c.site.name || '',
+      engine: cur.engine, variation: cur.variation
+    });
+    note.textContent = 'Piece ' + art.hash + ' \u00b7 variation ' + cur.variation;
+  }
+
   function paintSwatches(activeId) {
     $$('[data-pal]').forEach((sw) => { sw.style.borderColor = sw.dataset.pal === activeId ? 'var(--accent)' : 'transparent'; });
     const note = $('#palA11y');
@@ -3840,7 +3889,7 @@ const App = (() => {
         <h4>${esc(s.name)}</h4>
         <p>${esc(s.desc)}</p>
         <div class="suite-features">
-          ${s.features.proAnimations ? '<span>Scroll progress bar</span><span>Hero glow orbs</span><span>Parallax</span>' : ''}
+          ${s.features.proAnimations ? '<span>Scroll progress bar</span><span>Hero parallax</span><span>Entrance presets</span>' : ''}
           ${s.features.contactPro ? '<span>Form validation</span><span>WhatsApp</span><span>Map embed</span>' : ''}
           ${s.features.blog ? '<span>Blog section</span><span>Reading modal</span><span>Newsletter</span>' : ''}
           ${s.features.shop ? '<span>Product grid</span><span>Working cart</span><span>Checkout demo</span>' : ''}

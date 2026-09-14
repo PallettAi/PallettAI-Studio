@@ -4,29 +4,29 @@
 // Bump `version` when you ship. Each entry: version, date, tagline, highlights[].
 // Keep highlights to 3-4 items, written as user-facing wins (not commit logs).
 const RELEASE_NOTES = {
-  version: '0.4.0',
-  date: 'September 12, 2026',
-  tagline: 'Cloud backup, client handoff, and a smarter AI Studio',
+  version: '0.4.1',
+  date: 'September 14, 2026',
+  tagline: 'Every site now draws artwork of its own',
   highlights: [
     {
-      icon: 'cloud',
-      title: 'Cloud project vault',
-      desc: 'Sign in and every project backs itself up — restore on a new machine, merge edits across devices, and delete with confidence. Settings ▸ Cloud backup.'
+      icon: 'swatch',
+      title: 'Your brand, drawn',
+      desc: 'Every hero now carries artwork generated from your own palette — a glowing dial with signal waves, or a print-shop dot field. It is seeded from the brand name, so a site looks identical every time you open or export it, and no two clients get the same piece.'
     },
     {
-      icon: 'swatch',
-      title: 'Palette from any image',
-      desc: 'Drop a client photo or logo into the Database ▸ Palettes and the Color Lab extracts a guaranteed-accessible palette in one click — all offline.'
+      icon: 'eye',
+      title: 'Light palettes read properly',
+      desc: 'Hero headline, tagline, copy and buttons now follow your palette instead of assuming a dark background. Light-palette sites were rendering a white headline on a near-white hero whenever the theme toggle was switched off.'
     },
     {
       icon: 'spark',
-      title: 'Saved client briefs',
-      desc: 'Save any prompt and brief, then reload it in one click for repeat clients and seasonal rebuilds.'
+      title: 'Lighter, smoother pages',
+      desc: 'The old glow circles were 540px blurred elements animating forever. The new artwork is a few KB of flat SVG drawn once — no filters, no animation loop, no per-frame rasterisation, and nothing to download.'
     },
     {
-      icon: 'handoff',
-      title: 'Clients can edit their own site',
-      desc: 'The Client handoff ZIP now includes a built-in content editor — clients click Edit text on their live site, save, and re-upload. No studio required.'
+      icon: 'shield',
+      title: 'Motion preferences respected',
+      desc: 'Sites now honour your visitor\u2019s reduced-motion setting for the number counters, hero parallax and smooth scrolling — not just the CSS animations, which were the only part that switched off before.'
     }
   ]
 };
