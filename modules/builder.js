@@ -1237,6 +1237,68 @@ body.photo-grade{
     return custom ? { name: cssFontName(custom.name), id: '' } : DB.getFont(id);
   };
 
+  // ---------------- motion engine ----------------
+  // Scroll-linked motion shipped as CSS: `animation-timeline` runs on the
+  // compositor, so it is cheaper than the IntersectionObserver it replaces and
+  // keeps working at any page length. Every rule sits behind @supports, and the
+  // reveal base state is *visible*, so a browser without the API gets a correct
+  // static site rather than a blank one. Off by default only when the Animation
+  // Pack suite is absent, so existing projects keep today's behaviour.
+  function motionLevel(p) {
+    const suite = (p.suites || []).includes('animation');
+    const raw = String((p.site && p.site.motion) || 'full');
+    if (!suite || raw === 'off') return 'off';
+    return raw === 'subtle' ? 'subtle' : 'full';
+  }
+  const motionOn = (p) => motionLevel(p) !== 'off';
+
+  function motionCSS(p) {
+    const level = motionLevel(p);
+    if (level === 'off') {
+      // Legacy path: the JS observer adds `.in`, so content may start hidden.
+      return `
+/* reveal animations */
+.reveal{opacity:0;transition:opacity .8s ease,transform .8s cubic-bezier(.2,.7,.2,1)}
+.reveal.in{opacity:1;transform:none !important}`;
+    }
+    const dist = level === 'subtle' ? '14px' : '34px';
+    const heroDist = level === 'subtle' ? '12px' : '18px';
+    const multi = pagesOf(p).length > 1;
+    return `
+/* ============================================================
+   Motion engine — scroll-linked, compositor-only
+   ============================================================ */
+.reveal{opacity:1;transform:none;transition:none}
+/* The hero is already in view at load, so a view() timeline would report
+   progress 1 and never play. It gets a real time-based entrance instead,
+   which also means it still animates in browsers with no timeline support. */
+.sec-hero .reveal{animation:mv-hero-in .8s cubic-bezier(.2,.7,.2,1) both;animation-timeline:auto}
+@keyframes mv-hero-in{from{opacity:0;transform:var(--mv-from,translateY(${heroDist}))}to{opacity:1;transform:none}}
+@supports (animation-timeline: view()){
+  .reveal{animation:mv-in linear both;animation-timeline:view();animation-range:entry 6% cover 34%}
+  @keyframes mv-in{from{opacity:0;transform:var(--mv-from,translateY(${dist}))}to{opacity:1;transform:none}}
+}
+@supports (animation-timeline: scroll()){
+  /* Scroll-progress rail moves to the compositor, so the JS width write stops. */
+  .progress{width:100%;transform:scaleX(0);transform-origin:0 50%;animation:mv-progress linear both;animation-timeline:scroll(root block)}
+  @keyframes mv-progress{to{transform:scaleX(1)}}`
+      + (level === 'full' ? `
+  /* Hero depth: the artwork drifts and the whole hero dissolves as you leave it. */
+  .sec-hero .hero-bg{animation:mv-parallax linear both;animation-timeline:scroll(root block);animation-range:0 70vh}
+  @keyframes mv-parallax{from{transform:scale(1.06) translateY(0)}to{transform:scale(1.14) translateY(-6vh)}}
+  .sec-hero{animation:mv-dissolve linear both;animation-timeline:scroll(root block);animation-range:0 62vh}
+  @keyframes mv-dissolve{from{opacity:1}to{opacity:0}}` : '')
+      + `
+}`
+      + (multi ? `
+/* Cross-document View Transitions: navigating between pages morphs the
+   wordmark instead of hard-cutting. Only the nav mark is named — the footer
+   carries a second .brand, and duplicate names abort the transition. */
+@view-transition{navigation:auto}
+.nav .brand{view-transition-name:mv-brand}
+::view-transition-old(root),::view-transition-new(root){animation-duration:.3s}` : '');
+  }
+
   const siteCSS = (p, settings) => {
     const pal = DB.getPalette(p.site.palette);
     const isDark = pal.dark;
@@ -1352,9 +1414,6 @@ body.theme-dark .hero-tag{color:#e8eaf2}
 .coll-marquee .coll-set{display:flex;gap:20px;padding-right:20px}
 .coll-marquee .coll-item{width:300px}
 @keyframes coll-scroll{to{transform:translateX(-50%)}}
-/* reveal animations */
-.reveal{opacity:0;transition:opacity .8s ease,transform .8s cubic-bezier(.2,.7,.2,1)}
-.reveal.in{opacity:1;transform:none !important}
 /* nav */
 .nav{position:fixed;top:0;left:0;right:0;z-index:50;background:color-mix(in srgb,var(--bg) 72%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid color-mix(in srgb,var(--text) 8%,transparent)}
 .nav-inner{display:flex;align-items:center;gap:24px;height:68px}
@@ -1822,9 +1881,14 @@ body.theme-dark .hero-tag{color:#e8eaf2}
   .hero-cta{flex-direction:column;align-items:center}
   .btn{width:100%;text-align:center}
 }
+${motionCSS(p)}
 @media(prefers-reduced-motion:reduce){
   *{animation:none !important;transition:none !important}
   .reveal{opacity:1 !important;transform:none !important}
+  /* the motion engine gives .progress a scaleX() timeline, so switching
+     animation off would leave the rail stuck at 0 — pin it back to the
+     JS-driven width instead of letting it vanish */
+  .progress{transform:none !important}
   html{scroll-behavior:auto}
 }` + photoGradeCSS(p);
   };
@@ -1837,6 +1901,13 @@ body.theme-dark .hero-tag{color:#e8eaf2}
     // keyframe animation, but the counters, the hero parallax and smooth scrolling
     // are driven from JS and were still animating for reduced-motion visitors.
     const REDUCED = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // Scroll-linked CSS motion: when the browser can drive it from scroll
+    // position the stylesheet owns it (it is compositor-only, unlike the JS
+    // path), so JS must stay out of those properties — otherwise both writers
+    // fight over transform/width. Reduced motion always keeps the JS path so
+    // the progress rail still reflects real scroll instead of freezing at 0.
+    const MV_SCROLL = typeof CSS !== 'undefined' && CSS.supports && CSS.supports('animation-timeline', 'scroll()');
+    const MOTION = !!CFG.motion;
     const $ = (sel, root) => (root || document).querySelector(sel);
     // All generated-site network calls use one bounded request path so a
     // third-party service cannot leave a form or widget waiting forever.
@@ -1895,22 +1966,36 @@ body.theme-dark .hero-tag{color:#e8eaf2}
       }
     }
 
-    // scroll reveal + counters
+    // counters always run through the observer; the reveal half is delegated to
+    // the stylesheet whenever the motion engine is on
     const io = new IntersectionObserver((entries) => {
       entries.forEach((e) => {
         if (!e.isIntersecting) return;
         const el = e.target;
-        el.classList.add('in');
-        // clear the inline pre-animation state so the .in class can win
-        el.style.removeProperty('opacity');
-        el.style.removeProperty('transform');
+        if (!MOTION) {
+          el.classList.add('in');
+          // clear the inline pre-animation state so the .in class can win
+          el.style.removeProperty('opacity');
+          el.style.removeProperty('transform');
+        }
         $$('.stat-num', el).forEach(count);
         io.unobserve(el);
       });
     }, { threshold: 0.15 });
     $$('.reveal').forEach((el) => {
       const css = el.getAttribute('data-anim-css') || '';
-      if (css) { const parts = css.split(';').filter(Boolean); parts.forEach((p) => { const [k, v] = p.split(':'); el.style[k.trim()] = (v || '').trim(); }); }
+      if (css) {
+        const parts = css.split(';').filter(Boolean);
+        if (MOTION) {
+          // hand this section's chosen pre-animation transform to the scroll
+          // timeline as a custom property, so every per-section animation
+          // choice survives the switch from a transition to a timeline
+          const tr = parts.map((x) => x.trim()).filter((x) => /^transform\s*:/.test(x))[0];
+          if (tr) el.style.setProperty('--mv-from', tr.slice(tr.indexOf(':') + 1).trim());
+        } else {
+          parts.forEach((p) => { const [k, v] = p.split(':'); el.style[k.trim()] = (v || '').trim(); });
+        }
+      }
       io.observe(el);
     });
 
@@ -1941,9 +2026,9 @@ body.theme-dark .hero-tag{color:#e8eaf2}
     addEventListener('scroll', () => {
       const h = document.documentElement;
       const max = h.scrollHeight - h.clientHeight;
-      prog.style.width = (max > 0 ? (h.scrollTop / max) * 100 : 0) + '%';
+      if (!MV_SCROLL || REDUCED) prog.style.width = (max > 0 ? (h.scrollTop / max) * 100 : 0) + '%';
       backTop.classList.toggle('show', h.scrollTop > 600);
-      if (heroBg && CFG.proAnimations && !REDUCED) heroBg.style.transform = 'scale(1.06) translateY(' + Math.min(0, h.scrollTop * 0.25) + 'px)';
+      if (heroBg && CFG.proAnimations && !REDUCED && !(MV_SCROLL && MOTION)) heroBg.style.transform = 'scale(1.06) translateY(' + Math.min(0, h.scrollTop * 0.25) + 'px)';
     }, { passive: true });
     backTop.addEventListener('click', () => scrollTo({ top: 0, behavior: REDUCED ? 'auto' : 'smooth' }));
 
@@ -2445,6 +2530,7 @@ body.theme-dark .hero-tag{color:#e8eaf2}
     const pal2 = DB.getPalette(p.site.palette);
     const cfg = {
       proAnimations: (p.suites || []).includes('animation'),
+      motion: motionOn(p),
       projectName: (p.site.name || 'site').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
       darkSite: pal2.dark === true,
       cookieBanner: settings.cookieBanner === true,
@@ -2490,10 +2576,17 @@ body.theme-dark .hero-tag{color:#e8eaf2}
     -->`;
 
     const lang = String((p.site && p.site.lang) || 'en').toLowerCase().replace(/[^a-z-]/g, '') || 'en';
+    // Build stamp: a hash of the project's reviewable content. Every exported
+    // page carries it, so a client comment can be tied to the exact revision it
+    // was written against — that is what makes "is this note still valid?"
+    // answerable instead of a guess. Same content rebuilds to the same stamp.
+    const buildStamp = (typeof Review !== 'undefined' && Review && typeof Review.stampCached === 'function')
+      ? Review.stampCached(pages) : '';
+    const feedbackTo = String((p.site && p.site.email) || '').trim();
     const grade = p.site.photoGrade || {};
     const bodyClass = grade.on ? ('photo-grade' + (grade.blend === 'soft-light' ? ' photo-grade-soft' : '')) : '';
     let html = `<!DOCTYPE html>
-<html lang="${esc(lang)}">
+<html lang="${esc(lang)}"${buildStamp ? ` data-pai-build="${esc(buildStamp)}"` : ''}${feedbackTo ? ` data-pai-feedback="${esc(feedbackTo)}"` : ''}>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2577,7 +2670,18 @@ ${customJs}
       "    '.pai-done-btn{background:#e5e7eb;color:#111827;display:none}' +",
       "    '.pai-hint{background:rgba(17,24,39,.85);color:#f9fafb;border-radius:8px;padding:6px 10px;font:12px system-ui,sans-serif;display:none;max-width:260px}' +",
       "    'body.pai-editing [contenteditable=true]:hover{outline:2px dashed rgba(124,92,255,.65);outline-offset:2px}' +",
-      "    'body.pai-editing [contenteditable=true]:focus{outline:2px solid #7cc0f8;outline-offset:2px}';",
+      "    'body.pai-editing [contenteditable=true]:focus{outline:2px solid #7cc0f8;outline-offset:2px}' +",
+      "    '.pai-pin{position:absolute;top:10px;right:10px;z-index:40;background:#0ea5e9;color:#fff;border:0;border-radius:999px;padding:4px 10px;font:600 12px system-ui,sans-serif;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.25)}' +",
+      "    '.pai-composer{position:fixed;left:50%;transform:translateX(-50%);z-index:2147483001;width:min(460px,92vw);background:#fff;color:#111827;border-radius:14px;padding:12px;box-shadow:0 18px 50px rgba(0,0,0,.32);font:13px system-ui,sans-serif}' +",
+      "    '.pai-composer textarea{width:100%;min-height:84px;box-sizing:border-box;border:1px solid #d1d5db;border-radius:10px;padding:8px;font:13px system-ui,sans-serif;resize:vertical}' +",
+      "    '.pai-composer .pai-row{display:flex;align-items:center;gap:8px;margin-top:8px}' +",
+      "    '.pai-composer .pai-block{display:flex;align-items:center;gap:6px;margin-right:auto;color:#374151}' +",
+      "    '.pai-composer button{border:0;border-radius:8px;padding:7px 12px;font:600 12px system-ui,sans-serif;cursor:pointer}' +",
+      "    '.pai-composer .pai-add{background:#0ea5e9;color:#fff}' +",
+      "    '.pai-composer .pai-cancel{background:#e5e7eb;color:#111827}' +",
+      "    'body.pai-commenting main section[id^=sec-]{cursor:crosshair;outline:2px dashed rgba(14,165,233,.45);outline-offset:-2px}' +",
+      "    'body.pai-commenting main section[id^=sec-]:hover{outline-color:#0ea5e9;outline-style:solid}' +",
+      "    '.pai-count{background:#0ea5e9;color:#fff;border-radius:999px;padding:2px 8px;font:600 12px system-ui,sans-serif}';",
       "  function pick(){",
       "    var els = document.querySelectorAll('main h1, main h2, main h3, main h4, main p, main li, main blockquote, main .sub, main small');",
       "    return Array.prototype.filter.call(els, function(el){",
@@ -2589,6 +2693,7 @@ ${customJs}
       "    });",
       "  }",
       "  function start(){",
+      "    if (reviewing) toggleReview();",
       "    editing = true; document.body.classList.add('pai-editing');",
       "    pick().forEach(function(el){ el.setAttribute('contenteditable','true'); el.spellcheck = false; });",
       "    saveBtn.style.display = 'block'; doneBtn.style.display = 'block'; hint.style.display = 'block'; editBtn.style.display = 'none';",
@@ -2599,8 +2704,7 @@ ${customJs}
       "    saveBtn.style.display = 'none'; doneBtn.style.display = 'none'; hint.style.display = 'none'; editBtn.style.display = 'block';",
       "  }",
       "  function cleanClone(){",
-      "    var root = document.documentElement.cloneNode(true);",
-      "    var kill = ['.pai-bar', 'style[data-pai]', 'script[data-pai]'];",
+      "    var root = document.documentElement.cloneNode(true);",      "  var kill = ['.pai-bar', '.pai-pin', '.pai-composer', 'style[data-pai]', 'script[data-pai]'];",
       "    kill.forEach(function(sel){ var n = root.querySelector(sel); if (n && n.parentNode) n.parentNode.removeChild(n); });",
       "    root.querySelectorAll('[contenteditable]').forEach(function(el){ el.removeAttribute('contenteditable'); el.removeAttribute('spellcheck'); });",
       "    root.querySelectorAll('.pai-editing').forEach(function(el){ el.classList.remove('pai-editing'); });",
@@ -2616,6 +2720,94 @@ ${customJs}
       "    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 4000);",
       "    if (wasEditing) start();",
       "  }",
+      "  /* ---- client review: comment against the build, send the notes back ---- */",
+      "  var BUILD = document.documentElement.getAttribute('data-pai-build') || '';",
+      "  var FEEDBACK = document.documentElement.getAttribute('data-pai-feedback') || '';",
+      "  var RKEY = 'pai_review_' + (BUILD || location.pathname);",
+      "  var reviewing = false;",
+      "  var notes = (function(){ try { return JSON.parse(localStorage.getItem(RKEY) || '[]'); } catch(e){ return []; } })();",
+      "  function persist(){ try { localStorage.setItem(RKEY, JSON.stringify(notes)); } catch(e){} }",
+      "  function pageSlug(){ return ((location.pathname.split('/').pop() || 'index.html').replace(/\\.html$/, '')) || 'index'; }",
+      "  function pageName(){ var h = document.querySelector('main h1'); return ((h && h.textContent) || document.title || 'Page').replace(/\\s+/g,' ').trim().slice(0,120); }",
+      "  function secs(){ return Array.prototype.slice.call(document.querySelectorAll('main section[id^=sec-]')); }",
+      "  function headingOf(sec){ var h = sec.querySelector('h1,h2,h3,h4'); return h ? (h.textContent || '').replace(/\\s+/g,' ').trim().slice(0,160) : ''; }",
+      "  function paint(){",
+      "    secs().forEach(function(sec){",
+      "      var old = sec.querySelector('.pai-pin'); if (old && old.parentNode) old.parentNode.removeChild(old);",
+      "      var mine = notes.filter(function(n){ return n.sectionId === sec.id; });",
+      "      if (!mine.length) return;",
+      "      var pin = document.createElement('button'); pin.className = 'pai-pin'; pin.type = 'button';",
+      "      pin.textContent = '\\ud83d\\udcac ' + mine.length;",
+      "      pin.title = mine.map(function(n, i){ return (i+1) + '. ' + n.text; }).join('\\n\\n');",
+      "      pin.addEventListener('click', function(ev){ ev.stopPropagation();",
+      "        if (!confirm('Remove ' + mine.length + ' note(s) on this section?')) return;",
+      "        notes = notes.filter(function(n){ return n.sectionId !== sec.id; }); persist(); paint(); count(); });",
+      "      sec.appendChild(pin);",
+      "    });",
+      "  }",
+      "  function count(){ if (!cCount) return; cCount.textContent = notes.length ? String(notes.length) : ''; cCount.style.display = notes.length ? 'inline-block' : 'none'; }",
+      "  var composer = null;",
+      "  function closeBox(){ if (composer && composer.parentNode) composer.parentNode.removeChild(composer); composer = null; }",
+      "  function openBox(sec){",
+      "    closeBox();",
+      "    var box = document.createElement('div'); box.className = 'pai-composer';",
+      "    var ta = document.createElement('textarea'); ta.placeholder = 'What should change here?'; ta.setAttribute('aria-label','Review note');",
+      "    var row = document.createElement('div'); row.className = 'pai-row';",
+      "    var lab = document.createElement('label'); lab.className = 'pai-block';",
+      "    var cb = document.createElement('input'); cb.type = 'checkbox';",
+      "    lab.appendChild(cb); lab.appendChild(document.createTextNode(' Blocking'));",
+      "    var add = document.createElement('button'); add.className = 'pai-add'; add.type = 'button'; add.textContent = 'Add note';",
+      "    var cancel = document.createElement('button'); cancel.className = 'pai-cancel'; cancel.type = 'button'; cancel.textContent = 'Cancel';",
+      "    row.appendChild(lab); row.appendChild(cancel); row.appendChild(add);",
+      "    box.appendChild(ta); box.appendChild(row);",
+      "    box.style.top = Math.max(70, Math.min(innerHeight - 230, sec.getBoundingClientRect().top + 20)) + 'px';",
+      "    document.body.appendChild(box); composer = box; ta.focus();",
+      "    cancel.addEventListener('click', closeBox);",
+      "    ta.addEventListener('keydown', function(ev){ if (ev.key === 'Escape') closeBox(); });",
+      "    add.addEventListener('click', function(){",
+      "      var t = (ta.value || '').replace(/\\s+/g,' ').trim(); if (!t) { ta.focus(); return; }",
+      "      notes.push({ id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2,6),",
+      "        sectionId: sec.id, sectionType: (sec.id.split('-')[1] || ''), heading: headingOf(sec),",
+      "        text: t.slice(0,1200), priority: cb.checked ? 'blocker' : 'note', at: new Date().toISOString() });",
+      "      persist(); paint(); count(); closeBox();",
+      "    });",
+      "  }",
+      "  function payload(){",
+      "    return { v: 1, kind: 'pallettai-review', site: (document.title || ''), build: BUILD,",
+      "      at: new Date().toISOString(),",
+      "      pages: [{ name: pageName(), slug: pageSlug(), notes: notes }] };",
+      "  }",
+      "  function saveNotes(){",
+      "    if (!notes.length) return alert('No notes yet — click Comment, then click a section.');",
+      "    var blob = new Blob([JSON.stringify(payload(), null, 2)], { type: 'application/json' });",
+      "    var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = pageSlug() + '-review.json';",
+      "    document.body.appendChild(a); a.click(); a.remove();",
+      "    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 4000);",
+      "  }",
+      "  function emailNotes(){",
+      "    if (!notes.length) return alert('No notes yet — click Comment, then click a section.');",
+      "    var p = payload(); var lines = ['Website feedback for ' + p.site, 'Build: ' + BUILD, ''];",
+      "    p.pages[0].notes.forEach(function(n, i){ lines.push((i+1) + '. ' + (n.priority === 'blocker' ? '[BLOCKING] ' : '') + (n.heading ? 'On \"' + n.heading + '\": ' : '') + n.text); });",
+      "    location.href = 'mailto:' + encodeURIComponent(FEEDBACK) + '?subject=' + encodeURIComponent('Website feedback — ' + p.site) + '&body=' + encodeURIComponent(lines.join('\\n'));",
+      "  }",
+      "  function toggleReview(){",
+      "    reviewing = !reviewing;",
+      "    if (reviewing && editing) stop();",
+      "    if (!reviewing) closeBox();",
+      "    document.body.classList.toggle('pai-commenting', reviewing);",
+      "    cBtn.textContent = reviewing ? '\\ud83d\\udcac Done commenting' : '\\ud83d\\udcac Comment';",
+      "    cSave.style.display = reviewing ? 'inline-block' : 'none';",
+      "    cMail.style.display = reviewing ? 'inline-block' : 'none';",
+      "    if (reviewing) { paint(); count(); } else closeBox();",
+      "  }",
+      "  document.addEventListener('click', function(ev){",
+      "    if (!reviewing) return;",
+      "    var t = ev.target; if (!t || !t.closest) return;",
+      "    if (t.closest('.pai-pin') || t.closest('.pai-composer') || t.closest('.pai-bar')) return;",
+      "    if (t.closest('a,button,input,textarea,select,label')) return;",
+      "    var sec = t.closest('main section[id^=sec-]'); if (!sec) return;",
+      "    ev.preventDefault(); ev.stopPropagation(); openBox(sec);",
+      "  }, true);",
       "  var style = document.createElement('style'); style.setAttribute('data-pai',''); style.textContent = CSS;",
       "  var bar = document.createElement('div'); bar.className = 'pai-bar';",
       "  var hint = document.createElement('span'); hint.className = 'pai-hint'; hint.textContent = 'Click any text to edit it. Save downloads the updated page — upload it to your host to publish.';",
@@ -2625,8 +2817,15 @@ ${customJs}
       "  editBtn.addEventListener('click', start);",
       "  doneBtn.addEventListener('click', function(){ if (confirm('Discard unsaved edits?')) stop(); });",
       "  saveBtn.addEventListener('click', save);",
-      "  bar.appendChild(hint); bar.appendChild(editBtn); bar.appendChild(saveBtn); bar.appendChild(doneBtn);",
-      "  function boot(){ document.body.appendChild(style); document.body.appendChild(bar); }",
+      "  var cBtn = document.createElement('button'); cBtn.className = 'pai-edit-btn'; cBtn.textContent = '\\ud83d\\udcac Comment';",
+      "  var cCount = document.createElement('span'); cCount.className = 'pai-count'; cCount.style.display = 'none';",
+      "  var cSave = document.createElement('button'); cSave.className = 'pai-save-btn'; cSave.textContent = '\\ud83d\\udce5 Send notes'; cSave.style.display = 'none';",
+      "  var cMail = document.createElement('button'); cMail.className = 'pai-done-btn'; cMail.textContent = '\\u2709\\ufe0f Email notes';",
+      "  cBtn.addEventListener('click', toggleReview);",
+      "  cSave.addEventListener('click', saveNotes);",
+      "  cMail.addEventListener('click', emailNotes);",
+      "  bar.appendChild(hint); bar.appendChild(cCount); bar.appendChild(editBtn); bar.appendChild(saveBtn); bar.appendChild(doneBtn); bar.appendChild(cBtn); bar.appendChild(cSave); bar.appendChild(cMail);",
+      "  function boot(){ document.body.appendChild(style); document.body.appendChild(bar); if (notes.length) { paint(); count(); } }",
       "  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();",
       "  window.addEventListener('beforeunload', function(e){ if (editing) { e.preventDefault(); e.returnValue = ''; } });",
       "})();"
@@ -2657,7 +2856,13 @@ ${customJs}
       + '<div class="step"><strong>2.</strong> Click it, then click any heading or paragraph on the page and type your changes.</div>'
       + '<div class="step"><strong>3.</strong> Click <strong>\ud83d\udcbe Save changes</strong> — your browser downloads the updated page file (e.g. <code>index.html</code>).</div>'
       + '<div class="step"><strong>4.</strong> Upload that downloaded file to your hosting (drag-and-drop on Netlify, or your host\'s file manager) to publish.</div>'
-      + '<p style="color:#6b7280">Tip: keep a copy of the original files from this ZIP as a backup. The editor button never appears for your visitors — it only exists in this handoff copy.</p>'
+      + '<h2 style="font-size:1.2rem;margin-top:28px">Want something changed?</h2>'
+      + '<p>Text edits you can do yourself. For anything structural — a new section, different wording, a design change — use the <strong>\u{1F4AC} Comment</strong> button instead, and send the notes back to whoever built the site.</p>'
+      + '<div class="step"><strong>1.</strong> Click <strong>\u{1F4AC} Comment</strong> in the bottom-right corner. Sections become clickable.</div>'
+      + '<div class="step"><strong>2.</strong> Click the part of the page you want changed, write your note, and tick <strong>Blocking</strong> only if the site should not go live until it is fixed.</div>'
+      + '<div class="step"><strong>3.</strong> Click <strong>\u{1F4E5} Send notes</strong> to download them, then email that file back. <strong>\u2709\uFE0F Email notes</strong> opens your mail app with the notes already written out.</div>'
+      + '<p>Your notes are stored in this browser as you go, so you can close the page and come back. They are attached to the exact version of the site you were looking at, which is why the person doing the work can tell straight away whether a note has already been addressed.</p>'
+      + '<p style="color:#6b7280">Tip: keep a copy of the original files from this ZIP as a backup. The editor and comment buttons never appear for your visitors — they only exist in this handoff copy.</p>'
       + '</body></html>';
   }
 

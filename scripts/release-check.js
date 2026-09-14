@@ -118,6 +118,8 @@ const SMOKES = [
   // Offline and self-contained: guards determinism, palette binding and the size
   // budgets of the exported artwork.
   ['scripts/signature-smoke.js', 'Signature artwork smoke'],
+  ['scripts/motion-smoke.js', 'Scroll-linked motion smoke'],
+  ['scripts/review-smoke.js', 'Client review loop smoke'],
   ['scripts/revdiff-smoke.js', 'Revision diff smoke'],
   ['scripts/suites-reviews-events-smoke.js', 'Reviews & Events suites smoke'],
   ['scripts/client-handoff-smoke.js', 'Client handoff editor smoke']

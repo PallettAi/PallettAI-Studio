@@ -1520,6 +1520,8 @@ const App = (() => {
           <button class="btn ghost small" id="btnDiag" title="Site health">${uiIcon('pulse')}</button>
           <button class="btn ghost small" id="btnQuality" title="Quality gate">${uiIcon('shield')}</button>
           <button class="btn ghost small" id="btnCopyHtml" title="Copy HTML">${uiIcon('copy')} Copy</button>
+          <button class="btn ghost small" id="btnReviews" title="Import client feedback">${uiIcon('chat')} Feedback</button>
+          <input type="file" id="reviewFile" accept=".json,application/json" hidden>
           <button class="btn ghost small" id="btnHandoff" title="Client handoff">${uiIcon('gift')} Handoff</button>
           <button class="btn ghost small" id="btnPublish" title="Publish">${uiIcon('globe')} Publish</button>
           <button class="btn primary small" id="btnExport">${uiIcon('download')} Export site</button>
@@ -1534,6 +1536,8 @@ const App = (() => {
         $('#btnQuality').onclick = () => openQualityGate();
         $('#btnExport').onclick = openExportMenu;
         $('#btnCopyHtml').onclick = copyHtml;
+        $('#btnReviews').onclick = () => $('#reviewFile').click();
+        $('#reviewFile').onchange = (e) => { importReviewFile(e.target.files[0]); e.target.value = ''; };
         $('#btnHandoff').onclick = openHandoff;
         $('#btnPublish').onclick = openPublish;
         $('#btnCloseProject').onclick = () => { currentId = null; switchView('dashboard'); };
@@ -2484,6 +2488,14 @@ const App = (() => {
           <span class="set-desc" id="dSigNote"></span>
         </div>
         <div class="set-desc" style="margin-top:2px">Drawn from this project\u2019s palette and seeded by the site name, so it stays the same on every export until you reroll it.</div>
+        <div class="field"><label>Motion</label>
+          <select id="dMotion">
+            <option value="full" ${(s.motion || 'full') === 'full' ? 'selected' : ''}>Scroll-linked \u2014 full</option>
+            <option value="subtle" ${s.motion === 'subtle' ? 'selected' : ''}>Scroll-linked \u2014 subtle</option>
+            <option value="off" ${s.motion === 'off' ? 'selected' : ''}>Off \u2014 instant, no scroll animation</option>
+          </select>
+          <div class="set-desc">Sections rise and fade as they enter; full adds hero parallax and a hero dissolve. Driven by CSS on the compositor rather than a script, so it is cheaper than the old observer \u2014 and it switches itself off for visitors who ask for reduced motion. Needs the \u{1F9D9} Animation Pack suite; multi-page sites also morph the wordmark between pages.</div>
+        </div>
         <div class="set-row"><div><label>Sticky nav</label></div><label class="switch"><input type="checkbox" id="dSticky" ${s.navSticky !== false ? 'checked' : ''}><span class="slider"></span></label></div>
         <div class="set-row"><div><label>Transparent nav</label></div><label class="switch"><input type="checkbox" id="dNavT" ${s.navStyle === 'transparent' ? 'checked' : ''}><span class="slider"></span></label></div>
         <div class="set-row"><div><label>Theme toggle in site</label><div class="set-desc">Visitors can switch dark/light</div></div><label class="switch"><input type="checkbox" id="dTheme" ${s.themeToggle !== false ? 'checked' : ''}><span class="slider"></span></label></div>
@@ -2588,6 +2600,8 @@ const App = (() => {
       touch(c);
       paintSigNote(c);
     };
+    const dMotion = $('#dMotion');
+    if (dMotion) dMotion.onchange = () => { histCapture(); c.site.motion = dMotion.value; touch(c); };
     const dSigRoll = $('#dSigRoll');
     if (dSigRoll) dSigRoll.onclick = () => {
       histCapture();
@@ -3535,6 +3549,80 @@ const App = (() => {
         ${a.checks.map((i) => `<div class="diag-row diag-${esc(i.level)}"><div>${ic(i.level, i.fix)} ${esc(i.msg)}${i.fix ? `<br><small style="color:var(--muted)">Fix: ${esc(i.fix)}</small>` : ''}</div></div>`).join('')}
       </div>
       <div class="set-desc" style="margin-top:12px">🔓 Sites are files, not tenants. “${esc(name || '')}” is plain HTML/CSS/JS — you own it and can host it anywhere. No PallettAI runtime, cookies or account required on the exported site. robots.txt included${c.site.url ? ' + sitemap.xml ✓' : ' — set the Site URL to also receive sitemap.xml'}.</div>`);
+  }
+
+  // ---------------- client review loop ----------------
+  // Feedback that came back from an exported site. The whole value is the build
+  // stamp carried by the export: it answers "do these notes still describe the
+  // site I have open?" instead of leaving the agency to guess — and a note about
+  // a section that no longer exists is kept and flagged, never dropped.
+  function importReviewFile(file) {
+    if (!file) return;
+    const c = current();
+    if (!c) return toast('Open the project this feedback belongs to, then import it');
+    if (typeof Review === 'undefined') return toast('Review module not loaded', false);
+    const rd = new FileReader();
+    rd.onload = () => {
+      const parsed = Review.parse(String(rd.result));
+      if (!parsed.ok) return toast(parsed.error, false);
+      openReviewPanel(parsed.review, c);
+    };
+    rd.onerror = () => toast('Could not read that file', false);
+    rd.readAsText(file);
+  }
+
+  function openReviewPanel(review, project) {
+    const pages = Builder.pages(project);
+    const attached = Review.attach(review, pages);
+    const live = Review.stamp(pages);
+    const state = Review.staleness(review, live);
+    const sum = Review.summarize(review);
+    const banner = state === 'current'
+      ? '<p style="background:rgba(16,185,129,.12);border-left:3px solid #10b981;padding:10px 12px;border-radius:8px;margin:0 0 10px">\u2713 Written against the current build (<b>' + esc(review.build) + '</b>) \u2014 every note still applies.</p>'
+      : state === 'stale'
+        ? '<p style="background:rgba(245,158,11,.14);border-left:3px solid #f59e0b;padding:10px 12px;border-radius:8px;margin:0 0 10px">Written against build <b>' + esc(review.build) + '</b>, but the project is now at <b>' + esc(live) + '</b>. The notes describe what the client actually saw \u2014 re-check each one before acting.</p>'
+        : '<p style="background:rgba(245,158,11,.14);border-left:3px solid #f59e0b;padding:10px 12px;border-radius:8px;margin:0 0 10px">No build stamp on this file, so it cannot be matched to a revision. Notes are listed exactly as written.</p>';
+    const rows = attached.map((a) => {
+      const chip = a.note.priority === 'blocker'
+        ? '<span style="background:#ef4444;color:#fff;border-radius:99px;padding:2px 9px;font-size:.7rem;font-weight:700">Blocking</span>'
+        : '<span style="background:rgba(127,127,127,.2);border-radius:99px;padding:2px 9px;font-size:.7rem;font-weight:700">Note</span>';
+      return '<div style="border:1px solid rgba(127,127,127,.22);border-radius:10px;padding:10px 12px;margin-bottom:8px' + (a.found ? '' : ';opacity:.75') + '">'
+        + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px">' + chip
+        + '<b>' + esc(a.heading || a.sectionType || 'Section') + '</b>'
+        + '<span style="color:var(--muted);font-size:.75rem">' + esc(a.pageSlug) + (a.found ? ' \u00b7 section ' + (a.sectionIndex + 1) : ' \u00b7 section removed') + '</span></div>'
+        + '<div style="margin-bottom:6px">' + esc(a.note.text) + '</div>'
+        + (a.found
+          ? '<button class="btn ghost small" data-goto-sec="' + a.sectionIndex + '">Show section</button>'
+          : '<span style="color:var(--muted);font-size:.75rem">This section no longer exists in the project \u2014 the note is kept so nothing is silently lost.</span>')
+        + '</div>';
+    }).join('');
+    openModal('Client feedback',
+      banner
+      + '<p style="color:var(--muted);margin:0 0 12px">' + sum.total + ' note' + (sum.total === 1 ? '' : 's')
+      + (sum.blockers ? ' \u00b7 <b>' + sum.blockers + ' blocking</b>' : '')
+      + ' across ' + sum.pages.length + ' page' + (sum.pages.length === 1 ? '' : 's')
+      + (review.site ? ' \u00b7 ' + esc(review.site) : '') + '</p>'
+      + rows
+      + '<div style="display:flex;gap:8px;margin-top:12px">'
+      + '<button class="btn ghost small" id="revCopy">Copy as text</button>'
+      + '<button class="btn ghost small" id="revClose">Close</button></div>');
+    $$('[data-goto-sec]').forEach((b) => { b.onclick = () => {
+      closeModal();
+      selectedSec = +b.dataset.gotoSec;
+      renderSecList();
+      renderEditor();
+      const card = $('#secList [data-sec="' + selectedSec + '"]');
+      if (card && card.scrollIntoView) card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      toast('Jumped to that section');
+    }; });
+    const rClose = $('#revClose'); if (rClose) rClose.onclick = closeModal;
+    const rCopy = $('#revCopy');
+    if (rCopy) rCopy.onclick = () => {
+      const text = Review.toPlainText(review);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => toast('Feedback copied \ud83d\udccb', true), () => toast('Could not copy', false));
+      } else toast('Clipboard unavailable', false);
+    };
   }
 
   // ---------------- client handoff (ZIP) ----------------
