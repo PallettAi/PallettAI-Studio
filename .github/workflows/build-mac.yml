@@ -43,6 +43,16 @@ jobs:
             exit 1
           }
 
+      # A tag is a promise that the release is documented. The check above only
+      # compares two numbers; this one refuses to spend ten minutes of signing
+      # time publishing a version that the changelog does not mention, and
+      # catches a What's New registry that has drifted from package.json. It
+      # reads the public changelog, so it needs no token and no checkout.
+      - name: Guard the release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: node scripts/release-guard.js --tag "$GITHUB_REF_NAME"
+
       - name: Validate the credentials a tagged release needs
         if: startsWith(github.ref, 'refs/tags/')
         env:

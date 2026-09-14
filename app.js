@@ -3562,13 +3562,16 @@ const App = (() => {
     toast(`Site exported — ${a.download} ⬇`, true);
     showExportReport(c, [{ name: a.download, content: html }], a.download);
   }
-  function downloadSiteZip(c) {
-    const files = exportFileList(c);
+  async function downloadSiteZip(c) {
+    let files;
+    try { files = await deliveryFiles(c); }
+    catch (e) { files = exportFileList(c); }
     const pages = files.filter((f) => f.name.endsWith('.html'));
     let name;
     try { name = ZIP.downloadZip(siteSlug(c) + '-site.zip', files); }
     catch (e) { return toast(e && e.message ? e.message : 'The site could not be exported. Remove some assets and try again.', false); }
-    toast(`Site exported — ${pages.length} page${pages.length === 1 ? '' : 's'} (+SEO files) in ${name} ⬇`, true);
+    const extras = files.length - pages.length;
+    toast(`Site exported — ${pages.length} page${pages.length === 1 ? '' : 's'} + ${extras} supporting file${extras === 1 ? '' : 's'} in ${name} ⬇`, true);
     showExportReport(c, files, name);
   }
   function copyHtml() {
@@ -3583,6 +3586,81 @@ const App = (() => {
   // Page file list including robots.txt / sitemap.xml (the latter needs a live URL).
   function exportFileList(c) {
     return [...sitePageFiles(c).map((f) => ({ name: f.slug + '.html', content: f.html })), ...Builder.seoExtras(c, exportSettings())];
+  }
+
+  function appVersion() {
+    try { return (typeof RELEASE_NOTES !== 'undefined' && RELEASE_NOTES.version) || '0.0.0'; } catch (e) { return '0.0.0'; }
+  }
+
+  // Every measurement the delivery report and the manifest quote. Each module
+  // is optional: an export must never fail because an enhancement is missing.
+  async function deliveryAudits(c, files) {
+    const out = {};
+    const pages = sitePageFiles(c);
+    try {
+      if (typeof Perf !== 'undefined') {
+        const rep = await Perf.measure(c.site.name || c.name || '', pages, {});
+        out.performance = { score: rep.grade.score, letter: rep.grade.letter, pages: rep.grade.pages, totals: rep.totals };
+      }
+    } catch (e) { /* left unmeasured rather than reported as a failure */ }
+    try { if (typeof Focus !== 'undefined') out.keyboard = Focus.audit(pages); } catch (e) { /* optional */ }
+    try { if (typeof Links !== 'undefined') out.links = Links.audit(pages, files); } catch (e) { /* optional */ }
+    try { if (typeof Images !== 'undefined') out.images = Images.audit(pages); } catch (e) { /* optional */ }
+    try { if (typeof Readability !== 'undefined') out.copy = Readability.grade(c); } catch (e) { /* optional */ }
+    return out;
+  }
+
+  // Everything that travels with an exported site beyond its pages: social
+  // cards, the design system, a 404 and the host policy files, the delivery
+  // report, and the manifest that makes the whole thing verifiable.
+  //
+  // The manifest is written LAST and covers every file built before it. It
+  // cannot contain its own hash, so it is the one file it does not list.
+  async function deliveryFiles(c) {
+    const files = exportFileList(c);
+    const settings = exportSettings();
+
+    try {
+      if (typeof OgCard !== 'undefined') {
+        OgCard.files(c, sitePageFiles(c)).forEach((f) => files.push({ name: f.name, content: f.content }));
+      }
+    } catch (e) { /* optional */ }
+    try {
+      if (typeof Tokens !== 'undefined') Tokens.files(c).forEach((f) => files.push({ name: f.name, content: f.content }));
+    } catch (e) { /* optional */ }
+    try {
+      if (typeof NotFound !== 'undefined') {
+        NotFound.files(c, (p, s) => Builder.buildSiteHTML(p, s), { settings: settings })
+          .forEach((f) => files.push({ name: f.name, content: f.content }));
+      }
+    } catch (e) { /* optional */ }
+
+    const audits = await deliveryAudits(c, files);
+
+    try {
+      if (typeof Proof !== 'undefined') {
+        const grade = Proof.grade(audits);
+        files.push({
+          name: 'delivery-report.html',
+          content: Proof.html({
+            project: c, audits: audits, grade: grade,
+            version: appVersion(), generatedAt: new Date().toISOString()
+          })
+        });
+      }
+    } catch (e) { /* optional */ }
+
+    try {
+      if (typeof Manifest !== 'undefined' && Manifest.hashingAvailable()) {
+        const art = await Manifest.build({
+          project: c, version: appVersion(), files: files,
+          scores: audits, generatedAt: new Date().toISOString()
+        });
+        files.push(Manifest.fileOf(art));
+      }
+    } catch (e) { /* optional */ }
+
+    return files;
   }
 
   // ---------- export report & SEO / performance / accessibility audit ----------
@@ -4222,10 +4300,12 @@ const App = (() => {
     }
     return ok;
   }
-  function publishFiles(c) {
-    // Every page as {name (file), content (html)} — index.html guaranteed by the page model.
-    // robots.txt + sitemap.xml ride along (sitemap needs the site URL set).
-    return [...sitePageFiles(c).map((f) => ({ name: f.slug + '.html', content: f.html })), ...Builder.seoExtras(c, exportSettings())];
+  // Every page as {name (file), content (html)} — index.html guaranteed by the
+  // page model — plus everything else that ships. This is deliberately the
+  // SAME assembler the download export uses, so a published site and a zipped
+  // one cannot drift apart: whatever the manifest records is what went live.
+  async function publishFiles(c) {
+    return deliveryFiles(c);
   }
   async function netlifyDeploy(c, token) {
     const sub = (siteSlug(c) + '-' + Math.random().toString(36).slice(2, 6)).replace(/[^a-z0-9-]/g, '').slice(0, 40) || 'palletai-site';
@@ -4236,7 +4316,7 @@ const App = (() => {
     });
     const site = await mk.json().catch(() => ({}));
     if (!mk.ok) throw new Error((site && site.message) || 'Netlify could not create the site (' + mk.status + ')' + (site && site.error ? ': ' + site.error : ''));
-    const zip = ZIP.zipFiles(publishFiles(c));
+    const zip = ZIP.zipFiles(await publishFiles(c));
     const up = await ONLINE.request('https://api.netlify.com/api/v1/sites/' + site.id + '/deploys', {
       method: 'PUT',
       headers: {
@@ -4297,7 +4377,7 @@ const App = (() => {
   }
   async function vercelDeploy(c, token, projectName) {
     if (typeof Publish === 'undefined') throw new Error('Publish module not loaded');
-    const files = publishFiles(c);
+    const files = await publishFiles(c);
     const body = Publish.vercelBody(c.site.name || c.name, projectName || siteSlug(c), files);
     const res = await ONLINE.request('https://api.vercel.com/v13/deployments', {
       method: 'POST',
@@ -4336,7 +4416,7 @@ const App = (() => {
     if (typeof Publish === 'undefined') throw new Error('Publish module not loaded');
     const name = Publish.slug(projectName || siteSlug(c));
     const auth = { 'Authorization': 'Bearer ' + token };
-    const files = publishFiles(c);
+    const files = await publishFiles(c);
 
     const mkRes = await ONLINE.request(Publish.cfProjectUrl(accountId, name), {
       method: 'POST',
@@ -4487,7 +4567,7 @@ const App = (() => {
       try {
         let key = savedKey;
         if (!key || pass) key = await neocitiesKey(user, pass);
-        const r = await neocitiesUpload(user, key, publishFiles(c));
+        const r = await neocitiesUpload(user, key, await publishFiles(c));
         const v = await loadPublish(); v.neocitiesUser = user; v.neocitiesKey = key; v.neocitiesUrl = r.url; await savePublish(v);
         showLive(r);
         toast('Published to Neocities 🎉', true);
@@ -4505,13 +4585,14 @@ const App = (() => {
     if (forgetCf) forgetCf.onclick = async () => { const v = await loadPublish(); delete v.cloudflareToken; delete v.cloudflareUrl; await savePublish(v); toast('Cloudflare token forgotten'); openPublish({ skipQuality: true }); };
 
     const cfZip = $('#pubCfZip');
-    if (cfZip) cfZip.onclick = () => {
+    if (cfZip) cfZip.onclick = async () => {
       // The dashboard's drag-and-drop upload is the officially supported way to
       // deploy a prebuilt folder without a CLI, so it stays available as the
       // fallback if the API path is rejected for any reason.
       try {
         const name = typeof Publish !== 'undefined' ? Publish.deployFileName(c.site.name || c.name) : siteSlug(c) + '-deploy.zip';
-        ZIP.downloadZip(name, publishFiles(c));
+        const files = await publishFiles(c);
+        ZIP.downloadZip(name, files);
         const dash = typeof Publish !== 'undefined' ? Publish.cfDashboardUrl() : 'https://dash.cloudflare.com/';
         const box = $('#pubResult');
         box.style.display = '';

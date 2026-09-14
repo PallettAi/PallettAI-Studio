@@ -132,7 +132,15 @@ body.photo-grade{
         if (i !== -1) return pageHref(pg) + '#sec-contact-' + i;
       }
     }
-    return '#sec-contact-' + contactIndex(p);
+    // Nothing on the site is a contact section. The previous fallback asked
+    // contactIndex() for `sec-contact-<n>`, but with no contact section that
+    // index names a DIFFERENT section's id (`sec-gallery-1` and so on), so the
+    // nav item was a link that silently did nothing — a dead end on the one
+    // link a prospect is most likely to click. Fall back to a route that
+    // resolves: the site's own email, else the top of the page.
+    const mail = String((p.site && p.site.email) || '').trim();
+    if (mail) return mail.indexOf('@') !== -1 ? 'mailto:' + mail : '#top';
+    return '#top';
   }
 
   // ---------------- form delivery ----------------
@@ -267,12 +275,6 @@ body.photo-grade{
   }
 
   // ---------------- section renderers ----------------
-
-  const contactIndex = (p) => {
-    let idx = Math.max(0, p.site.sections.length - 1);
-    p.site.sections.forEach((s, i) => { if (s.type === 'contact') idx = i; });
-    return idx;
-  };
 
   function renderHero(p, s, i) {
     const hasImg = !!(s.image || '').trim();
@@ -1083,7 +1085,14 @@ body.photo-grade{
       // multi-page sites navigate between pages
       _ctx.pages.forEach((pg) => {
         const here = pg === page;
-        links.push(`<a href="${here ? '#top' : pageHref(pg)}"${here ? '' : ' class="page-link" data-page="' + esc(pg.id) + '"'}>${esc(pg.name)}</a>`);
+        // The current page says so. A keyboard or screen-reader visitor is
+        // otherwise told nothing about where in the site they have landed,
+        // because the self-link points at `#top` like every other page's link
+        // points at its neighbour. Added here rather than in a post-process:
+        // this is the only place that knows which page is being rendered.
+        links.push(`<a href="${here ? '#top' : pageHref(pg)}"${here
+          ? ' aria-current="page"'
+          : ' class="page-link" data-page="' + esc(pg.id) + '"'}>${esc(pg.name)}</a>`);
       });
     } else {
       const seen = {};
@@ -1382,10 +1391,10 @@ body.theme-dark .hero-tag{color:#e8eaf2}
 .coll-chip.active{background:var(--grad);border-color:transparent;color:#fff;font-weight:700}
 .coll-tools{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .coll-search{position:relative}
-.coll-search input{background:var(--surface);border:1px solid color-mix(in srgb,var(--text) 16%,transparent);border-radius:999px;padding:8px 14px 8px 32px;color:var(--text);font:inherit;font-size:.85rem;min-width:190px;outline:none}
+.coll-search input{background:var(--surface);border:1px solid color-mix(in srgb,var(--text) 16%,transparent);border-radius:999px;padding:8px 14px 8px 32px;color:var(--text);font:inherit;font-size:.85rem;min-width:190px}
 .coll-search input:focus{border-color:var(--primary)}
 .coll-search:before{content:'🔍';position:absolute;left:10px;top:50%;transform:translateY(-52%);font-size:.75rem;opacity:.7}
-.coll-sort select{background:var(--surface);border:1px solid color-mix(in srgb,var(--text) 16%,transparent);border-radius:999px;padding:8px 12px;color:var(--text);font:inherit;font-size:.85rem;outline:none;cursor:pointer}
+.coll-sort select{background:var(--surface);border:1px solid color-mix(in srgb,var(--text) 16%,transparent);border-radius:999px;padding:8px 12px;color:var(--text);font:inherit;font-size:.85rem;cursor:pointer}
 .coll-count{color:var(--muted);font-size:.82rem;margin-left:2px}
 .coll-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:24px}
 .coll-item{position:relative;display:flex;flex-direction:column;background:var(--surface);border:1px solid color-mix(in srgb,var(--text) 9%,transparent);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);transition:transform .25s,box-shadow .25s}
@@ -1573,7 +1582,7 @@ body.theme-dark .hero-tag{color:#e8eaf2}
 .wa{margin-top:18px}
 .contact-form{display:grid;gap:14px}
 .contact-form input,.contact-form textarea{background:color-mix(in srgb,var(--text) 6%,transparent);border:1px solid color-mix(in srgb,var(--text) 12%,transparent);border-radius:12px;padding:14px 16px;font-family:var(--font);color:var(--text);font-size:.95rem;transition:.2s}
-.contact-form input:focus,.contact-form textarea:focus{outline:none;border-color:var(--primary)}
+.contact-form input:focus-visible,.contact-form textarea:focus-visible{border-color:var(--primary)}
 .form-note{color:var(--muted);font-size:.82rem;text-align:center}
 .map{width:100%;height:300px;border:0;border-radius:var(--radius);margin-top:40px;filter:saturate(.9)}
 /* cta */
@@ -2489,9 +2498,25 @@ ${motionCSS(p)}
     const font = siteFont(p.site, p.site.font);
     const dispFont = (p.site.fontDisplay && p.site.fontDisplay !== p.site.font) ? siteFont(p.site, p.site.fontDisplay) : null;
     const metaDesc = p.site.metaDescription || p.site.tagline || '';
-    const ogImg = p.site.ogImage ? `<meta property="og:image" content="${esc(p.site.ogImage)}">` : '';
     const favicon = faviconLink(p);
     const liveUrl = String(p.site.url || '').trim().replace(/\/+$/, '');
+
+    // A share image for every page. A chosen ogImage still wins, but the
+    // default is a card generated from this project's own palette — without
+    // one, a shared link unfurls as a bare title and looks unfinished. The
+    // card only exists once the export ships (see OgCard), and a crawler needs
+    // an absolute URL, so this needs the site URL to be set.
+    const ogSlug = (() => {
+      const og = optionalModule('OgCard');
+      const raw = (page && (page.slug || page.name)) || 'index';
+      return og && og.slugify ? og.slugify(raw) : String(raw).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    })();
+    const cardUrl = (liveUrl && settings.exportMeta !== false) ? liveUrl + '/og/' + (ogSlug || 'index') + '.svg' : '';
+    const shareImage = String(p.site.ogImage || '').trim() || cardUrl;
+    const ogImg = shareImage
+      ? `<meta property="og:image" content="${esc(shareImage)}">\n    <meta name="twitter:card" content="summary_large_image">\n    <meta name="twitter:image" content="${esc(shareImage)}">`
+        + (p.site.ogImage ? '' : '\n    <meta property="og:image:width" content="1200">\n    <meta property="og:image:height" content="630">')
+      : '';
     const slugSeg = (pg) => { const sl = String(pg.slug || '').trim() || slugify(pg.name || 'page'); return sl === 'index' ? '' : sl + '.html'; };
     const canonical = liveUrl
       ? `<link rel="canonical" href="${esc(liveUrl + '/' + slugSeg(page))}">\n    <meta property="og:url" content="${esc(liveUrl + '/' + slugSeg(page))}">`
@@ -2632,10 +2657,52 @@ ${customJs}
       if (!/\bdecoding=/i.test(out)) out = out.replace(/^<img\b/i, '<img decoding="async"');
       return out;
     });
+
+    // Responsive images, applied after the loading pass so it can see the
+    // final tag. Only hosts that document a resize parameter get a srcset —
+    // the module never invents a URL, so an unrecognised image is left alone
+    // rather than pointed at a candidate that may not exist.
+    const imgMod = optionalModule('Images');
+    if (imgMod) {
+      html = html.replace(/<img\b[^>]*>/gi, (tag) => imgMod.decorate(tag, imageKind(tag)));
+    }
+
+    // Keyboard pass: skip link, a labelled <main> to jump to, and a focus ring
+    // the site's own stylesheet cannot remove. Runs on the finished document
+    // because the skip link has to be the first thing inside <body>.
+    const focusMod = optionalModule('Focus');
+    if (focusMod) html = focusMod.pass(html, { slug: (page && page.slug) || 'index' });
+
     if (settings.minify) {
       html = html.split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
     }
     return html;
+  }
+
+  // Which layout role an <img> plays, so `sizes` describes the box the tag
+  // will actually occupy. Read from the classes and inline styles the
+  // renderers already emit, rather than from a second source of truth.
+  function imageKind(tag) {
+    if (/class=["'][^"']*\bhero-img\b/i.test(tag)) return 'hero';
+    if (/class=["'][^"']*\b(sec-emblem|brand-mark)\b/i.test(tag)) return 'icon';
+    if (/\bpravatar|\bavatar/i.test(tag)) return 'avatar';
+    if (/aspect-ratio:1\/1/.test(tag)) return 'third';
+    if (/aspect-ratio:4\/3/.test(tag)) return 'half';
+    return 'full';
+  }
+
+  // Optional collaborators. In the browser these are script-scope constants
+  // loaded before this module; the Node smoke harness assigns them to
+  // globalThis. `typeof` on a script-scope const throws while it is still in
+  // its temporal dead zone, so the lookup is guarded rather than assumed — an
+  // export must never fail because an enhancement is absent.
+  function optionalModule(name) {
+    try {
+      if (name === 'Images' && typeof Images !== 'undefined') return Images;
+      if (name === 'Focus' && typeof Focus !== 'undefined') return Focus;
+      if (name === 'OgCard' && typeof OgCard !== 'undefined') return OgCard;
+    } catch (e) { /* not loaded in this environment */ }
+    return null;
   }
 
   // ---------------- public page builders ----------------

@@ -127,7 +127,12 @@ const SMOKES = [
   ['scripts/release-notes-smoke.js', 'What\u2019s New registry smoke'],
   ['scripts/revdiff-smoke.js', 'Revision diff smoke'],
   ['scripts/suites-reviews-events-smoke.js', 'Reviews & Events suites smoke'],
-  ['scripts/client-handoff-smoke.js', 'Client handoff editor smoke']
+  ['scripts/client-handoff-smoke.js', 'Client handoff editor smoke'],
+  // Two themed suites rather than one file per module: these modules are
+  // cross-cutting changes to the artefact the client receives, and their
+  // failures are shared — a builder that emits a broken tag breaks all of them.
+  ['scripts/export-polish-smoke.js', 'Export polish smoke (images, focus, cards, 404)'],
+  ['scripts/delivery-proof-smoke.js', 'Delivery proof smoke (copy, links, tokens, manifest)']
 ];
 
 function runScript(args, label) {
@@ -268,6 +273,7 @@ function checkBuilder() {
   runScript(['scripts/modal-focus-smoke.js'], 'Modal focus smoke');
   runScript(['scripts/studio-chrome-smoke.js'], 'Studio chrome smoke');
   runScript(['scripts/chrome-registry-smoke.js'], 'Chrome registry smoke');
+  runScript(['scripts/release-guard-smoke.js'], 'Release guard smoke');
   runScript(['scripts/review-reward-smoke.js'], 'Review reward smoke');
   runScript(['scripts/ai-studio-upgrade-smoke.js'], 'AI Studio upgrade smoke');
   await runSmokeSuites();
