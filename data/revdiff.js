@@ -128,10 +128,11 @@ const RevDiff = (() => {
     const sectionReports = [];
     for (let i = 0; i < max; i++) {
       const a = A.sections[i], b = B.sections[i];
-      if (a && !b) { sectionReports.push({ index: i, kind: 'removed', label: sectionLabel(a), changes: [] }); continue; }
-      if (!a && b) { sectionReports.push({ index: i, kind: 'added', label: sectionLabel(b), changes: [] }); continue; }
+      const who = (x) => ({ label: sectionLabel(x), title: (x && x.title) || '' });
+      if (a && !b) { sectionReports.push(Object.assign({ index: i, kind: 'removed', changes: [] }, who(a))); continue; }
+      if (!a && b) { sectionReports.push(Object.assign({ index: i, kind: 'added', changes: [] }, who(b))); continue; }
       const ch = sectionChanges(a, b);
-      if (ch.length) sectionReports.push({ index: i, kind: 'edited', label: sectionLabel(b), changes: ch });
+      if (ch.length) sectionReports.push(Object.assign({ index: i, kind: 'edited', changes: ch }, who(b)));
     }
 
     return {

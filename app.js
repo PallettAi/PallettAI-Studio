@@ -844,6 +844,94 @@ const App = (() => {
       </div>`);
   }
 
+  // ---------------- performance as proof ----------------
+  // Measured from the exact export the creator is about to publish, so the
+  // numbers are evidence rather than a score model. Raw byte counts are exact
+  // and synchronous; the transfer size needs a real deflate pass, which is async
+  // in the browser, so the gate renders straight away and the transfer figures
+  // are patched into place when they land. Keyed by build stamp, so reopening
+  // the gate on an unchanged project costs nothing.
+  let perfCache = { key: '', report: null, pending: '' };
+
+  function perfPages(p) {
+    try {
+      return Builder.buildSitePages(p, exportSettings()).map((e) => ({
+        name: (e.page && e.page.name) || 'Untitled',
+        slug: (e.page && e.page.slug) || '',
+        html: e.html
+      }));
+    } catch (e) { return []; }
+  }
+
+  function perfKey(p) {
+    let stamp = '';
+    try { if (typeof Review !== 'undefined' && Review.stampCached) stamp = Review.stampCached(Builder.pages(p)); } catch (e) { stamp = ''; }
+    return String((p && p.id) || '') + ':' + stamp;
+  }
+
+  function perfReport(p) {
+    return (perfCache.key && perfCache.key === perfKey(p)) ? perfCache.report : null;
+  }
+
+  function perfRows(report) {
+    const out = [];
+    ((report.grade && report.grade.pages) || []).forEach((pg) => {
+      (pg.findings || []).forEach((f) => out.push(Object.assign({}, f, { page: pg.name })));
+    });
+    return out;
+  }
+
+  function perfHtml(p) {
+    if (typeof Perf === 'undefined') return '';
+    const report = perfReport(p);
+    if (!report) return '<div class="perf-block" id="perfBlock"><p class="perf-pending">Measuring the export\u2026</p></div>';
+    const g = report.grade;
+    const multi = (report.pages || []).length > 1;
+    const rows = perfRows(report).map((f) => `
+      <div class="quality-issue diag-row diag-${esc(f.level)}">
+        <div class="quality-issue-main"><span>${qualityIcon(f.level)}</span><div><b>${esc(f.msg)}</b>${f.fix ? `<small>${esc(f.fix)}</small>` : ''}${multi ? `<small>${esc(f.page)} page</small>` : ''}</div></div>
+      </div>`).join('');
+    const wire = (report.measured && report.totals.gzip != null) ? Perf.KB(report.totals.gzip) : '\u2014';
+    return `<div class="perf-block" id="perfBlock">
+      <div class="perf-head">
+        <div class="quality-score" style="--quality-color:${qualityColor(g.letter)}"><strong>${esc(g.letter)}</strong><span>${g.score}/100</span></div>
+        <div class="perf-title"><h4>Performance</h4><p>${esc(Perf.summary(report))}</p></div>
+      </div>
+      <div class="quality-metrics">
+        <span><b>${report.pages.length}</b> page${report.pages.length === 1 ? '' : 's'}</span>
+        <span><b>${esc(Perf.KB(report.totals.raw))}</b> uncompressed</span>
+        <span><b>${esc(wire)}</b> over the wire</span>
+        <span><b>${report.totals.requests}</b> external request${report.totals.requests === 1 ? '' : 's'}</span>
+      </div>
+      ${rows || '<div class="quality-clear">\u2713 Every page is inside the budgets \u2014 measured, not estimated.</div>'}
+      <p class="quality-note" style="margin-top:10px">Budget ${esc(report.budgetLabel)}. ${report.measured
+        ? 'Transfer size is a real ' + esc(report.method) + ' pass over each exported file \u2014 one file per page, because styles and scripts are inline, so that single number is the page weight.'
+        : 'No compressor is available in this browser, so only uncompressed sizes are shown.'}</p>
+    </div>`;
+  }
+
+  function patchPerfBlock(p) {
+    const block = $('#perfBlock');
+    if (!block) return;
+    if (!(qualityTarget && p && qualityTarget.id === p.id)) return;
+    block.outerHTML = perfHtml(p);
+  }
+
+  function schedulePerf(p) {
+    if (typeof Perf === 'undefined' || !p) return;
+    if (perfReport(p)) return;
+    const key = perfKey(p);
+    if (perfCache.pending === key) return;
+    perfCache.pending = key;
+    Perf.measure(p.site.name || p.name || '', perfPages(p), {})
+      .then((report) => { perfCache = { key: key, report: report, pending: '' }; patchPerfBlock(p); })
+      .catch(() => {
+        perfCache.pending = '';
+        const block = $('#perfBlock');
+        if (block) block.outerHTML = '<div class="perf-block" id="perfBlock"><p class="perf-pending">Performance could not be measured for this project.</p></div>';
+      });
+  }
+
   // ---------------- Publish quality gate ----------------
   // The gate is deliberately deterministic: it runs against the exact project
   // data and exported HTML, so a creator can trust the result offline. Safe
@@ -909,6 +997,7 @@ const App = (() => {
         <span><b>${audit.errors}</b> blocking</span><span><b>${audit.warnings}</b> improvements</span><span><b>${audit.safeFixes}</b> safe repairs</span>
       </div>
       <div class="quality-list">${rows}</div>
+      ${perfHtml(p)}
       <div class="quality-note">Safe repairs only normalize structure, metadata, IDs, alt text and unsafe links — they never rewrite client claims or delete authored content. Your current version remains undoable.</div>
       <div class="quality-actions">
         <button class="btn primary small" id="qualityRepair" ${audit.safeFixes ? '' : 'disabled'}>${repairLabel}</button>
@@ -947,6 +1036,7 @@ const App = (() => {
     if (exportBtn) exportBtn.onclick = proceed;
     const exportAnyway = $('#qualityExportAnyway');
     if (exportAnyway) exportAnyway.onclick = proceed;
+    schedulePerf(p);
   }
 
   function openQualityGate(after, project) {
@@ -1522,6 +1612,7 @@ const App = (() => {
           <button class="btn ghost small" id="btnCopyHtml" title="Copy HTML">${uiIcon('copy')} Copy</button>
           <button class="btn ghost small" id="btnReviews" title="Import client feedback">${uiIcon('chat')} Feedback</button>
           <input type="file" id="reviewFile" accept=".json,application/json" hidden>
+          <button class="btn ghost small" id="btnChange" title="What changed since their feedback" hidden>${uiIcon('history')} Changelog</button>
           <button class="btn ghost small" id="btnHandoff" title="Client handoff">${uiIcon('gift')} Handoff</button>
           <button class="btn ghost small" id="btnPublish" title="Publish">${uiIcon('globe')} Publish</button>
           <button class="btn primary small" id="btnExport">${uiIcon('download')} Export site</button>
@@ -1538,6 +1629,7 @@ const App = (() => {
         $('#btnCopyHtml').onclick = copyHtml;
         $('#btnReviews').onclick = () => $('#reviewFile').click();
         $('#reviewFile').onchange = (e) => { importReviewFile(e.target.files[0]); e.target.value = ''; };
+        syncChangeBtn(c);
         $('#btnHandoff').onclick = openHandoff;
         $('#btnPublish').onclick = openPublish;
         $('#btnCloseProject').onclick = () => { currentId = null; switchView('dashboard'); };
@@ -3565,35 +3657,340 @@ const App = (() => {
     rd.onload = () => {
       const parsed = Review.parse(String(rd.result));
       if (!parsed.ok) return toast(parsed.error, false);
+      // Importing the feedback is what fixes the baseline. The agency imports it
+      // when the notes arrive and then edits, so “the project as it was on
+      // import” is exactly the version the client is talking about — which is
+      // what makes the changelog answer the question they will actually ask.
+      const marked = markReviewed(c, parsed.review);
+      syncChangeBtn(c);
       openReviewPanel(parsed.review, c);
+      if (marked) toast('Feedback imported — the changelog now tracks from this point', true);
     };
     rd.onerror = () => toast('Could not read that file', false);
     rd.readAsText(file);
   }
 
-  function openReviewPanel(review, project) {
+  // ---------------- the reviewed baseline ----------------
+  // One snapshot per project, taken when feedback arrives. Kept small by capping
+  // the store and pruning oldest-first, and every storage call is guarded because
+  // a full project can be a large object and localStorage has a hard quota.
+  const REVIEWED_KEY = 'pallettai.reviewed.v1';
+  const REVIEWED_MAX = 5;
+  let reviewedCache = null;
+
+  function loadReviewed() {
+    if (reviewedCache) return reviewedCache;
+    try { reviewedCache = JSON.parse(localStorage.getItem(REVIEWED_KEY) || '{}') || {}; }
+    catch (e) { reviewedCache = {}; }
+    return reviewedCache;
+  }
+  function saveReviewedStore(all) {
+    reviewedCache = all;
+    try { localStorage.setItem(REVIEWED_KEY, JSON.stringify(all)); return true; }
+    catch (e) { toast('The review baseline could not be saved on this device.', false); return false; }
+  }
+  function markReviewed(project, review) {
+    if (!project || !project.id) return false;
+    const all = loadReviewed();
+    all[project.id] = {
+      at: new Date().toISOString(),
+      build: (review && review.build) || '',
+      site: (review && review.site) || project.site.name || '',
+      snap: JSON.stringify(project)
+    };
+    const ids = Object.keys(all);
+    if (ids.length > REVIEWED_MAX) {
+      ids.sort((a, b) => String(all[a].at).localeCompare(String(all[b].at)));
+      ids.slice(0, ids.length - REVIEWED_MAX).forEach((id) => { delete all[id]; });
+    }
+    let ok = saveReviewedStore(all);
+    if (!ok) {
+      // Quota: fall back to keeping only this project's baseline.
+      const single = {};
+      single[project.id] = all[project.id];
+      ok = saveReviewedStore(single);
+    }
+    return ok;
+  }
+  function reviewedSnap(project) {
+    if (!project || !project.id) return null;
+    const hit = loadReviewed()[project.id];
+    if (!hit || !hit.snap) return null;
+    try { return { at: hit.at, build: hit.build, site: hit.site, project: JSON.parse(hit.snap) }; }
+    catch (e) { return null; }
+  }
+  function clearReviewed(project) {
+    const all = loadReviewed();
+    delete all[project.id];
+    saveReviewedStore(all);
+  }
+
+  // The changelog button only appears once there is a baseline to compare
+  // against, so it never invites a click that can only fail. Called after import
+  // as well as on every designer render — otherwise the button stays hidden
+  // until some unrelated edit happens to re-render the toolbar, which reads as
+  // “nothing happened” right after importing feedback.
+  function syncChangeBtn(c) {
+    const btn = $('#btnChange');
+    if (!btn) return;
+    btn.hidden = !reviewedSnap(c);
+    btn.onclick = () => openChangelog();
+  }
+
+  // ---------------- what changed since they reviewed ----------------
+  // RevDiff only reads the home page's sections, so each page is projected into
+  // its own pseudo-project. That keeps multi-page sites honest: a change on the
+  // About page would otherwise be invisible in the note.
+  function buildChangeNote(project, base) {
+    const before = base.project;
+    const siteDiff = RevDiff.diff(before, project);
+    const oldPages = Builder.pages(before);
+    const newPages = Builder.pages(project);
+    const bySlug = (list) => { const m = new Map(); list.forEach((p) => m.set(String(p.slug), p)); return m; };
+    const oldM = bySlug(oldPages), newM = bySlug(newPages);
+    const slugs = [];
+    oldPages.forEach((p) => { if (slugs.indexOf(p.slug) === -1) slugs.push(p.slug); });
+    newPages.forEach((p) => { if (slugs.indexOf(p.slug) === -1) slugs.push(p.slug); });
+
+    const pageChanges = [];
+    const pages = [];
+    slugs.forEach((slug) => {
+      const a = oldM.get(String(slug));
+      const b = newM.get(String(slug));
+      if (a && !b) { pageChanges.push({ kind: 'removed', name: a.name }); return; }
+      if (!a && b) {
+        pageChanges.push({ kind: 'added', name: b.name });
+        return;
+      }
+      if (a.name !== b.name) pageChanges.push({ kind: 'renamed', from: a.name, to: b.name });
+      const d = RevDiff.diff(
+        { site: { sections: a.sections || [] } },
+        { site: { sections: b.sections || [] } }
+      );
+      if (d.sections.length) pages.push({ name: b.name || slug, sections: d.sections });
+    });
+
+    let to = '';
+    try { to = Review.stamp(Builder.pages(project)); } catch (e) { to = ''; }
+
+    return ChangeNote.build({
+      site: project.site.name || project.name || '',
+      from: base.build || '',
+      to: to,
+      at: new Date().toISOString(),
+      siteChanges: siteDiff.summary,
+      pageChanges: pageChanges,
+      pages: pages
+    });
+  }
+
+  function downloadText(name, text, type) {
+    try {
+      const blob = new Blob([text], { type: type || 'text/plain;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      return true;
+    } catch (e) { return false; }
+  }
+
+  function openChangelog(project) {
+    const c = project || current();
+    if (!c) return toast('Open a project first');
+    if (typeof ChangeNote === 'undefined' || typeof RevDiff === 'undefined') return toast('Changelog module not loaded', false);
+    const base = reviewedSnap(c);
+    if (!base) return toast('Import client feedback first — the note is measured from that point', false);
+    const note = buildChangeNote(c, base);
+    const when = String(base.at || '').slice(0, 10);
+    openModal('What changed since their feedback', `
+      <p style="color:var(--muted);margin:0 0 14px">${note.count
+        ? note.count + ' change' + (note.count === 1 ? '' : 's') + ' since feedback came in on ' + esc(when) + (note.truncated ? ' (' + note.truncated + ' not listed)' : '') + '.'
+        : 'Nothing has changed since their feedback arrived on ' + esc(when) + '.'}</p>
+      <div class="chg-preview"><iframe title="Changelog preview" sandbox="allow-same-origin" srcdoc="${esc(ChangeNote.page(note, 'PallettAI Studio'))}"></iframe></div>
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+        <button class="btn primary small" id="chgCopy">Copy as text</button>
+        <button class="btn ghost small" id="chgSave">Save as file</button>
+        <button class="btn ghost small" id="chgEmail">Open in email</button>
+        <button class="btn ghost small" id="chgReset">Reset baseline</button>
+      </div>
+      <p class="set-desc" style="margin-top:12px">Measured against “${esc(base.site || c.site.name || '')}” as it stood when the feedback arrived. Only changes to what the client can see are listed — nothing internal, and no revision ids.</p>`);
+    const copy = $('#chgCopy');
+    if (copy) copy.onclick = () => {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(note.text).then(() => toast('Changelog copied 📋', true), () => toast('Could not copy', false));
+      } else toast('Clipboard unavailable', false);
+    };
+    const save = $('#chgSave');
+    if (save) save.onclick = () => {
+      const name = (c.site.name || 'site').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'site';
+      if (downloadText(name + '-changes.html', ChangeNote.page(note, 'PallettAI Studio'), 'text/html;charset=utf-8')) toast('Changelog saved ⬇', true);
+      else toast('Could not save the changelog', false);
+    };
+    const email = $('#chgEmail');
+    if (email) email.onclick = () => {
+      const to = String(c.site.email || '').trim();
+      const href = 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(note.subject) + '&body=' + encodeURIComponent(note.text);
+      try { window.location.href = href; } catch (e) { toast('Could not open your mail app', false); }
+    };
+    const reset = $('#chgReset');
+    if (reset) reset.onclick = () => {
+      clearReviewed(c);
+      closeModal();
+      syncChangeBtn(c);
+      toast('Baseline cleared — import the next round of feedback to set a new one');
+    };
+  }
+
+  // ---------------- applying a note ----------------
+  // The resolver decides what a note means; this decides what happens when the
+  // agency says go. Each apply goes through the normal undo stack, so a note can
+  // be applied and taken back exactly like a hand edit.
+  function reviewCtx(project, a, page) {
+    const sec = (page && Array.isArray(page.sections) && a.sectionIndex >= 0) ? page.sections[a.sectionIndex] : null;
+    return {
+      section: sec,
+      sectionIndex: a.sectionIndex,
+      sectionType: a.sectionType,
+      sectionTitle: a.heading,
+      pageSlug: a.pageSlug,
+      pageName: a.pageName,
+      site: project.site
+    };
+  }
+
+  function reviewEntries(attached, project) {
+    const pages = Builder.pages(project);
+    const bySlug = new Map();
+    pages.forEach((p) => bySlug.set(String(p.slug), p));
+    return (attached || []).map((a) => {
+      const page = bySlug.get(String(a.pageSlug)) || null;
+      const ctx = reviewCtx(project, a, page);
+      let plan = null;
+      if (a.found && typeof ApplyNote !== 'undefined') plan = ApplyNote.plan(a.note, ctx);
+      return { a: a, page: page, ctx: ctx, plan: plan };
+    });
+  }
+
+  function noteKey(a, i) {
+    return (typeof ApplyNote !== 'undefined') ? ApplyNote.keyOf(a.note) : String(i);
+  }
+
+  // Unresolvable notes are not dead ends: the Copilot gets the note with the
+  // section it was written on already attached, so “make it shorter” lands in the
+  // right place. It is never auto-sent, because that spends a credit and rewrites
+  // copy without anyone agreeing to the wording.
+  function sendNoteToCopilot(instruction) {
+    closeModal();
+    if (typeof chatOpenPanel !== 'function') return toast('Copilot is unavailable', false);
+    chatOpenPanel(true);
+    const inp = $('#chatInput');
+    if (inp) { inp.value = instruction; inp.focus(); }
+    toast('Note prepared in Copilot \u2014 send it when the wording looks right', true);
+  }
+
+  function applyReviewEntry(project, entry, opts) {
+    const o = opts || {};
+    if (!entry.page) { if (!o.quiet) toast('That page no longer exists in this project', false); return false; }
+    // A batch must be able to undo step by step, so the 1.5s autosave throttle
+    // that protects typing is deliberately bypassed here.
+    if (o.batch) histLast = 0;
+    histCapture();
+    const res = ApplyNote.apply(entry.page, entry.plan.ops, entry.ctx);
+    if (!res.changed) {
+      if (!o.quiet) toast('Nothing changed \u2014 ' + (res.skipped.join('; ') || 'that is already how it is'), false);
+      return false;
+    }
+    project.site.activePageId = entry.page.id;
+    project.updatedAt = Date.now();
+    saveProjects();
+    if (!o.batch) {
+      selectedSec = null;
+      renderDesigner();
+      renderEditor();
+      toast(res.notes.join(' \u00b7 ') + ' \u2014 undo with ' + KBD + 'Z', true);
+    }
+    return true;
+  }
+
+  function applyAllReviewNotes(review, project, applied) {
+    if (typeof ApplyNote === 'undefined') return 0;
+    let done = 0;
+    // Plans are recomputed after every mutation: removing or moving a section
+    // shifts the indices the remaining notes were anchored to, so a plan built up
+    // front would point at the wrong section after the first change.
+    for (let guard = 0; guard < 60; guard++) {
+      const entries = reviewEntries(Review.attach(review, Builder.pages(project)), project)
+        .filter((e) => e.plan && e.plan.resolvable && !applied.has(noteKey(e.a, 0)) && (e.page ? e.page.sections.indexOf(e.ctx.section) > -1 : false));
+      const next = entries[0];
+      if (!next) break;
+      applied.add(noteKey(next.a, 0));
+      if (applyReviewEntry(project, next, { quiet: true, batch: true })) done++;
+    }
+    if (done) {
+      selectedSec = null;
+      renderDesigner();
+      renderEditor();
+      toast(done + ' note' + (done === 1 ? '' : 's') + ' applied \u2014 each step is undoable with ' + KBD + 'Z', true);
+    } else {
+      toast('Nothing could be applied automatically', false);
+    }
+    return done;
+  }
+
+  function openReviewPanel(review, project, appliedIn) {
+    const applied = appliedIn || new Set();
     const pages = Builder.pages(project);
     const attached = Review.attach(review, pages);
     const live = Review.stamp(pages);
     const state = Review.staleness(review, live);
     const sum = Review.summarize(review);
+    const canApply = typeof ApplyNote !== 'undefined';
+    const entries = reviewEntries(attached, project);
+    const actionable = entries.filter((e) => e.plan && e.plan.resolvable && !applied.has(noteKey(e.a, 0)));
     const banner = state === 'current'
       ? '<p style="background:rgba(16,185,129,.12);border-left:3px solid #10b981;padding:10px 12px;border-radius:8px;margin:0 0 10px">\u2713 Written against the current build (<b>' + esc(review.build) + '</b>) \u2014 every note still applies.</p>'
       : state === 'stale'
         ? '<p style="background:rgba(245,158,11,.14);border-left:3px solid #f59e0b;padding:10px 12px;border-radius:8px;margin:0 0 10px">Written against build <b>' + esc(review.build) + '</b>, but the project is now at <b>' + esc(live) + '</b>. The notes describe what the client actually saw \u2014 re-check each one before acting.</p>'
         : '<p style="background:rgba(245,158,11,.14);border-left:3px solid #f59e0b;padding:10px 12px;border-radius:8px;margin:0 0 10px">No build stamp on this file, so it cannot be matched to a revision. Notes are listed exactly as written.</p>';
-    const rows = attached.map((a) => {
+    const rows = entries.map((e, i) => {
+      const a = e.a;
       const chip = a.note.priority === 'blocker'
         ? '<span style="background:#ef4444;color:#fff;border-radius:99px;padding:2px 9px;font-size:.7rem;font-weight:700">Blocking</span>'
         : '<span style="background:rgba(127,127,127,.2);border-radius:99px;padding:2px 9px;font-size:.7rem;font-weight:700">Note</span>';
-      return '<div style="border:1px solid rgba(127,127,127,.22);border-radius:10px;padding:10px 12px;margin-bottom:8px' + (a.found ? '' : ';opacity:.75') + '">'
-        + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px">' + chip
+      const done = applied.has(noteKey(a, i));
+      let actions;
+      if (done) {
+        actions = '<span class="rev-applied">\u2713 Applied</span>';
+      } else if (canApply && e.plan && e.plan.satisfied) {
+        // The note was understood and the section already meets it. Showing that
+        // is the difference between “done earlier” and “not understood”.
+        actions = '<span class="rev-applied">\u2713 ' + esc(e.plan.reason || 'Already as asked') + '</span>';
+      } else if (!a.found) {
+        actions = '<span style="color:var(--muted);font-size:.75rem">This section no longer exists in the project \u2014 the note is kept so nothing is silently lost.</span>';
+      } else {
+        actions = '<button class="btn ghost small" data-goto-sec="' + a.sectionIndex + '">Show section</button>';
+        if (canApply && e.plan && e.plan.resolvable) {
+          actions += ' <button class="btn primary small" data-apply="' + i + '">Apply this note</button>';
+        } else if (canApply) {
+          actions += ' <button class="btn ghost small" data-copilot="' + i + '">Ask Copilot</button>';
+        }
+      }
+      // Saying exactly what will happen, before it happens, is the whole reason
+      // an agency would trust a note-to-edit shortcut at all.
+      const intent = (!done && e.plan && e.plan.resolvable)
+        ? '<div class="rev-intent">\u2192 ' + esc(e.plan.intent) + '</div>'
+        : '';
+      return '<div class="rev-note' + (a.found ? '' : ' is-orphan') + (done ? ' is-done' : '') + '">'
+        + '<div class="rev-note-head">' + chip
         + '<b>' + esc(a.heading || a.sectionType || 'Section') + '</b>'
-        + '<span style="color:var(--muted);font-size:.75rem">' + esc(a.pageSlug) + (a.found ? ' \u00b7 section ' + (a.sectionIndex + 1) : ' \u00b7 section removed') + '</span></div>'
-        + '<div style="margin-bottom:6px">' + esc(a.note.text) + '</div>'
-        + (a.found
-          ? '<button class="btn ghost small" data-goto-sec="' + a.sectionIndex + '">Show section</button>'
-          : '<span style="color:var(--muted);font-size:.75rem">This section no longer exists in the project \u2014 the note is kept so nothing is silently lost.</span>')
+        + '<span class="rev-where">' + esc(a.pageSlug) + (a.found ? ' \u00b7 section ' + (a.sectionIndex + 1) : ' \u00b7 section removed') + '</span></div>'
+        + '<div class="rev-note-text">' + esc(a.note.text) + '</div>'
+        + intent
+        + '<div class="rev-note-actions">' + actions + '</div>'
         + '</div>';
     }).join('');
     openModal('Client feedback',
@@ -3601,9 +3998,12 @@ const App = (() => {
       + '<p style="color:var(--muted);margin:0 0 12px">' + sum.total + ' note' + (sum.total === 1 ? '' : 's')
       + (sum.blockers ? ' \u00b7 <b>' + sum.blockers + ' blocking</b>' : '')
       + ' across ' + sum.pages.length + ' page' + (sum.pages.length === 1 ? '' : 's')
-      + (review.site ? ' \u00b7 ' + esc(review.site) : '') + '</p>'
+      + (review.site ? ' \u00b7 ' + esc(review.site) : '')
+      + (canApply ? ' \u00b7 ' + actionable.length + ' can be applied directly' : '') + '</p>'
       + rows
-      + '<div style="display:flex;gap:8px;margin-top:12px">'
+      + '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'
+      + (actionable.length ? '<button class="btn primary small" id="revApplyAll">Apply all ' + actionable.length + '</button>' : '')
+      + (reviewedSnap(project) ? '<button class="btn ghost small" id="revChange">What changed since</button>' : '')
       + '<button class="btn ghost small" id="revCopy">Copy as text</button>'
       + '<button class="btn ghost small" id="revClose">Close</button></div>');
     $$('[data-goto-sec]').forEach((b) => { b.onclick = () => {
@@ -3615,6 +4015,23 @@ const App = (() => {
       if (card && card.scrollIntoView) card.scrollIntoView({ block: 'center', behavior: 'smooth' });
       toast('Jumped to that section');
     }; });
+    $$('[data-apply]').forEach((b) => { b.onclick = () => {
+      const e = entries[+b.dataset.apply];
+      if (!e) return;
+      const ok = applyReviewEntry(project, e);
+      applied.add(noteKey(e.a, +b.dataset.apply));
+      if (ok) openReviewPanel(review, project, applied);
+    }; });
+    $$('[data-copilot]').forEach((b) => { b.onclick = () => {
+      const e = entries[+b.dataset.copilot];
+      if (e && e.plan) sendNoteToCopilot(e.plan.instruction);
+    }; });
+    const applyAll = $('#revApplyAll');
+    if (applyAll) applyAll.onclick = () => {
+      applyAllReviewNotes(review, project, applied);
+      openReviewPanel(review, project, applied);
+    };
+    const rChange = $('#revChange'); if (rChange) rChange.onclick = () => openChangelog(project);
     const rClose = $('#revClose'); if (rClose) rClose.onclick = closeModal;
     const rCopy = $('#revCopy');
     if (rCopy) rCopy.onclick = () => {
@@ -3764,15 +4181,16 @@ const App = (() => {
   const PUB_KEY = 'pallettai.publish.v1';
   const SECRET_NETLIFY = 'publish.netlifyToken';
   const SECRET_NEO = 'publish.neocitiesKey';
+  const SECRET_VERCEL = 'publish.vercelToken';
+  const SECRET_CF = 'publish.cloudflareToken';
+  const SECRETS = [SECRET_NETLIFY, SECRET_NEO, SECRET_VERCEL, SECRET_CF];
+  const META_SECRETS = ['netlifyToken', 'neocitiesKey', 'vercelToken', 'cloudflareToken'];
   function loadPublishMeta() {
     try { return JSON.parse(localStorage.getItem(PUB_KEY) || '{}'); } catch (e) { return {}; }
   }
   function savePublishMeta(v, keepSecretsInMeta) {
     const copy = Object.assign({}, v);
-    if (!keepSecretsInMeta) {
-      delete copy.netlifyToken;
-      delete copy.neocitiesKey;
-    }
+    if (!keepSecretsInMeta) META_SECRETS.forEach((k) => { delete copy[k]; });
     try { localStorage.setItem(PUB_KEY, JSON.stringify(copy)); return true; }
     catch (e) { toast('Publishing credentials could not be saved on this device.', false); return false; }
   }
@@ -3783,8 +4201,10 @@ const App = (() => {
       try {
         v.netlifyToken = (await bridge.secretsGet(SECRET_NETLIFY)) || v.netlifyToken || '';
         v.neocitiesKey = (await bridge.secretsGet(SECRET_NEO)) || v.neocitiesKey || '';
+        v.vercelToken = (await bridge.secretsGet(SECRET_VERCEL)) || v.vercelToken || '';
+        v.cloudflareToken = (await bridge.secretsGet(SECRET_CF)) || v.cloudflareToken || '';
       } catch (e) { /* keep meta-only */ }
-      if (v.netlifyToken || v.neocitiesKey) await savePublish(v);
+      if (META_SECRETS.some((k) => v[k])) await savePublish(v);
     }
     return v;
   }
@@ -3796,6 +4216,8 @@ const App = (() => {
       try {
         await bridge.secretsSet(SECRET_NETLIFY, v.netlifyToken || '');
         await bridge.secretsSet(SECRET_NEO, v.neocitiesKey || '');
+        await bridge.secretsSet(SECRET_VERCEL, v.vercelToken || '');
+        await bridge.secretsSet(SECRET_CF, v.cloudflareToken || '');
       } catch (e) { return false; }
     }
     return ok;
@@ -3863,6 +4285,97 @@ const App = (() => {
     return { url: 'https://' + user + '.neocities.org/', provider: 'Neocities' };
   }
 
+  // ---- Vercel ----
+  // One documented JSON call: the files travel inside the deployment body, so
+  // there is no upload handshake to get wrong. The deployment exists before it
+  // serves, so the URL is polled briefly rather than handed over cold — a link
+  // that 404s on first click reads as a broken publish.
+  function vercelError(payload, status) {
+    const e = payload && (payload.error || payload);
+    const msg = e && (typeof e === 'string' ? e : (e.message || e.code));
+    return msg ? String(msg) : 'Vercel rejected the deployment (HTTP ' + status + ') \u2014 check the token has deploy rights.';
+  }
+  async function vercelDeploy(c, token, projectName) {
+    if (typeof Publish === 'undefined') throw new Error('Publish module not loaded');
+    const files = publishFiles(c);
+    const body = Publish.vercelBody(c.site.name || c.name, projectName || siteSlug(c), files);
+    const res = await ONLINE.request('https://api.vercel.com/v13/deployments', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }, { timeoutMs: 60000, allowHttpError: true });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(vercelError(j, res.status));
+    const url = Publish.vercelUrl(j);
+    if (!url) throw new Error('Vercel accepted the deployment but returned no URL.');
+    const id = j.id;
+    for (let i = 0; id && i < 15; i++) {
+      if (Publish.vercelReady(j)) break;
+      await new Promise((r) => setTimeout(r, 1500));
+      const s = await ONLINE.request('https://api.vercel.com/v13/deployments/' + encodeURIComponent(id),
+        { headers: { 'Authorization': 'Bearer ' + token } }, { timeoutMs: 20000, allowHttpError: true });
+      const sj = await s.json().catch(() => ({}));
+      if (Publish.vercelFailed(sj)) throw new Error(vercelError(sj, s.status));
+      if (Publish.vercelReady(sj)) break;
+    }
+    return { url: url, provider: 'Vercel' };
+  }
+
+  // ---- Cloudflare Pages ----
+  // The same five-step protocol Wrangler uses: create the project, take a
+  // short-lived upload token, push the file bytes keyed by content hash, declare
+  // the upload complete, then post the manifest. Every body is built by the
+  // Publish module so the fragile multipart step is asserted in a test rather
+  // than assembled here where a mistake only surfaces against a live account.
+  function cloudflareAlreadyExists(payload, status) {
+    if (status === 409) return true;
+    const errs = (payload && Array.isArray(payload.errors) ? payload.errors : []);
+    return errs.some((e) => /already exists|8000007|8000006/i.test(String((e && e.code) || '') + ' ' + String((e && e.message) || '')));
+  }
+  async function cloudflareDeploy(c, token, accountId, projectName) {
+    if (typeof Publish === 'undefined') throw new Error('Publish module not loaded');
+    const name = Publish.slug(projectName || siteSlug(c));
+    const auth = { 'Authorization': 'Bearer ' + token };
+    const files = publishFiles(c);
+
+    const mkRes = await ONLINE.request(Publish.cfProjectUrl(accountId, name), {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, auth),
+      body: JSON.stringify(Publish.cfProjectBody(name, 'main'))
+    }, { timeoutMs: 30000, allowHttpError: true });
+    const mk = await mkRes.json().catch(() => ({}));
+    if (!mkRes.ok && !cloudflareAlreadyExists(mk, mkRes.status)) throw new Error(Publish.cfError(mk, mkRes.status));
+
+    const tkRes = await ONLINE.request(Publish.cfUploadTokenUrl(accountId, name), { headers: auth }, { timeoutMs: 30000, allowHttpError: true });
+    const tk = await tkRes.json().catch(() => ({}));
+    if (!tkRes.ok || !tk.success) throw new Error(Publish.cfError(tk, tkRes.status));
+    const jwt = tk.result && tk.result.jwt;
+    if (!jwt) throw new Error('Cloudflare did not return an upload token.');
+
+    const assets = Publish.cfAssetsBody(files);
+    if (assets.length) {
+      const assetAuth = { 'Authorization': 'Bearer ' + jwt, 'Content-Type': 'application/json' };
+      const upRes = await ONLINE.request(Publish.cfAssetsUrl(),
+        { method: 'POST', headers: assetAuth, body: JSON.stringify(assets) }, { timeoutMs: 120000, allowHttpError: true });
+      const up = await upRes.json().catch(() => ({}));
+      if (!upRes.ok || !up.success) throw new Error(Publish.cfError(up, upRes.status));
+      const hsRes = await ONLINE.request(Publish.cfUpsertUrl(),
+        { method: 'POST', headers: assetAuth, body: JSON.stringify({ hashes: assets.map((x) => x.key) }) }, { timeoutMs: 60000, allowHttpError: true });
+      const hs = await hsRes.json().catch(() => ({}));
+      if (!hsRes.ok || !hs.success) throw new Error(Publish.cfError(hs, hsRes.status));
+    }
+
+    const mp = Publish.cfManifestMultipart(Publish.cfManifest(files));
+    const dpRes = await ONLINE.request(Publish.cfDeployUrl(accountId, name), {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'multipart/form-data; boundary=' + mp.boundary },
+      body: mp.body
+    }, { timeoutMs: 120000, allowHttpError: true });
+    const dp = await dpRes.json().catch(() => ({}));
+    if (!dpRes.ok || !dp.success) throw new Error(Publish.cfError(dp, dpRes.status));
+    return { url: Publish.cfUrl(dp, name), provider: 'Cloudflare Pages' };
+  }
+
   async function openPublish(options) {
     const c = current();
     if (!c) return toast('Open a project first');
@@ -3904,11 +4417,50 @@ const App = (() => {
       </div>
 
       <div class="pub-card">
+        <div class="pub-head"><span class="export-ico">&#9650;</span><b>Vercel</b><span class="chip">Free · custom domains · instant rollback</span></div>
+        <p class="pub-note">Create a token at <a href="https://vercel.com/account/tokens" target="_blank" rel="noopener">Vercel → Settings → Tokens</a>. Publishing uploads the whole site in one call \u2014 no git repository needed.</p>
+        ${cred.vercelToken
+          ? `<p class="pub-saved">\u2713 Token saved${cred.vercelUrl ? ' \u2014 last live at <a href="' + esc(cred.vercelUrl) + '" target="_blank" rel="noopener">' + esc(cred.vercelUrl.replace(/^https?:\/\//, '')) + '</a>' : ''}</p>`
+          : '<p class="pub-saved" style="color:var(--danger)">No token yet \u2014 paste one to enable publishing.</p>'}
+        <input id="pubVercelTok" type="password" placeholder="${cred.vercelToken ? 'Token saved \u2014 paste a new one to replace' : 'Vercel token'}" spellcheck="false" autocomplete="off">
+        <input id="pubVercelProj" placeholder="Project name (optional)" value="${esc(cred.vercelProject || '')}" spellcheck="false" autocomplete="off" style="margin-top:8px">
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn primary small" id="pubVercel">&#9650; Publish to Vercel</button>
+          ${cred.vercelToken ? '<button class="btn ghost small" id="pubVercelForget">Forget token</button>' : ''}
+        </div>
+      </div>
+
+      <div class="pub-card">
+        <div class="pub-head"><span class="export-ico">&#9729;</span><b>Cloudflare Pages</b><span class="chip">Free · unlimited bandwidth</span></div>
+        <p class="pub-note">Create an API token at <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener">My Profile \u2192 API Tokens</a> with <b>Cloudflare Pages: Edit</b>. Your Account ID is on the Workers &amp; Pages page, right-hand column.</p>
+        ${cred.cloudflareToken
+          ? `<p class="pub-saved">\u2713 Token saved${cred.cloudflareUrl ? ' \u2014 last live at <a href="' + esc(cred.cloudflareUrl) + '" target="_blank" rel="noopener">' + esc(cred.cloudflareUrl.replace(/^https?:\/\//, '')) + '</a>' : ''}</p>`
+          : '<p class="pub-saved" style="color:var(--danger)">No token yet \u2014 paste one to enable publishing.</p>'}
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input id="pubCfAccount" placeholder="Account ID" value="${esc(cred.cloudflareAccount || '')}" spellcheck="false" autocomplete="off" style="flex:1 1 200px">
+          <input id="pubCfProj" placeholder="Project name (optional)" value="${esc(cred.cloudflareProject || '')}" spellcheck="false" autocomplete="off" style="flex:1 1 160px">
+        </div>
+        <input id="pubCfTok" type="password" placeholder="${cred.cloudflareToken ? 'Token saved \u2014 paste a new one to replace' : 'API token'}" spellcheck="false" autocomplete="off" style="margin-top:8px">
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <button class="btn primary small" id="pubCf">&#9729; Publish to Cloudflare</button>
+          <button class="btn ghost small" id="pubCfZip">Download deploy .zip instead</button>
+          ${cred.cloudflareToken ? '<button class="btn ghost small" id="pubCfForget">Forget token</button>' : ''}
+        </div>
+      </div>
+
+      <div class="pub-card">
         <div class="pub-head"><span class="export-ico">🐙</span><b>GitHub Pages</b><span class="chip">For developers</span></div>
         <p class="pub-note">Export the site, push the files to a repository, then enable <b>Pages</b> under the repo Settings. Your site appears at <code>yourname.github.io/repo</code>. Full steps are in the handoff ZIP’s hosting guide (🎁 Handoff).</p>
       </div>
       <div id="pubResult" style="display:none;margin-top:8px"></div>`);
     const busy = (b, on, label) => { b.disabled = on; b.textContent = on ? 'Working…' : label; };
+    const showLive = (r) => {
+      const box = $('#pubResult');
+      box.style.display = '';
+      box.innerHTML = `<div class="pub-success">🎉 Live via ${esc(r.provider || '')} \u2014 <a href="${esc(r.url)}" target="_blank" rel="noopener"><b>${esc(r.url)}</b></a> <button class="btn ghost small" data-copy="${esc(r.url)}">Copy link</button></div>`;
+      const copy = box.querySelector('[data-copy]');
+      if (copy) copy.onclick = () => { navigator.clipboard.writeText(r.url); toast('Link copied 📋', true); };
+    };
     $('#pubNetlify').onclick = async () => {
       const typed = ($('#pubNetlifyTok').value || '').trim();
       const tok = typed || cred.netlifyToken || '';
@@ -3918,9 +4470,7 @@ const App = (() => {
       try {
         const r = await netlifyDeploy(c, tok);
         const v = await loadPublish(); v.netlifyToken = tok; v.netlifyUrl = r.url; await savePublish(v);
-        $('#pubResult').style.display = '';
-        $('#pubResult').innerHTML = `<div class="pub-success">🎉 Live! <a href="${esc(r.url)}" target="_blank" rel="noopener"><b>${esc(r.url)}</b></a> <button class="btn ghost small" data-copy="${esc(r.url)}">Copy link</button></div>`;
-        $('#pubResult [data-copy]').onclick = (e) => { navigator.clipboard.writeText(e.target.dataset.copy); toast('Link copied 📋', true); };
+        showLive(r);
         toast('Published to Netlify 🎉', true);
       } catch (err) {
         toast(err.message || 'Netlify publish failed', false);
@@ -3939,9 +4489,7 @@ const App = (() => {
         if (!key || pass) key = await neocitiesKey(user, pass);
         const r = await neocitiesUpload(user, key, publishFiles(c));
         const v = await loadPublish(); v.neocitiesUser = user; v.neocitiesKey = key; v.neocitiesUrl = r.url; await savePublish(v);
-        $('#pubResult').style.display = '';
-        $('#pubResult').innerHTML = `<div class="pub-success">🎉 Live! <a href="${esc(r.url)}" target="_blank" rel="noopener"><b>${esc(r.url)}</b></a> <button class="btn ghost small" data-copy="${esc(r.url)}">Copy link</button></div>`;
-        $('#pubResult [data-copy]').onclick = (e) => { navigator.clipboard.writeText(e.target.dataset.copy); toast('Link copied 📋', true); };
+        showLive(r);
         toast('Published to Neocities 🎉', true);
       } catch (err) {
         toast(err.message || 'Neocities publish failed', false);
@@ -3951,6 +4499,68 @@ const App = (() => {
     if (forgetNetlify) forgetNetlify.onclick = async () => { const v = await loadPublish(); delete v.netlifyToken; delete v.netlifyUrl; await savePublish(v); toast('Netlify token forgotten'); openPublish({ skipQuality: true }); };
     const forgetNeo = $('#pubNeoForget');
     if (forgetNeo) forgetNeo.onclick = async () => { const v = await loadPublish(); delete v.neocitiesUser; delete v.neocitiesKey; delete v.neocitiesUrl; await savePublish(v); toast('Neocities signed out'); openPublish({ skipQuality: true }); };
+    const forgetVercel = $('#pubVercelForget');
+    if (forgetVercel) forgetVercel.onclick = async () => { const v = await loadPublish(); delete v.vercelToken; delete v.vercelUrl; await savePublish(v); toast('Vercel token forgotten'); openPublish({ skipQuality: true }); };
+    const forgetCf = $('#pubCfForget');
+    if (forgetCf) forgetCf.onclick = async () => { const v = await loadPublish(); delete v.cloudflareToken; delete v.cloudflareUrl; await savePublish(v); toast('Cloudflare token forgotten'); openPublish({ skipQuality: true }); };
+
+    const cfZip = $('#pubCfZip');
+    if (cfZip) cfZip.onclick = () => {
+      // The dashboard's drag-and-drop upload is the officially supported way to
+      // deploy a prebuilt folder without a CLI, so it stays available as the
+      // fallback if the API path is rejected for any reason.
+      try {
+        const name = typeof Publish !== 'undefined' ? Publish.deployFileName(c.site.name || c.name) : siteSlug(c) + '-deploy.zip';
+        ZIP.downloadZip(name, publishFiles(c));
+        const dash = typeof Publish !== 'undefined' ? Publish.cfDashboardUrl() : 'https://dash.cloudflare.com/';
+        const box = $('#pubResult');
+        box.style.display = '';
+        box.innerHTML = `<div class="pub-success">📦 <b>${esc(name)}</b> downloaded — go to <a href="${esc(dash)}" target="_blank" rel="noopener">Cloudflare \u2192 Workers &amp; Pages</a>, choose <b>Create \u2192 Pages \u2192 Upload assets</b>, and drop the file in.</div>`;
+        toast('Deploy ZIP ready 📦', true);
+      } catch (e) { toast(e && e.message ? e.message : 'Could not build the ZIP', false); }
+    };
+
+    const vercelBtn = $('#pubVercel');
+    if (vercelBtn) vercelBtn.onclick = async () => {
+      const typed = ($('#pubVercelTok').value || '').trim();
+      const tok = typed || cred.vercelToken || '';
+      const proj = ($('#pubVercelProj').value || '').trim();
+      if (!tok) return toast('Paste a Vercel token first', false);
+      busy(vercelBtn, true);
+      try {
+        const r = await vercelDeploy(c, tok, proj);
+        const v = await loadPublish();
+        v.vercelToken = tok; v.vercelUrl = r.url;
+        if (proj) v.vercelProject = proj;
+        await savePublish(v);
+        showLive(r);
+        toast('Published to Vercel 🎉', true);
+      } catch (err) {
+        toast(err.message || 'Vercel publish failed', false);
+      } finally { busy(vercelBtn, false, '\u25b2 Publish to Vercel'); }
+    };
+
+    const cfBtn = $('#pubCf');
+    if (cfBtn) cfBtn.onclick = async () => {
+      const typed = ($('#pubCfTok').value || '').trim();
+      const tok = typed || cred.cloudflareToken || '';
+      const acct = ($('#pubCfAccount').value || '').trim();
+      const proj = ($('#pubCfProj').value || '').trim();
+      if (!tok) return toast('Paste a Cloudflare API token first', false);
+      if (!acct) return toast('Enter your Cloudflare Account ID', false);
+      busy(cfBtn, true);
+      try {
+        const r = await cloudflareDeploy(c, tok, acct, proj);
+        const v = await loadPublish();
+        v.cloudflareToken = tok; v.cloudflareAccount = acct; v.cloudflareUrl = r.url;
+        if (proj) v.cloudflareProject = proj;
+        await savePublish(v);
+        showLive(r);
+        toast('Published to Cloudflare Pages 🎉', true);
+      } catch (err) {
+        toast(err.message || 'Cloudflare publish failed', false);
+      } finally { busy(cfBtn, false, '\u2601 Publish to Cloudflare'); }
+    };
   }
 
   // ---------------- suites ----------------

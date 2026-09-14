@@ -152,11 +152,15 @@ const ONLINE = {
         request,
         new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('Request timed out.'), { code: 'request_timeout' })), timeoutMs))
       ]);
-      if (!res.ok) {
+      if (!res.ok && !opts.allowHttpError) {
         const e = new Error('HTTP ' + res.status);
         e.code = 'http_error'; e.status = res.status;
         throw e;
       }
+      // allowHttpError: hand the response back even on 4xx/5xx. API providers put
+      // the actionable reason in the body (“Project not found”, “invalid token”),
+      // and throwing on status alone would replace it with a bare status code
+      // just when the creator most needs to know what to fix.
       return res;
     } catch (e) {
       if (timedOut || (e && e.code === 'request_timeout')) {

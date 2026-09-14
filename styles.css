@@ -963,6 +963,34 @@ body.no-motion .confetti{display:none}
 .quality-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px;justify-content:flex-end}
 .quality-actions .btn{min-width:0}
 
+/* ============ Performance proof (inside the gate) ============ */
+.perf-block{margin:14px 0 4px;padding:14px;border:1px solid var(--border);border-radius:15px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 5%,var(--surface2)),var(--surface2))}
+.perf-head{display:flex;align-items:center;gap:15px}
+.perf-head .quality-score{width:64px;height:64px;border-radius:18px}
+.perf-head .quality-score strong{font-size:1.5rem}
+.perf-title{min-width:0}
+.perf-title h4{font-size:1rem;letter-spacing:-.01em;margin-bottom:3px}
+.perf-title p{color:var(--muted);font-size:.73rem;line-height:1.45}
+.perf-block .quality-metrics{grid-template-columns:repeat(4,1fr);margin:11px 0}
+.perf-pending{color:var(--muted);font-size:.76rem;margin:0;padding:6px 2px}
+@media (max-width:760px){.perf-block .quality-metrics{grid-template-columns:1fr 1fr}}
+
+/* ============ Client feedback rows (apply a note) ============ */
+.rev-note{border:1px solid var(--border);border-radius:12px;padding:11px 12px;margin-bottom:9px;background:var(--surface2)}
+.rev-note.is-orphan{opacity:.78;border-style:dashed}
+.rev-note.is-done{border-color:color-mix(in srgb,var(--ok) 40%,transparent);background:color-mix(in srgb,var(--ok) 7%,var(--surface2))}
+.rev-note-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:5px}
+.rev-note-head b{font-size:.83rem;overflow-wrap:anywhere}
+.rev-where{color:var(--muted);font-size:.72rem}
+.rev-note-text{margin-bottom:7px;font-size:.84rem;line-height:1.5;overflow-wrap:anywhere}
+.rev-intent{display:flex;gap:6px;align-items:flex-start;margin-bottom:8px;padding:7px 9px;border-radius:9px;background:color-mix(in srgb,var(--accent) 9%,transparent);border:1px solid color-mix(in srgb,var(--accent) 24%,transparent);color:var(--text);font-size:.76rem;line-height:1.45;font-weight:600;overflow-wrap:anywhere}
+.rev-note-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.rev-applied{color:var(--ok);font-size:.75rem;font-weight:800}
+
+/* Changelog preview inside the modal */
+.chg-preview{margin-top:2px;border:1px solid var(--border);border-radius:13px;overflow:hidden;background:#fff}
+.chg-preview iframe{display:block;width:100%;height:44vh;min-height:300px;border:0}
+
 /* .btn sets display:inline-flex, which would override the HTML [hidden]
    attribute (UA stylesheet) — make hidden always hide buttons too */
 .btn[hidden]{display:none!important}

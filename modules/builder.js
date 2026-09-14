@@ -2505,21 +2505,22 @@ ${motionCSS(p)}
     ${ogImg}
     <meta name="theme-color" content="${pal.bg}">` : '';
     const schema = ldScript(p, page, metaDesc);
-    const fontFaces = [font, dispFont].filter((x) => x && x.id).map((fo) => `<link href="${esc(ONLINE.fontCssUrl(fo.id))}" rel="stylesheet">`).join('');
-    // Self-hosted @font-face for the active body font — exported sites keep their
-    // typeface available offline and reduce per-visitor hits to Google's CDN. The
-    // Google CSS link stays as the authoritative source; this style is an enhancement
-    // that points at the same OFL-allowed woff2 assets on fonts.gstatic.com.
-    const selfHostedFontFace = (() => {
-      if (settings.onlineEnabled === false || !font || !font.id) return '';
-      const param = ONLINE._fontFamilyParam(font.id);
-      if (!param) return '';
-      const fam = ONLINE.fontCssUrl(font.id);
-      if (!fam) return '';
-      return `<style>@font-face{font-family:'${esc(font.name)}';src:url('https://fonts.gstatic.com/css2?family=${esc(param)}&display=swap');font-display:swap}</style>`;
-    })();
-    const fontLink = settings.onlineEnabled !== false
-      ? `<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>${fontFaces}${selfHostedFontFace}`
+    // Web fonts are fetched OFF the critical path. A plain <link rel="stylesheet">
+    // in <head> makes the browser wait for a third-party round trip before it
+    // paints anything — and wait for a *timeout* when that third party is
+    // unreachable, which is what happens behind corporate firewalls, privacy
+    // blockers and in regions where Google Fonts is blocked. Text now paints
+    // immediately in the fallback stack and swaps when the sheet lands, which is
+    // exactly what display=swap was already doing once the sheet arrived, so this
+    // costs nothing visually and removes the worst case entirely.
+    const fontUrls = [font, dispFont]
+      .filter((x) => x && x.id)
+      .map((fo) => ONLINE.fontCssUrl(fo.id))
+      .filter(Boolean);
+    const fontLink = settings.onlineEnabled !== false && fontUrls.length
+      ? '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+        + fontUrls.map((u) => `<link rel="stylesheet" href="${esc(u)}" media="print" onload="this.media='all'">`).join('')
+        + `<noscript>${fontUrls.map((u) => `<link rel="stylesheet" href="${esc(u)}">`).join('')}</noscript>`
       : '';
 
     const body = p.site.sections.map((s, i) => {
@@ -2612,10 +2613,25 @@ ${buildFooter(p, settings)}
 ${customJs}
 </body>
 </html>`;
-    // performance diet: async decoding everywhere + lazy loading below the hero
-    // (the split-hero image keeps an eager load; hero backgrounds are CSS).
-    html = html.replace(/<img /g, '<img loading="lazy" decoding="async" ');
-    html = html.replace(/<img loading="lazy" decoding="async" class="hero-img"/g, '<img decoding="async" class="hero-img"');
+    // Performance diet, applied once at the end so it can see whole tags:
+    //   * the hero image loads EAGERLY — it is the largest thing on screen, so
+    //     it is the LCP element and deferring it delays what the visitor is
+    //     actually waiting for;
+    //   * every other image is lazy with async decoding.
+    // Attribute-aware on purpose. The previous version prepended a blanket
+    // `<img loading="lazy" ...>` and then tried to un-lazy the hero by matching
+    // an exact attribute order the renderers never produce, so the hero stayed
+    // lazy — and every image that already carried loading/decoding got the
+    // attribute twice, which is invalid markup that parsers silently half-ignore.
+    // `esc()` escapes '>' in attribute values, so a tag never contains a raw '>'.
+    html = html.replace(/<img\b[^>]*>/gi, (tag) => {
+      const isHero = /\bclass=["'][^"']*\bhero-img\b/i.test(tag);
+      let out = tag;
+      if (!/\bloading=/i.test(out)) out = out.replace(/^<img\b/i, '<img loading="lazy"');
+      if (isHero) out = out.replace(/\sloading=["']lazy["']/i, ' loading="eager"');
+      if (!/\bdecoding=/i.test(out)) out = out.replace(/^<img\b/i, '<img decoding="async"');
+      return out;
+    });
     if (settings.minify) {
       html = html.split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
     }

@@ -120,6 +120,11 @@ const SMOKES = [
   ['scripts/signature-smoke.js', 'Signature artwork smoke'],
   ['scripts/motion-smoke.js', 'Scroll-linked motion smoke'],
   ['scripts/review-smoke.js', 'Client review loop smoke'],
+  ['scripts/applynote-smoke.js', 'Apply-a-note resolver smoke'],
+  ['scripts/changenote-smoke.js', 'Client changelog smoke'],
+  ['scripts/perf-smoke.js', 'Performance proof smoke'],
+  ['scripts/publish-smoke.js', 'Publish providers smoke'],
+  ['scripts/release-notes-smoke.js', 'What\u2019s New registry smoke'],
   ['scripts/revdiff-smoke.js', 'Revision diff smoke'],
   ['scripts/suites-reviews-events-smoke.js', 'Reviews & Events suites smoke'],
   ['scripts/client-handoff-smoke.js', 'Client handoff editor smoke']

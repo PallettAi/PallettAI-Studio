@@ -26,6 +26,8 @@ const ICON_PATHS = {
   undo: '<path d="M7.2 7.2H4.4V4.4"/><path d="M4.4 7.2A6 6 0 1 1 6.2 15"/>',
   redo: '<path d="M12.8 7.2h2.8V4.4"/><path d="M15.6 7.2A6 6 0 1 0 13.8 15"/>',
   history: '<circle cx="10" cy="10" r="6.4"/><path d="M10 6.4V10l2.6 1.6"/>',
+  clock: '<circle cx="10" cy="10" r="6.4"/><path d="M10 6V10l2.8 2"/>',
+  gauge: '<path d="M3.8 13.6a7.2 7.2 0 1 1 12.4 0"/><path d="M10 13.2l3.2-4"/><circle cx="10" cy="14" r="1.2"/>',
   chat: '<path d="M4.2 4.6h11.6v8.2H9.2L5.4 15.6V12.8H4.2V4.6z"/>',
   swatch: '<rect x="3.4" y="6.2" width="5.2" height="9.2" rx="1"/><rect x="7.6" y="4.6" width="5.2" height="9.2" rx="1"/><rect x="11.6" y="6.8" width="5.2" height="9.2" rx="1"/>',
   cloud: '<path d="M6.2 14.8a3.4 3.4 0 0 1-.4-6.8 4.6 4.6 0 0 1 9-.9 3.1 3.1 0 0 1 1 6.1c-.3.1-.7.1-1 .1H6.2z"/><path d="M10 16.6v-4.2"/><path d="M7.8 14.2 10 16.4l2.2-2.2"/>',
