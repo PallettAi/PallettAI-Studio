@@ -4,29 +4,29 @@
 // Bump `version` when you ship. Each entry: version, date, tagline, highlights[].
 // Keep highlights to 3-4 items, written as user-facing wins (not commit logs).
 const RELEASE_NOTES = {
-  version: '0.4.2',
+  version: '0.4.3',
   date: 'September 14, 2026',
-  tagline: 'Client feedback now edits the site, and proves what changed',
+  tagline: 'Every export now arrives with the evidence to back it up',
   highlights: [
     {
-      icon: 'chat',
-      title: 'Feedback that makes the edit',
-      desc: 'Import a client\u2019s notes and Studio tells you what it can do about each one before you click. \u201cDrop to two features\u201d becomes a real change to that section; \u201cremove this section\u201d, a rename, a reorder or a corrected email all land in one click \u2014 and anything it is not sure about is handed to the Copilot with the section already attached, rather than guessed at.'
-    },
-    {
-      icon: 'clock',
-      title: 'What changed since they reviewed',
-      desc: 'Importing feedback sets a baseline. From then on one button writes the note every agency ends up writing by hand: what changed, grouped into structure, wording and look \u2014 in plain language, with nothing internal and no edit left out. Copy it, save it as a page, or open it in your email client.'
-    },
-    {
-      icon: 'gauge',
-      title: 'Performance you can prove',
-      desc: 'The publish gate now measures the export rather than estimating it: the exact transfer size of each page after a real compression pass, plus what it found. A typical site comes in well under 30 KB. It caught four real defects in our own export while being built \u2014 including a hero image that was loading lazily, and a type stylesheet that blocked first paint.'
+      icon: 'check',
+      title: 'The export argues for itself',
+      desc: 'Every export carries a delivery report and a manifest: what was measured, what is worth fixing, and a SHA-256 for every file. Anyone you send the folder to can confirm it is unaltered rather than taking your word for it \u2014 and the report is written for the client, not for you, so it can be forwarded as it is.'
     },
     {
       icon: 'globe',
-      title: 'Publish to Vercel and Cloudflare',
-      desc: 'One-click publishing now covers Vercel and Cloudflare Pages alongside Netlify and Neocities \u2014 for when a client wants the site on their own account and their own domain. Tokens stay on your machine, and a deploy .zip is always one click away.'
+      title: 'A finished site, right to its edges',
+      desc: 'Each page gets its own share image drawn from your palette, so a link unfurls as the page it points at instead of a bare title. A mistyped URL now lands on a 404 that wears the site\u2019s own navigation, and the export ships the host policy files \u2014 security headers included \u2014 so what you hand over is hardened from the first upload.'
+    },
+    {
+      icon: 'gauge',
+      title: 'Faster for visitors, kinder to keyboards',
+      desc: 'Images now offer the browser a smaller file wherever the host can resize, so a phone stops downloading a desktop-sized picture. Keyboard visitors get a skip link, a focus ring the site\u2019s own styles cannot remove, and navigation that tells them which page they are on.'
+    },
+    {
+      icon: 'handoff',
+      title: 'Hand over the system, not just the pixels',
+      desc: 'The export includes your design tokens as CSS, JSON and a working Tailwind config, with the contrast of each text pairing stated. Copy is read for clarity \u2014 the longest sentence, the filler, the page that never asks for the work \u2014 and every link, anchor and asset is resolved before you send it.'
     }
   ]
 };
