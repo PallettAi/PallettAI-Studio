@@ -43,7 +43,7 @@ jobs:
             exit 1
           }
 
-      - name: Require signing credentials for tagged releases
+      - name: Validate the credentials a tagged release needs
         if: startsWith(github.ref, 'refs/tags/')
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -51,6 +51,8 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          RELEASE_REPOSITORY: ${{ env.RELEASE_REPOSITORY }}
         shell: bash
         run: |
           set -euo pipefail
@@ -87,6 +89,38 @@ jobs:
           if [ "$apple_set" -eq 0 ]; then
             echo "::warning title=Release will not be notarized::No Apple credentials configured. The build will be signed but not notarized, so first launch of a downloaded DMG shows a Gatekeeper prompt."
           fi
+
+          # RELEASE_TOKEN uploads the release to the website repository, which
+          # is also the auto-update feed every installed app reads. A token that
+          # is expired, revoked or scoped to read-only fails at the very last
+          # step of the build, ten minutes in. Ask the API first instead.
+          if [ -z "${RELEASE_TOKEN:-}" ]; then
+            echo "::error::Missing required Actions secret: RELEASE_TOKEN"
+            exit 1
+          fi
+          node -e '
+            const token = process.env.RELEASE_TOKEN;
+            const repo = process.env.RELEASE_REPOSITORY;
+            fetch(`https://api.github.com/repos/${repo}`, {
+              headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" }
+            })
+              .then(r => r.json().then(body => [r.status, body]))
+              .then(([status, body]) => {
+                if (status !== 200) {
+                  console.log(`::error::RELEASE_TOKEN cannot read ${repo} (HTTP ${status}). It may be expired, revoked, or not scoped to that repository.`);
+                  process.exit(1);
+                }
+                if (!body.permissions || body.permissions.push !== true) {
+                  console.log(`::error::RELEASE_TOKEN has no write access to ${repo}, so the release could not be published. It needs Contents: Read and write on that repository, and nothing else.`);
+                  process.exit(1);
+                }
+                console.log(`RELEASE_TOKEN can publish to ${repo}.`);
+              })
+              .catch(e => {
+                console.log(`::error::Could not verify RELEASE_TOKEN: ${e.message}`);
+                process.exit(1);
+              });
+          '
 
       # electron-builder signs with a non-Apple certificate only if the machine
       # already trusts it. A developer Mac was given that trust once by hand
