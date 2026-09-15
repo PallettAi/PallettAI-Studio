@@ -4,3 +4,8 @@ dist/
 *.log
 .DS_Store
 supabase/.temp/
+
+# Referral-code signing key. This is the ONE secret that must never be
+# committed: anyone holding it can mint unlimited Pro entitlements that verify
+# offline. `.refcode-private-key*` also catches timestamped backups.
+.refcode-private-key*

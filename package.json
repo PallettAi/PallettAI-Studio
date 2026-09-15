@@ -14,7 +14,9 @@
     "dist:all": "electron-builder --mac --publish never",
     "pack:win": "electron-builder --win --dir",
     "dist:win": "electron-builder --win",
-    "release:check": "node scripts/release-check.js"
+    "release:check": "node scripts/release-check.js",
+    "refcode:keygen": "node scripts/refcode-keygen.js",
+    "refcode:mint": "node scripts/mint-refcode.js"
   },
   "author": "PallettAI",
   "license": "UNLICENSED",

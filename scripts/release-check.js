@@ -141,7 +141,16 @@ const SMOKES = [
   // cross-cutting changes to the artefact the client receives, and their
   // failures are shared — a builder that emits a broken tag breaks all of them.
   ['scripts/export-polish-smoke.js', 'Export polish smoke (images, focus, cards, 404)'],
-  ['scripts/delivery-proof-smoke.js', 'Delivery proof smoke (copy, links, tokens, manifest)']
+  ['scripts/delivery-proof-smoke.js', 'Delivery proof smoke (copy, links, tokens, manifest)'],
+  // Site care judges content, not construction, so its suite is mostly about
+  // what it REFUSES to flag — a maintenance report that cries wolf is ignored.
+  ['scripts/sitecare-smoke.js', 'Site care smoke (stale, placeholder, demo content)'],
+  // The badge writes a user's own referral code into every site they sell, so
+  // the suite is as much about it not being a way IN as about the link working.
+  ['scripts/badge-attribution-smoke.js', 'Attribution badge smoke'],
+  // The offline referral path is the one place a code is trusted without the
+  // registry, so its suite is mostly about codes that must NOT pass.
+  ['scripts/refcode-smoke.js', 'Offline referral-code smoke']
 ];
 
 function runScript(args, label) {

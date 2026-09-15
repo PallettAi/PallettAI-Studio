@@ -1170,6 +1170,20 @@ body.photo-grade{
     return `<p class="translate-credit">${esc(label)}</p>`;
   }
 
+  /*
+    The attribution badge is the free tier's one ask: every exported site links
+    back. Tagging that link with the owner's referral code turns it into an
+    acquisition channel — the site that sells their work also recruits for
+    theirs — which is why the code is checked against a strict alphabet before
+    it is allowed anywhere near an href. A badge is not a place to trust input.
+  */
+  const REF_CODE = /^[A-Za-z0-9]{4,16}$/;
+
+  function badgeHref(refCode) {
+    const code = String(refCode == null ? '' : refCode).trim().replace(/^REF-/i, '');
+    return REF_CODE.test(code) ? 'https://pallettai.org/ref/' + code : 'https://pallettai.org';
+  }
+
   function buildFooter(p, settings) {
     const year = new Date().getFullYear();
     const made = settings.brandFooter !== false
@@ -1212,7 +1226,7 @@ body.photo-grade{
         ${made}
       </div>
       ${settings.proExport === true ? '' : `
-      <a class="pallettai-badge" href="https://pallettai.org" target="_blank" rel="noopener" title="Built with PallettAI Studio">
+      <a class="pallettai-badge" href="${esc(badgeHref(settings.refCode))}" target="_blank" rel="noopener" title="Built with PallettAI Studio">
         ◆ Made with PallettAI Studio
       </a>`}
     </footer>`;
@@ -1776,9 +1790,10 @@ body.theme-dark .hero-tag{color:#e8eaf2}
 .foot-credits a{color:var(--muted);text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--text) 28%,transparent);text-underline-offset:2px}
 .foot-credits a:hover{color:var(--primary-text)}
 .made-by a{color:var(--primary-text);font-weight:600}
+${settings.proExport === true ? '' : `
 .pallettai-badge{position:fixed;right:16px;bottom:16px;z-index:70;background:rgba(12,13,28,.85);color:#cfc6ff;border:1px solid rgba(124,92,255,.45);backdrop-filter:blur(8px);padding:8px 14px;border-radius:99px;font-size:.72rem;font-weight:700;letter-spacing:.03em;text-decoration:none;box-shadow:0 8px 24px rgba(0,0,0,.35);transition:.2s}
 .pallettai-badge:hover{border-color:var(--primary);color:#fff}
-@media(max-width:520px){.pallettai-badge{font-size:.62rem;padding:6px 10px}}
+@media(max-width:520px){.pallettai-badge{font-size:.62rem;padding:6px 10px}}`}
 /* toast + back-to-top + progress */
 .toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(120px);background:var(--surface);color:var(--text);padding:13px 22px;border-radius:99px;box-shadow:var(--shadow);border:1px solid color-mix(in srgb,var(--text) 12%,transparent);z-index:120;transition:.4s;font-weight:600;font-size:.92rem}
 .toast.show{transform:translateX(-50%) translateY(0)}
@@ -2996,7 +3011,7 @@ ${customJs}
     return true;
   }
 
-  return { buildSiteHTML, buildSitePages, seoExtras, applySuite, removeSuite, esc, picsum, pages: pagesOf, slugify, pageHref, safeHref, safeEmbedUrl, safeBookingUrl, injectClientEditor, manageGuideHtml };
+  return { buildSiteHTML, buildSitePages, seoExtras, applySuite, removeSuite, esc, picsum, pages: pagesOf, slugify, pageHref, safeHref, safeEmbedUrl, safeBookingUrl, injectClientEditor, manageGuideHtml, badgeHref };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = Builder;

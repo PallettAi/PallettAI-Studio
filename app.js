@@ -634,7 +634,12 @@ const App = (() => {
     if (currentView === 'ai') renderAI();
   }
   function exportSettings() {
-    return { ...settings, proExport: isProPlus(), plan: planState().plan };
+    // The attribution badge carries this install's referral code, so a free
+    // export recruits for its owner. A signed-out install has no code and the
+    // badge falls back to the plain site URL.
+    let refCode = '';
+    try { refCode = (PLANS.store.refCode && PLANS.store.refCode()) || ''; } catch (e) { refCode = ''; }
+    return { ...settings, proExport: isProPlus(), plan: planState().plan, refCode: refCode };
   }
 
   // ---------------- undo / redo ----------------
@@ -833,6 +838,17 @@ const App = (() => {
     const audit = seoAudit(c);
     const gColor = ['A+', 'A', 'B'].includes(audit.letter) ? '#22c55e' : audit.letter === 'C' ? '#eab308' : '#ef4444';
     const ic = (l, fix) => (l === 'error' ? '🔴' : l === 'warn' ? '🟡' : (fix ? '🔵' : '✅'));
+
+    // Site care answers the other half of health. Everything above asks "is
+    // this built well?"; this asks "is this still TRUE?" — the price that
+    // changed, the sample phone number from our own template, the date that
+    // went by. Nothing here throws and nothing looks broken, which is exactly
+    // why a client discovers it in front of their own customer rather than in
+    // Studio. Rendered in the same modal because it is the same kind of job:
+    // something only found by looking.
+    let care = null;
+    try { if (typeof SiteCare !== 'undefined' && SiteCare.audit) care = SiteCare.audit(c); } catch (e) { care = null; }
+    const careColor = care ? (['A+', 'A', 'B'].includes(care.letter) ? '#22c55e' : care.letter === 'C' ? '#eab308' : '#ef4444') : '';
     openModal('Site health', `
       <p style="color:var(--muted);margin-bottom:14px">${issues.length ? issues.length + ' finding' + (issues.length === 1 ? '' : 's') + ' for “' + esc(s.name) + '”.' : 'No issues found — this site is in great shape. 🎉'}</p>
       <div style="display:flex;flex-direction:column;gap:8px">
@@ -841,7 +857,13 @@ const App = (() => {
       <h4 style="margin:18px 0 8px;font-size:.9rem">Launch grade — <span style="color:${gColor};font-weight:800">${esc(audit.letter)} · ${audit.score}/100</span> <small style="color:var(--muted);font-weight:600">SEO · performance · accessibility</small></h4>
       <div style="display:flex;flex-direction:column;gap:8px">
         ${audit.checks.map((i) => `<div class="diag-row diag-${esc(i.level)}"><div>${ic(i.level, i.fix)} ${esc(i.msg)}${i.fix ? `<br><small style="color:var(--muted)">Fix: ${esc(i.fix)}</small>` : ''}</div></div>`).join('')}
-      </div>`);
+      </div>
+      ${care ? `
+      <h4 style="margin:18px 0 8px;font-size:.9rem">Site care — is this still true? — <span style="color:${careColor};font-weight:800">${esc(care.letter)} · ${care.score}/100</span> <small style="color:var(--muted);font-weight:600">placeholder copy · sample details · expired dates</small></h4>
+      <p style="color:var(--muted);margin-bottom:8px">${esc(care.summary)}</p>
+      ${care.findings.length ? `<div style="display:flex;flex-direction:column;gap:8px">
+        ${care.findings.map((f) => `<div class="diag-row diag-${esc(f.level)}"><div>${ic(f.level, f.fix)} ${esc(f.msg)}${f.fix ? `<br><small style="color:var(--muted)">Fix: ${esc(f.fix)}</small>` : ''}</div></div>`).join('')}
+      </div>` : ''}` : ''}`);
   }
 
   // ---------------- performance as proof ----------------
@@ -1478,7 +1500,45 @@ const App = (() => {
   }
 
   // Redeem a referral code. Always verified against the cloud registry.
+  // A signed code proves itself: PallettAI signed the reward with a private key
+  // this build checks against a public one, on this machine, with no network.
+  // That matters most in exactly the moment it is hardest to test — when the
+  // registry is the thing that is down.
+  async function applySignedRefCode(raw) {
+    if (typeof RefCode === 'undefined' || !RefCode.verify) {
+      return toast('This build can’t check an offline code — update Studio, or use a REF- code with the registry.', false);
+    }
+    const btn = $('#btnRedeemRef');
+    const old = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+    let r;
+    try { r = await RefCode.verify(raw); }
+    catch (e) { r = { ok: false, reason: 'bad-signature' }; }
+    if (btn) { btn.disabled = false; btn.textContent = old; }
+
+    if (!r.ok) {
+      PLANS.store.logReferral({ code: raw.slice(0, 24), kind: 'attempt', days: 0, source: 'offline', outcome: r.reason });
+      if (currentView === 'settings') renderSettings();
+      return toast(RefCode.explain(r.reason), false);
+    }
+
+    // applyTrialUntil takes the later of the two, so a code can never shorten a
+    // trial someone already has.
+    const days = Number(r.proDays) || 30;
+    PLANS.store.applyTrialUntil(Date.now() + days * 86400000);
+    PLANS.store.logReferral({ code: raw.slice(0, 24), kind: 'offline-code', days: days, source: 'offline', outcome: 'verified' });
+    closeModal();
+    refreshEntitlements();
+    if (currentView === 'settings') renderSettings();
+    toast('Code verified on this device — +' + days + ' days of Pro free 🎉', true);
+  }
+
   async function applyReferralCode(code) {
+    // Signed codes are self-proving and need no account, so they take their own
+    // path. An unsigned REF- code still needs the registry, which is the whole
+    // reason the signed kind exists.
+    if (/^PAL-REF-/i.test(String(code || '').trim())) return applySignedRefCode(String(code || '').trim());
+
     code = String(code || '').trim().toUpperCase();
     if (!/^REF-[A-Z0-9]{4,10}$/.test(code)) return toast('That referral code doesn’t look right — codes look like REF-XXXXXX', false);
     if (!(SUPABASE.isConfigured() && SUPABASE.signedIn())) {
