@@ -150,7 +150,11 @@ const SMOKES = [
   ['scripts/badge-attribution-smoke.js', 'Attribution badge smoke'],
   // The offline referral path is the one place a code is trusted without the
   // registry, so its suite is mostly about codes that must NOT pass.
-  ['scripts/refcode-smoke.js', 'Offline referral-code smoke']
+  ['scripts/refcode-smoke.js', 'Offline referral-code smoke'],
+  // Pre-flight stands between a project and a live URL, so its suite is split
+  // between what it must stop and what it must not: a gate that blocks a good
+  // site teaches the creator to click past it.
+  ['scripts/preflight-smoke.js', 'Pre-flight smoke (publish blockers, link resolution)']
 ];
 
 function runScript(args, label) {

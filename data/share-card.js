@@ -57,8 +57,10 @@
   function heroImage() {
     try {
       var src = (window.__appState && window.__appState.shareImage) || (l('meta[property="og:image"]')).getAttribute('content');
-      return src || 'https://pallettai.org/share-v2.png';
-    } catch (e) { return 'https://pallettai.org/share-v2.png'; }
+      // share-v3 is the brand every pallettai.org page unfurls with. Pointing a
+      // shared Studio link at v2 showed two different logos for one product.
+      return src || 'https://pallettai.org/share-v3.png';
+    } catch (e) { return 'https://pallettai.org/share-v3.png'; }
   }
 
   function enqueue() {

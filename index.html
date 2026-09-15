@@ -18,7 +18,14 @@
   - img-src and connect-src are fully enumerated to the hosts the app's own
     widgets actually use — no bare `https:` fallback. Before adding a new
     online widget, add its host here or the preview breaks (test in web
-    mode: `npm run web`). connect-src hosts: picsum, randomuser, quotable,
+    mode: `npm run web`).
+  - fastly.picsum.photos is listed in img-src because picsum serves a 302 to
+    its CDN: `picsum.photos/seed/x/W/H` answers with
+    `fastly.picsum.photos/id/N/W/H.jpg`. The browser applies img-src to the
+    FINAL url after the redirect, so allowing only the first host blocked
+    every placeholder image the app generates. The /v2/list API returns JSON
+    directly from picsum.photos with no redirect, so connect-src needs no
+    equivalent. connect-src hosts: picsum, randomuser, quotable,
     coingecko, github, frankfurter, wikipedia, open-meteo, geocoding-open-
     meteo, iconify, mymemory, pollinations (image+text), commons wikimedia,
     openverse, pixabay, allorigins (CORS proxy), netlify, neocities, plus
@@ -49,7 +56,7 @@
     <video src> to a coverr.co/s3/mp4/... clip. Non-Coverr video URLs are
     not rendered as <video> by the builder, so they need no allowance here.
 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://plausible.io https://www.googletagmanager.com https://embed.tawk.to; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https://picsum.photos https://i.pravatar.cc https://api.dicebear.com https://api.iconify.design https://image.pollinations.ai https://loremflickr.com https://upload.wikimedia.org; font-src 'self' data: https://fonts.gstatic.com; media-src 'self' data: blob: https://coverr.co; connect-src 'self' https://picsum.photos https://randomuser.me https://api.quotable.io https://api.coingecko.com https://api.github.com https://api.frankfurter.app https://en.wikipedia.org https://api.open-meteo.com https://geocoding-api.open-meteo.com https://api.iconify.design https://api.mymemory.translated.net https://image.pollinations.ai https://text.pollinations.ai https://commons.wikimedia.org https://api.openverse.org https://pixabay.com https://api.allorigins.win https://api.netlify.com https://neocities.org https://*.supabase.co; frame-src 'self' https://www.google.com https://maps.google.com https://player.vimeo.com https://www.youtube.com https://open.spotify.com https://calendly.com https://coverr.co https:; object-src 'none'; base-uri 'self'; form-action 'self' https:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://plausible.io https://www.googletagmanager.com https://embed.tawk.to; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https://picsum.photos https://fastly.picsum.photos https://i.pravatar.cc https://api.dicebear.com https://api.iconify.design https://image.pollinations.ai https://loremflickr.com https://upload.wikimedia.org; font-src 'self' data: https://fonts.gstatic.com; media-src 'self' data: blob: https://coverr.co; connect-src 'self' https://picsum.photos https://randomuser.me https://api.quotable.io https://api.coingecko.com https://api.github.com https://api.frankfurter.app https://en.wikipedia.org https://api.open-meteo.com https://geocoding-api.open-meteo.com https://api.iconify.design https://api.mymemory.translated.net https://image.pollinations.ai https://text.pollinations.ai https://commons.wikimedia.org https://api.openverse.org https://pixabay.com https://api.allorigins.win https://api.netlify.com https://neocities.org https://*.supabase.co; frame-src 'self' https://www.google.com https://maps.google.com https://player.vimeo.com https://www.youtube.com https://open.spotify.com https://calendly.com https://coverr.co https:; object-src 'none'; base-uri 'self'; form-action 'self' https:">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'><defs><linearGradient id='g' x1='0' y1='1' x2='1' y2='0'><stop stop-color='%23a06bff'/><stop offset='1' stop-color='%23e0c7ff'/></linearGradient></defs><path d='M14 40c5-14 9-14 14 0s9 14 14 0 9-14 14 0' stroke='url(%23g)' stroke-width='4' stroke-linecap='round'/><path d='M20 52V13h14c10 0 16 6 16 15s-6 15-16 15h-7' stroke='%23ffffff' stroke-width='5.5' stroke-linejoin='round'/><circle cx='14' cy='52' r='2.5' fill='%23a06bff'/><circle cx='56' cy='52' r='2.5' fill='%23e0c7ff'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -275,6 +282,8 @@
 <script src="data/proof.js"></script>
 <script src="data/sitecare.js"></script>
 <script src="data/refcode.js"></script>
+<!-- Pre-flight reads site care, so it loads after it. -->
+<script src="data/preflight.js"></script>
 <script src="modules/modal-focus.js"></script>
 <script src="modules/supabase.js"></script>
 <script src="modules/ai.js"></script>

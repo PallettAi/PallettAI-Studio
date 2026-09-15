@@ -985,6 +985,40 @@ const App = (() => {
     return AI.qualityGate(p, { html, htmlPages });
   }
 
+  /* ---------------- Pre-flight — the publish-time half of the gate ----------
+    The quality gate reads the rendered export, which is the right thing to
+    judge how the site is BUILT. It cannot see the failures that only exist the
+    moment a project becomes a URL: two pages that export to the same filename,
+    a menu link to a page that was never made, an empty project. Those are
+    visitor-visible and invisible everywhere else, so they ride the same modal
+    rather than a second one — a creator should not have to pass two gates to
+    press one button. */
+  function preflightFor(project) {
+    const p = project || current();
+    if (!p) return null;
+    try {
+      if (typeof Preflight !== 'undefined' && Preflight.run) return Preflight.run(p, { title: (p.site && p.site.name) || p.name });
+    } catch (e) { /* the gate must never fail a project because a report threw */ }
+    return null;
+  }
+  function preflightHtml(pre) {
+    if (!pre) return '';
+    const diag = (l) => (l === 'blocker' ? 'error' : l === 'warning' ? 'warn' : 'info');
+    const icon = (l) => (l === 'blocker' ? '⛔' : l === 'warning' ? '🟡' : '🔵');
+    const row = (f) => `<div class="quality-issue diag-row diag-${diag(f.level)}">
+          <div class="quality-issue-main"><span>${icon(f.level)}</span><div><b>${esc(f.msg)}</b>${f.fix ? `<small>${esc(f.fix)}</small>` : ''}</div></div>
+        </div>`;
+    // Notes are deliberately left out here: the gate is the moment to decide,
+    // not to read a maintenance list. Site health shows the whole report.
+    const body = pre.blockers.map(row).join('') + pre.warnings.map(row).join('');
+    if (!body) {
+      return `<h4 style="margin:18px 0 8px;font-size:.9rem">Pre-flight</h4>
+      <div class="quality-clear">✓ ${esc(pre.headline)}${pre.notes.length ? ' (' + pre.notes.length + ' note' + (pre.notes.length === 1 ? '' : 's') + ' in Site health)' : ''}</div>`;
+    }
+    return `<h4 style="margin:18px 0 8px;font-size:.9rem">Pre-flight — <span style="color:${pre.ready ? 'var(--muted)' : '#ef4444'}">${esc(pre.headline)}</span></h4>
+      <div class="quality-list">${body}</div>`;
+  }
+
   /*
     The copilot audits the same thing the publish gate does — the rendered
     export, not just the model — because the two disagreed in a way that
@@ -1105,6 +1139,7 @@ const App = (() => {
     const p = qualityTarget || current();
     if (!audit || !p) return;
     const color = qualityColor(audit.letter);
+    const pre = preflightFor(p);
     const issues = audit.issues || [];
     const rows = issues.length
       ? issues.map((issue) => `
@@ -1126,12 +1161,13 @@ const App = (() => {
         <span><b>${audit.errors}</b> blocking</span><span><b>${audit.warnings}</b> improvements</span><span><b>${audit.safeFixes}</b> safe repairs</span>
       </div>
       <div class="quality-list">${rows}</div>
+      ${preflightHtml(pre)}
       ${perfHtml(p)}
       <div class="quality-note">Safe repairs only normalize structure, metadata, IDs, alt text and unsafe links — they never rewrite client claims or delete authored content. Your current version remains undoable.</div>
       <div class="quality-actions">
         <button class="btn primary small" id="qualityRepair" ${audit.safeFixes ? '' : 'disabled'}>${repairLabel}</button>
         <button class="btn ghost small" id="qualityReaudit">↻ Run audit again</button>
-        ${audit.ready ? `<button class="btn primary small" id="qualityExport">${afterLabel}</button>` : '<button class="btn ghost small" id="qualityExportAnyway">Export anyway</button>'}
+        ${audit.ready && (!pre || pre.ready) ? `<button class="btn primary small" id="qualityExport">${afterLabel}</button>` : '<button class="btn ghost small" id="qualityExportAnyway">Export anyway</button>'}
       </div>`, true);
     const repair = $('#qualityRepair');
     if (repair) repair.onclick = () => {
@@ -4670,7 +4706,11 @@ const App = (() => {
     const skipQuality = !!(options && options.skipQuality);
     if (!skipQuality) {
       const audit = qualityReport(c);
-      if (audit && audit.issues && audit.issues.some((issue) => issue.level !== 'info')) {
+      const pre = preflightFor(c);
+      // A pre-flight blocker is the same kind of thing as a quality finding, and
+      // both are shown in one modal — so either one diverts the click into the
+      // gate rather than publishing. "Export anyway" remains the way past it.
+      if ((audit && audit.issues && audit.issues.some((issue) => issue.level !== 'info')) || (pre && !pre.ready)) {
         return openQualityGate(() => openPublish({ skipQuality: true }), c);
       }
     }
