@@ -576,12 +576,13 @@ outcome (RNG on the server, not the client → can't be replayed or re-rolled):
 | +3 credits | 2/12 |
 | +5 credits | 2/12 |
 | +10 credits | 1/12 |
-| +3h Pro time | 2/12 |
+| +3h Pro time | 1/12 |
 | +12h Pro time | 1/12 |
 | +1 day Pro time | 1/12 |
 | +3 days Pro time | 1/12 |
 | Streak shield | 1/12 (converts to +5 credits if already at cap) |
 | **+7 days Pro (jackpot)** | 1/12 |
+| **+1 month Pro+ (grand prize)** | 1/12 — rides the review-gift window (`review_proplus_until`), added 2026-09-14 |
 
 Odds are **published in the UI** next to the wheel (transparency is the fix for the universal
 "it's rigged" complaint — see D4/Fetch example). Expected value ≈ 9 credits + ~17h Pro time per

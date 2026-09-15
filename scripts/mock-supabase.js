@@ -172,7 +172,7 @@ function activateLicense(u, pCode) {
 
 // ---------- daily streak + wheel (schema.sql §11-18) ----------
 const WHEEL_PICKS = [
-  ['credits', 3], ['credits', 5], ['credits', 10], ['pro_hours', 3], ['pro_hours', 3], ['pro_hours', 12],
+  ['credits', 3], ['credits', 5], ['credits', 10], ['pro_hours', 3], ['proplus_hours', 720], ['pro_hours', 12],
   ['pro_hours', 24], ['pro_hours', 72], ['shield', 0], ['pro_hours', 168], ['credits', 5], ['credits', 3]
 ]; // index 0 = pick 1 … index 11 = pick 12 (matches schema.sql §17)
 
@@ -262,20 +262,26 @@ function spinWheel(u) {
   if (u.spinForce) { pick = u.spinForce; u.spinForce = null; }
   else pick = 1 + Math.floor(Math.random() * 12);
   const [type0, amt0] = WHEEL_PICKS[pick - 1];
-  let type = type0, amount = amt0, trialExpiresAt = null;
+  let type = type0, amount = amt0, trialExpiresAt = null, reviewProPlusUntil = null;
   if (type === 'credits') s.bonus_credits += amount;
   else if (type === 'pro_hours') {
     const base = Math.max(Date.now(), new Date(u.profile.trial_expires_at || 0).getTime());
     const until = new Date(base + amount * 3600e3);
     u.profile.trial_expires_at = until.toISOString();
     trialExpiresAt = until.toISOString();
+  } else if (type === 'proplus_hours') {
+    // Grand prize: 1 month of Pro+ via the review-gift window (schema §17).
+    const base = Math.max(Date.now(), new Date(u.profile.review_proplus_until || 0).getTime());
+    const until = new Date(base + amount * 3600e3);
+    u.profile.review_proplus_until = until.toISOString();
+    reviewProPlusUntil = until.toISOString();
   } else {
     if (s.shields < 2) { s.shields += 1; type = 'shield'; amount = 0; }
     else { type = 'credits'; amount = 5; s.bonus_credits += 5; }
   }
   s.wheel_pending = false;
   u.spins.push({ user_id: u.id, spin_date: today, prize_type: type, prize_amount: amount });
-  return { ...streakPayload(u), outcome: 'spun', prize: { type, amount }, trialExpiresAt };
+  return { ...streakPayload(u), outcome: 'spun', prize: { type, amount }, trialExpiresAt, reviewProPlusUntil };
 }
 
 // ---------- AI-credit accounting (schema.sql §20-25 / Design A) ----------

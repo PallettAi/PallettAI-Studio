@@ -166,6 +166,15 @@ const dayMs = 864e5;
   r = await SUPABASE.claimDailyReward('edit');
   check('next week starts again at Day 1 (loop resets)', r.ok && r.claim.prizeAmount === 2 && r.cycleDay === 1 && r.streak === 8);
 
+  console.log('== dave: Pro+ grand prize segment ==');
+  await forceWheel();       // debug: grant a fresh pending wheel
+  await forceSpin(5);       // seg 5 = 1 month Pro+ grand prize in the mock/DB mapping
+  r = await SUPABASE.spinWheel();
+  check('forced grand prize → 1 month Pro+ (720h)', r.ok && r.outcome === 'spun' && r.prize.type === 'proplus_hours' && r.prize.amount === 720, r.prize);
+  check('grand prize returns reviewProPlusUntil (~1 month out)', !!r.reviewProPlusUntil && new Date(r.reviewProPlusUntil).getTime() > nowEpoch + 29 * dayMs - 60000, r.reviewProPlusUntil);
+  r = await SUPABASE.spinWheel();
+  check('no re-rolls after the grand prize either', r.ok && r.outcome === 'not-ready');
+
   console.log('== carol: shield-at-cap overflow converts to credits ==');
   await SUPABASE.signOut();
   r = await SUPABASE.signIn('carol@test.local', 'password123');

@@ -552,7 +552,8 @@ end $$;
 -- so a spin can never be replayed. Outcome is picked by the server.
 -- 12 equal segments, every one wins:
 --   +3 credits ×2 · +5 credits ×2 · +10 credits ×1
---   3h Pro ×2 · 12h Pro ×1 · 1d Pro ×1 · 3d Pro ×1
+--   3h Pro ×1 · 12h Pro ×1 · 1d Pro ×1 · 3d Pro ×1
+--   1 month Pro+ grand prize ×1 (review-gift window)
 --   streak shield ×1 (→ +5 credits at cap 2) · 7d Pro jackpot ×1
 create or replace function public.spin_wheel()
 returns jsonb
@@ -585,7 +586,7 @@ begin
     when 2  then v_type := 'credits';  v_amount := 5;
     when 3  then v_type := 'credits';  v_amount := 10;
     when 4  then v_type := 'pro_hours'; v_amount := 3;
-    when 5  then v_type := 'pro_hours'; v_amount := 3;
+    when 5  then v_type := 'proplus_hours'; v_amount := 720;  -- 1 month Pro+ grand prize
     when 6  then v_type := 'pro_hours'; v_amount := 12;
     when 7  then v_type := 'pro_hours'; v_amount := 24;
     when 8  then v_type := 'pro_hours'; v_amount := 72;
@@ -604,6 +605,15 @@ begin
       make_interval(hours => v_amount)
     where id = auth.uid()
     returning trial_expires_at into v_until;
+  elsif v_type = 'proplus_hours' then
+    -- Pro+ time rides the review-gift window (review_proplus_until), so every
+    -- entitlement check — unbranded exports, white-label handoff, brand
+    -- presets — already honours it. Extends an existing window, never shortens.
+    update public.profiles set review_proplus_until =
+      greatest(coalesce(review_proplus_until, now()), now()) +
+      make_interval(hours => v_amount)
+    where id = auth.uid()
+    returning review_proplus_until into v_until;
   else
     -- shield segment: grants a shield unless already at the cap of 2
     if v_row.shields < 2 then
@@ -632,7 +642,8 @@ begin
   return v_payload || jsonb_build_object(
     'outcome', 'spun',
     'prize', jsonb_build_object('type', v_type, 'amount', v_amount),
-    'trialExpiresAt', v_until
+    'trialExpiresAt', case when v_type = 'pro_hours' then v_until end,
+    'reviewProPlusUntil', case when v_type = 'proplus_hours' then v_until end
   );
 end $$;
 
