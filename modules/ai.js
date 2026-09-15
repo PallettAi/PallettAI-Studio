@@ -1147,6 +1147,11 @@ const AI = (() => {
     try { if (typeof require === 'function') return require('../data/ai-compose.js'); } catch (e) { /* classic script */ }
     return null;
   }
+  function copyLib() {
+    if (typeof Copy !== 'undefined') return Copy;
+    try { if (typeof require === 'function') return require('../data/copy.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
   function aaPaletteIds(ids) {
     const list = Array.isArray(ids) ? ids : [];
     const ok = list.filter((pid) => {
@@ -2085,7 +2090,33 @@ const AI = (() => {
   }
 
   // shared copy bank — used by generateSite, sampleSection and enhanceSection
-  function copyBank(type, brand, focus) {
+  // rotates on every Enhance press so "enhance" yields genuinely different
+  // wording rather than re-printing the same bank
+  let copyTurn = 0;
+
+  function copyBank(type, brand, focus, ctx) {
+    // The copy engine owns the wording. The legacy bank below is kept as a
+    // fallback so a missing module degrades instead of breaking generation.
+    const CopyLib = copyLib();
+    const extra = ctx || {};
+    if (CopyLib && typeof CopyLib.build === 'function') {
+      try {
+        const built = CopyLib.build({
+          type, brand, focus,
+          area: extra.area || '',
+          offer: extra.offer || '',
+          proofs: extra.proofs || [],
+          prompt: extra.prompt || '',
+          taste: extra.taste || '',
+          seed: extra.seed != null ? extra.seed : undefined,
+          // page + avoid are what stop a second page reprinting the first one
+          page: extra.page || '',
+          avoid: extra.avoid || [],
+          salt: extra.salt || 0
+        });
+        if (built && built.bank) return built.bank;
+      } catch (e) { /* fall through to the legacy bank */ }
+    }
     const fillS = (str) => String(str || '').replace(/\{brand\}/g, brand).replace(/\{focus\}/g, focus);
     const aboutFull = fillS(type.about || '{brand} is here for {focus}.');
     const heroText = aboutFull.length > 220 ? aboutFull.slice(0, 220).replace(/\s+\S*$/, '') + '…' : aboutFull;
@@ -2227,7 +2258,14 @@ const AI = (() => {
     const dna = pickDesignDNA(type, (raw + ' ' + webText).trim(), opts, seed + jitter);
     let tagline = fill(pick(effType.taglines, seed + jitter), brand, focus);
 
-    const bank = copyBank(effType, brand, focus);
+    const bank = copyBank(effType, brand, focus, {
+      area,
+      offer: (brief && brief.offer) || '',
+      proofs: (brief && brief.proofs) || [],
+      prompt: raw,
+      taste: detectTaste(raw),
+      seed
+    });
     // — real client knowledge from their existing website takes the wheel —
     // A filled brief keeps copy (tagline / about / reviews / service bodies).
     if (website && !filled) {
@@ -2295,7 +2333,9 @@ const AI = (() => {
     }
     bank.hero = { ...bank.hero, subtitle: tagline };
     if (area && bank.about && Array.isArray(bank.about.items) && bank.about.items[1]) {
-      bank.about.items[1] = { icon: '✓', title: 'Based in ' + area };
+      // don't name the area twice when the copy engine already worked it in
+      const namedAlready = bank.about.items.some((it) => it && String(it.title || '').indexOf(area) !== -1);
+      if (!namedAlready) bank.about.items[1] = { icon: '✓', title: 'Based in ' + area };
     }
     const S = (name) => {
       let preset = bank[name] || {};
@@ -2399,7 +2439,12 @@ const AI = (() => {
         photoGrade
       }
     };
-    if (filled && !onePager) splitPages(project, niche, area);
+    if (filled && !onePager) {
+      splitPages(project, niche, area, {
+        brand, focus, brief: brief || {}, prompt: raw,
+        taste: detectTaste(raw), seed, type
+      });
+    }
     const Composer = composeLib();
     if (Composer && Composer.applyCompose) {
       Composer.applyCompose(project, {
@@ -2436,7 +2481,34 @@ const AI = (() => {
     return c;
   }
 
-  function splitPages(project, niche, area) {
+  // every line already published on a page, so later pages can avoid repeating it
+  function pageLines(sections) {
+    const out = [];
+    (sections || []).forEach((s) => {
+      [s.title, s.subtitle, s.text].forEach((x) => { if (x) out.push(x); });
+      (s.items || []).forEach((it) => { [it.title, it.text].forEach((x) => { if (x) out.push(x); }); });
+    });
+    return out;
+  }
+
+  /*
+    A multi-page site is built page by page, each with its own opening and its
+    own wording.
+
+    It used to be built by cloning the home page's sections onto every other
+    page, which produced two defects a visitor would notice: clicking
+    "Services" showed the exact block they had just scrolled past, and every
+    secondary page shipped with no hero section at all — so a freshly generated
+    multi-page site failed the app's own quality gate with a D.
+
+    Sections now have a role. The home page teases the client's promises; the
+    services page carries the full list of what we do; proof lives on About.
+    Every page opening is written for that page, and later pages are told what
+    has already been published so they cannot repeat it.
+  */
+  function splitPages(project, niche, area, ctx) {
+    const C = ctx || {};
+    const Copy = copyLib();
     const all = (project.site && project.site.sections) || [];
     const first = (t) => all.find((s) => s.type === t);
     const hero = first('hero');
@@ -2449,30 +2521,137 @@ const AI = (() => {
     const table = first('table');
     const contact = first('contact');
     const faq = first('faq');
+    const brand = C.brand || (project.site && project.site.name) || '';
+    const type = C.type || {};
+    const effType = effectiveType(type, niche);
+    const brief = C.brief || {};
+
+    // a bank for one page, told which page it is and what is already published
+    const bankFor = (pageKey, avoid, opts) => copyBank(effType, brand, C.focus || '', {
+      area: area || '',
+      offer: brief.offer || '',
+      proofs: (opts && opts.proofs) || [],
+      prompt: C.prompt || '',
+      taste: C.taste || '',
+      seed: C.seed,
+      page: pageKey,
+      avoid: avoid || []
+    });
+
+    // an opening written for this page, rather than another copy of the hero
+    const pageHero = (pageKey, bank, avoid) => {
+      const intro = (Copy && Copy.pageIntro)
+        ? Copy.pageIntro(pageKey, { brand, focus: C.focus || '', area: area || '', seed: C.seed, avoid: avoid || [] })
+        : null;
+      if (!intro) return hero ? cloneSec(hero) : sec('hero', { subtitle: brand });
+      return sec('hero', {
+        layout: (hero && hero.layout) || '',
+        title: intro.title,
+        subtitle: intro.subtitle,
+        // the page's own description: reusing the home page's paragraph here
+        // put the same sentence on four pages at once
+        text: intro.body || '',
+        animation: 'fade-up'
+      });
+    };
+
+    // ---- HOME: a teaser, not the whole story ----
+    const proofs = (brief.proofs || []).filter(Boolean);
+    const homeBank = bankFor('home', [], { proofs });
     const home = [];
     if (hero) home.push(hero);
     if (feat) {
       const teaser = cloneSec(feat);
-      teaser.items = (teaser.items || []).slice(0, 3);
+      // the client's own promises lead the home page; the full service list
+      // belongs to the services page, so the two never say the same thing
+      const derived = proofs.slice(0, 3).map((p, i) => {
+        const base = (teaser.items || [])[i] || {};
+        const head = (Copy && Copy.titleFromProof) ? Copy.titleFromProof(p) : '';
+        return { ...base, title: head || base.title || 'What you get', text: p };
+      });
+      teaser.items = derived.length ? derived : (teaser.items || []).slice(0, 3);
+      teaser.title = homeBank.features.title || teaser.title;
+      teaser.subtitle = homeBank.features.subtitle || teaser.subtitle;
       home.push(teaser);
     }
-    if (stats) home.push(stats);
-    else if (testi) home.push(testi);
-    if (cta) home.push(cta);
+    if (stats) home.push(cloneSec(stats));
+    if (cta) home.push(cloneSec(cta));
+    if (contact) {
+      const c = cloneSec(contact);
+      c.title = homeBank.contact.title || c.title;
+      c.subtitle = homeBank.contact.subtitle || c.subtitle;
+      home.push(c);
+    }
+
+    // ---- SERVICES / MENU: the full list ----
     const serviceSlug = niche && niche.menu ? 'menu' : 'services';
     const serviceName = niche && niche.menu ? 'Menu' : 'Services';
-    const services = [];
-    if (feat) services.push(cloneSec(feat));
-    if (pricing) services.push(cloneSec(pricing));
+    const avoidA = pageLines(home);
+    const servicesBank = bankFor(serviceSlug, avoidA, { proofs: [] });
+    const services = [pageHero(serviceSlug, servicesBank, avoidA)];
+    if (feat) {
+      const full = cloneSec(feat);
+      // The services page is where a service list belongs. When the client
+      // studied their existing site, its real service names come with us — but
+      // only the names, never the home page's bodies, which would duplicate it.
+      const studiedUsed = Array.isArray(project.site.studied) && project.site.studied.length > 0;
+      full.items = (servicesBank.features.items || []).map((it, i) => {
+        const from = (feat.items || [])[i];
+        return studiedUsed && from && from.title ? { ...it, title: from.title } : { ...it };
+      });
+      full.title = servicesBank.features.title || full.title;
+      full.subtitle = servicesBank.features.subtitle || full.subtitle;
+      services.push(full);
+    }
+    if (pricing) {
+      const p = cloneSec(pricing);
+      p.title = servicesBank.pricing.title || p.title;
+      p.subtitle = servicesBank.pricing.subtitle || p.subtitle;
+      services.push(p);
+    }
     if (table) services.push(cloneSec(table));
-    const aboutPg = [];
-    if (about) aboutPg.push(cloneSec(about));
-    if (stats) aboutPg.push(cloneSec(stats));
-    if (testi) aboutPg.push(cloneSec(testi));
-    const contactPg = [];
-    if (contact) contactPg.push(cloneSec(contact));
-    if (faq) contactPg.push(cloneSec(faq));
+
+    // ---- ABOUT: the story and the proof ----
+    const avoidB = avoidA.concat(pageLines(services));
+    const aboutBank = bankFor('about', avoidB, { proofs });
+    const aboutPg = [pageHero('about', aboutBank, avoidB)];
+    if (about) {
+      const a = cloneSec(about);
+      a.title = aboutBank.about.title || a.title;
+      a.text = aboutBank.about.text || a.text;
+      if (Array.isArray(aboutBank.about.items) && aboutBank.about.items.length) a.items = aboutBank.about.items.map((it) => ({ ...it }));
+      aboutPg.push(a);
+    }
+    if (testi) {
+      const t = cloneSec(testi);
+      t.title = aboutBank.testimonials.title || t.title;
+      t.subtitle = aboutBank.testimonials.subtitle || t.subtitle;
+      aboutPg.push(t);
+    }
+    if (cta) {
+      const z = cloneSec(cta);
+      z.title = aboutBank.cta.title || z.title;
+      z.text = aboutBank.cta.text || z.text;
+      aboutPg.push(z);
+    }
+
+    // ---- CONTACT: how to reach us ----
+    const avoidC = avoidB.concat(pageLines(aboutPg));
+    const contactBank = bankFor('contact', avoidC, { proofs: [] });
+    const contactPg = [pageHero('contact', contactBank, avoidC)];
+    if (contact) {
+      const c = cloneSec(contact);
+      c.title = contactBank.contact.title || c.title;
+      c.subtitle = contactBank.contact.subtitle || c.subtitle;
+      contactPg.push(c);
+    }
+    if (faq) {
+      const q = cloneSec(faq);
+      q.title = contactBank.faq.title || q.title;
+      contactPg.push(q);
+    }
     if (area) contactPg.push(sec('map', { title: 'Find us', subtitle: 'We serve ' + area + ' and nearby.', extra: area }));
+
     project.site.pages = [
       { id: 'pg-home', name: 'Home', slug: 'index', sections: home },
       { id: 'pg-' + serviceSlug, name: serviceName, slug: serviceSlug, sections: services },
@@ -2640,7 +2819,11 @@ const AI = (() => {
     else if (!/^https?:\/\//i.test(String(s.url))) add('site-url', 'warn', 'The site URL does not include http:// or https://.', 'Prefix the domain with https://.', true);
     if (!s.ctaText) add('cta-text', 'warn', 'The primary CTA has no label.', 'Use “Get started” unless the business has a clearer action.', true);
     if (s.ctaLink && /^javascript:/i.test(String(s.ctaLink))) add('unsafe-cta', 'error', 'The primary CTA contains an unsafe javascript: link.', 'Replace it with an https:// URL or an in-page #anchor.', true);
-    if (s.formEndpoint && !/^https:\/\//i.test(String(s.formEndpoint))) add('form-endpoint', 'warn', 'The form delivery endpoint is not an HTTPS URL.', 'Use a secure Formspree, Web3Forms or HTTPS JSON endpoint.', false);
+    // The builder treats a bare email address as a valid destination (it posts to
+    // FormSubmit over HTTPS, no signup and no key). Flagging that as "not HTTPS"
+    // told clients their working setup was broken, so only genuinely unusable
+    // values are reported now.
+    if (s.formEndpoint && !/^https:\/\//i.test(String(s.formEndpoint)) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s.formEndpoint).trim())) add('form-endpoint', 'warn', 'The form destination is neither an HTTPS URL nor an email address.', 'Use an https:// Formspree or Web3Forms endpoint, or the business email address (delivered securely by FormSubmit).', false);
     if (!sections.some((x) => x && x.type === 'contact')) add('contact-section', 'warn', 'No contact section is present.', 'Add a clear way for visitors to reach the business.', true);
     if (!sections.some((x) => x && x.type === 'cta')) add('cta-section', 'info', 'No dedicated CTA section is present.', 'A focused call to action can improve conversion.', false);
     sections.forEach((sec, i) => {
@@ -2690,6 +2873,28 @@ const AI = (() => {
       if (pageSections.length && !pageSections.some((sec) => sec && sec.type === 'hero')) add('page-no-hero-' + pageIndex, 'warn', '“' + pageName + '” has no hero section.', 'Add a clear opening section for this page.', true);
       if (pageSections.length && !pageSections.some((sec) => sec && sec.type === 'contact')) add('page-no-contact-' + pageIndex, 'info', '“' + pageName + '” has no contact section.', 'Link visitors to a clear way to get in touch.', false);
     });
+    // Two pages must not print the same heading. This is the first thing a
+    // visitor notices, and it is how pages cloned from the home page used to
+    // give themselves away.
+    try {
+      const seenHeading = new Map();
+      let reported = 0;
+      pages.forEach((page) => {
+        const pageName = String(page.name || page.slug || 'Page');
+        (page.sections || []).forEach((sec) => {
+          [sec && sec.title, sec && sec.subtitle].filter(Boolean).forEach((raw) => {
+            const key = String(raw).trim().toLowerCase();
+            if (key.length < 4) return;
+            const owner = seenHeading.get(key);
+            if (owner && owner !== pageName) {
+              if (reported++ < 3) add('page-repeated-heading-' + seenHeading.size + '-' + reported, 'warn', '“' + pageName + '” repeats a heading already used on “' + owner + '”.', 'Rewrite one of them so each page says something of its own.', false);
+            } else if (!owner) {
+              seenHeading.set(key, pageName);
+            }
+          });
+        });
+      });
+    } catch (e) { /* duplicate detection is advisory */ }
     try {
       const pal = DB.getPalette(s.palette);
       const checks = DB.paletteChecks(pal) || [];
@@ -2735,9 +2940,12 @@ const AI = (() => {
       const anchorHrefs = anchorTags.map((tag) => (tag.match(/\bhref\s*=\s*["']([^"']*)["']/i) || [null, ''])[1].trim());
       const badLinks = anchorHrefs.filter((href) => !href || /^javascript:/i.test(href) || /^data:/i.test(href));
       if (badLinks.length) add('html-links', 'error', badLinks.length + ' exported link' + (badLinks.length === 1 ? '' : 's') + ' is empty or unsafe.', 'Replace unsafe links with an https:// URL or an in-page #anchor.', false);
+      // Forms in an export post by script, not by a markup action attribute, so
+      // an action-less <form> is normal and was never the defect. The defect is
+      // an export that accepts a message and delivers nothing: the visitor
+      // believes they got in touch, and the enquiry is lost silently.
       const formTags = markup.match(/<form\b[^>]*>/gi) || [];
-      const formsWithoutAction = formTags.filter((tag) => !/\baction\s*=\s*["'][^"']+["']/i.test(tag)).length;
-      if (formsWithoutAction) add('html-form-action', 'warn', formsWithoutAction + ' exported form' + (formsWithoutAction === 1 ? '' : 's') + ' has no delivery action.', 'Configure a secure form endpoint before publishing.', false);
+      if (formTags.length && !String(s.formEndpoint || '').trim()) add('html-form-action', 'warn', formTags.length + ' form' + (formTags.length === 1 ? '' : 's') + ' on the exported site accept' + (formTags.length === 1 ? 's' : '') + ' messages but deliver' + (formTags.length === 1 ? 's' : '') + ' nothing.', 'Point the form at the business email or a Formspree/Web3Forms endpoint so enquiries actually arrive.', false);
       const headingLevels = (markup.match(/<h[1-6](?:\s|>)/gi) || []).map((tag) => Number((tag.match(/h([1-6])/i) || [])[1] || 0));
       if (headingLevels.length && headingLevels[0] > 1) add('html-heading-order', 'warn', 'The first exported heading is h' + headingLevels[0] + ', not h1.', 'Give the page one primary h1 heading.', false);
       if (headingLevels.some((level, j) => j > 0 && level > headingLevels[j - 1] + 1)) add('html-heading-jump', 'info', 'The export skips a heading level.', 'Keep heading levels sequential for screen readers.', false);
@@ -2777,8 +2985,19 @@ const AI = (() => {
     return { score, letter, ready: errors === 0, errors, warnings, safeFixes, issues, summary: errors ? 'Blocking issues remain.' : warnings ? 'Publishable, with improvements available.' : 'Ready to publish.' };
   }
 
-  function repairQualityPage(project) {
+  /*
+    opts.isHomePage (default true) gates the repairs that may only happen once
+    per site. Inventing a contact block on every secondary page used to be part
+    of the "safe" pass, and it was not safe at all: each invented block repeated
+    the same heading, so running the repair measurably LOWERED the site's own
+    score. A repair that makes things worse is the one thing a repair pass must
+    never do, and the gate's advice for that finding — "link visitors to a clear
+    way to get in touch" — is an info-level suggestion, not a defect to stamp
+    onto every page.
+  */
+  function repairQualityPage(project, opts) {
     if (!project) return { changed: 0, changes: [] };
+    const isHomePage = !opts || opts.isHomePage !== false;
     project.site = project.site || {};
     const s = project.site;
     const changes = [];
@@ -2850,7 +3069,7 @@ const AI = (() => {
         if (variants.length && !variants.some((v) => v.id === section.layout)) { section.layout = ''; change('Reset an unknown ' + section.type + ' layout variant'); }
       }
     });
-    if (!sections.some((x) => x.type === 'contact')) {
+    if (isHomePage && !sections.some((x) => x.type === 'contact')) {
       sections.push(sec('contact', { title: 'Say hello' }));
       change('Added a contact section for a clear publishing path');
     }
@@ -2897,7 +3116,7 @@ const AI = (() => {
     pages.forEach((page) => {
       if (!page || typeof page !== 'object') return;
       s.sections = Array.isArray(page.sections) ? page.sections : [];
-      const result = repairQualityPage(project);
+      const result = repairQualityPage(project, { isHomePage: page.slug === 'index' || page === pages[0] });
       page.sections = s.sections;
       const prefix = page.slug === 'index' ? '' : String(page.name || page.slug || 'Page') + ': ';
       result.changes.forEach((msg) => changes.push(prefix + msg));
@@ -3698,7 +3917,19 @@ const AI = (() => {
     const focus = project.aiSubject || focusPhrase(project.site.name + ' ' + (project.site.tagline || ''));
     const s = project.site;
     const effType = effectiveType(type, nicheForProject(project));
-    const bank = copyBank(effType, brand, focus);
+    // rotate the salt so "polish" lands on different wording, not the same bank
+    copyTurn += 1;
+    const polishBrief = s.brief || {};
+    const polishPrompt = (s.fingerprint && s.fingerprint.prompt) || s.tagline || brand;
+    const bank = copyBank(effType, brand, focus, {
+      area: s.area || '',
+      offer: polishBrief.offer || '',
+      proofs: polishBrief.proofs || [],
+      prompt: polishPrompt,
+      taste: detectTaste(polishPrompt),
+      seed: (s.fingerprint && s.fingerprint.seed),
+      salt: copyTurn * 7919
+    });
     let applied = 0;
     s.eyebrow = 'Welcome to ' + brand;
     // rotate to a different variant than the current one so the polish is always visible
@@ -3830,10 +4061,62 @@ const AI = (() => {
     return { palette: dna.palette, font: dna.font, fontDisplay: dna.fontDisplay, look: dna.look, salt: fp.salt };
   }
 
+  // Section-level fallback prose. The first generation returned ONE hard-coded
+  // sentence for every section of every site, so an about block and a pricing
+  // block came out word for word identical.
+  const SECTION_FALLBACK = {
+    about: [
+      '{brand} has been doing this long enough to know what actually matters about {topic}.',
+      'We started {brand} because {topic} deserved better than what was on offer.',
+      '{brand} is a small team, and {topic} is what we spend our time getting right.'
+    ],
+    features: [
+      'Everything below is included as standard when you work with {brand}.',
+      'These are the parts of {topic} we hear about most from clients.',
+      'No tiers and no upsells \u2014 this is simply how we approach {topic}.'
+    ],
+    stats: [
+      'A few numbers behind {topic} at {brand}.',
+      'What {topic} looks like in practice at {brand}.'
+    ],
+    gallery: [
+      'A look at recent {topic} from {brand}.',
+      'Work from the last few months at {brand}.'
+    ],
+    pricing: [
+      'Clear prices for {topic}, agreed before anything starts.',
+      'What {topic} costs at {brand}, with nothing hidden.'
+    ],
+    testimonials: [
+      'What people say after working with {brand}.',
+      'Feedback from clients on {topic}.'
+    ],
+    faq: [
+      'The questions we are asked most about {topic}.',
+      'Answers to what comes up again and again about {topic}.'
+    ],
+    cta: [
+      'If {topic} is what you need, {brand} is who to ask.',
+      'Tell {brand} what you need and we will be straight with you.'
+    ],
+    contact: [
+      'Reach {brand} directly \u2014 we read every message.',
+      'Get in touch with {brand} about {topic}.'
+    ],
+    blog: ['Notes and updates from {brand}.', 'Occasional writing from the team at {brand}.'],
+    team: ['The people behind {brand}.', 'Who you will actually be working with at {brand}.'],
+    default: ['{brand} takes {topic} seriously, and it shows.', 'At {brand}, {topic} is what we do.']
+  };
   function localSectionText(section, prompt, project) {
-    const brand = project.site.name;
-    const topic = prompt || section.title || 'this';
-    return `At ${brand}, ${String(topic).toLowerCase()} is where we shine — crafted with care, delivered with consistency, and measured by the results our clients feel from day one.`;
+    const site = (project && project.site) || {};
+    const brand = site.name || 'we';
+    const topic = String(prompt || section.title || section.type || 'this')
+      .replace(/[.!?]+$/, '')
+      .toLowerCase()
+      .trim() || 'this';
+    const pool = SECTION_FALLBACK[section.type] || SECTION_FALLBACK.default;
+    const pick = hash(brand + '|' + section.type + '|' + topic) % pool.length;
+    return String(pool[pick]).replace(/\{brand\}/g, brand).replace(/\{topic\}/g, topic);
   }
 
   async function enhanceSection(section, prompt, project, onlineEnabled) {
@@ -3842,7 +4125,19 @@ const AI = (() => {
     if (itemTypes.includes(section.type)) {
       // local: reuse the business-type copy bank so every item type gets refreshed
       const type = TYPES.find((x) => x.id === project.aiType) || detectType(project.site.name);
-      const bank = copyBank(effectiveType(type, nicheForProject(project)), project.site.name, project.aiSubject || focusPhrase(project.site.name + ' ' + (project.site.tagline || '')));
+      copyTurn += 1;
+      const briefForCopy = (project.site && project.site.brief) || {};
+      const copyPrompt = (project.site.fingerprint && project.site.fingerprint.prompt) || project.site.tagline || project.site.name || '';
+      const bank = copyBank(effectiveType(type, nicheForProject(project)), project.site.name, project.aiSubject || focusPhrase(project.site.name + ' ' + (project.site.tagline || '')), {
+        area: project.site.area || '',
+        offer: briefForCopy.offer || '',
+        proofs: briefForCopy.proofs || [],
+        prompt: copyPrompt,
+        taste: detectTaste(copyPrompt),
+        seed: (project.site.fingerprint && project.site.fingerprint.seed),
+        // a fresh salt per press, so Enhance is visibly different each time
+        salt: copyTurn * 7919
+      });
       const fresh = bank[section.type];
       let n = 0;
       if (fresh && fresh.items && fresh.items.length) {
@@ -4170,7 +4465,9 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
     [['gradient band', 'stats band', 'band layout'], 'stats', 'band', 'gradient band'],
     [['stacked tiers', 'stacked rows', 'tier rows', 'stacked'], 'pricing', 'stacked', 'stacked tier rows'],
     [['floating chips', 'floating layout'], 'about', 'floating', 'floating chips'],
-    [['gradient splash', 'splash layout', 'splash'], 'cta', 'splash', 'gradient splash']
+    // Not a bare "splash": a client asking for "a splash of colour" wants a
+    // palette, and an unprompted CTA layout is a change they did not ask for.
+    [['gradient splash', 'splash layout', 'splash cta', 'cta splash'], 'cta', 'splash', 'gradient splash']
   ];
   const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // find which section types a message mentions, earliest first
@@ -4266,8 +4563,233 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
       ['zen', 'zen'], ['sage', 'zen'], ['calm minimal', 'zen'], ['spa feel', 'zen'], ['zen sage', 'zen'],
       ['playful', 'playful'], ['pop style', 'playful'], ['colorful fun', 'playful'], ['kawaii', 'playful'], ['bouncy', 'playful']
     ];
-    for (const [word, id] of table) if (n.indexOf(' ' + word + ' ') !== -1) return id;
+    // "a glass of wine" is a menu item, not a request for glassmorphism.
+    const glassOf = /\bglass of\b/.test(n);
+    for (const [word, id] of table) {
+      if (id === 'glass' && word === 'glass' && glassOf) continue;
+      if (n.indexOf(' ' + word + ' ') !== -1) return id;
+    }
     return null;
+  }
+
+  /* ============================================================
+     Polarity — is this a request, a refusal, or an observation?
+
+     Every matcher above reads *content*: which section, which
+     palette, which layout. Content alone cannot tell "make it
+     editorial" from "I don't like the editorial look" — both carry
+     the same two words in the same order. Without this the copilot
+     read the second as the first and restyled the site to the exact
+     thing the client had just rejected ("do not make it dark"
+     switched them to Midnight), which is the one failure a tool that
+     edits your website cannot survive, because the client only finds
+     out by looking at their own site.
+
+     So the question is asked once, before any design change is
+     planned, and the answer decides whether the change happens.
+     ============================================================ */
+
+  // A message that asks for something. "can you" and "i'd like" are requests
+  // wearing a question mark, so they belong here rather than with the questions.
+  const REQUEST_PHRASE = /\b(?:please|can you|could you|can we|could we|would you|why not|what about|how about|i'?d like|i would like|i want|i need|we want|we need|let'?s|make|give|turn|set|use|try|apply|add|change|switch|move|rename|update|rewrite|punch|improve|sharpen|tighten|restyle|remove|delete|install|enable|activate|build|create|generate|bring|put|go)\b/;
+
+  // "don't change the palette" — a directive to stop, not a request for
+  // something else. Nothing is offered afterwards, because offering the
+  // client alternatives to a thing they just told us to leave alone is
+  // its own kind of not listening.
+  const PROHIBITION = /\b(?:do\s*n'?t|do not|dont|never)\s+(?:change|touch|move|alter|modify|edit|switch|redo|adjust|make|use|apply|set)\b|\bleave\b[^.]{0,24}\b(?:alone|as is|as it is)\b|\b(?:never mind|no need|forget it|leave it)\b|\bstop (?:changing|touching|messing|fiddling)\b/;
+
+  // "I don't like the editorial look" / "not the candy palette" — they named
+  // the thing to avoid. Naming it is how we know what to offer instead.
+  const REJECTION = /\b(?:do\s*n'?t|do not|dont|does\s*n'?t|does not|did\s*n'?t|did not)\s+(?:like|love|want|need|rate|care for|fancy)\b|\b(?:hate|hates|hated|dislike|dislikes|detest|can'?t stand|cannot stand)\b|\bnot\s+(?:keen on|a fan of|happy with|sold on)\b|\bno more\b|\bnot\s+(?:(?:the|a|an)\s+)?(?:\w+\s+){0,2}(?:palette|colours?|colors?|font|typeface|look|style|theme|layout|bento|terminal|masonry|mosaic|stacked|band|serif|sans)\b|\bnot\s+(?:use|want|need|like)\b|\bstop using\b/;
+
+  // "the bento grid looks nice" / "i love the aurora palette" — a compliment.
+  // Answering praise with a redesign is the same bug from the other side.
+  const APPROVAL = /\b(?:i|we)\s+(?:love|like|adore|prefer|am happy with|are happy with|am pleased with|are pleased with)\b|\b(?:looks?|is|are|feels?|seems?)\s+(?:really\s+|quite\s+|very\s+|so\s+|too\s+|a bit\s+|pretty\s+|genuinely\s+)?(?:nice|good|great|lovely|fine|perfect|brilliant|clean|solid|excellent|wonderful|slick|beautiful|tidy|smart|spot on)\b|\b(?:works?|working)\s+(?:well|great|nicely)\b/;
+
+  // "the stacked tiers are confusing" / "is the map not loading" — a
+  // description of a problem. It needs an answer, not an edit.
+  const OBSERVATION = /\b(?:is|are|was|were|looks?|feels?|seems?)\s+(?:really\s+|quite\s+|very\s+|so\s+|too\s+|a bit\s+|pretty\s+|still\s+|just\s+)?(?:confusing|ugly|cluttered|messy|busy|plain|boring|dull|dated|cramped|noisy|odd|weird|off|wrong|broken|unclear|empty|repetitive|hideous|awkward)\b|\b(?:is|are|was|were|isn'?t|aren'?t)\s+(?:not\s+|n'?t\s+)?(?:working|loading|showing|displaying|appearing|updating|saving|playing|rendering|responding)\b/;
+
+  /*
+    polarity(msg) -> { question, request, prohibition, rejection, approval,
+                       observation, negated, designOk }
+
+    `designOk` is the one the planner consults: it is true only when the
+    message is something to carry out. A request beats an observation when a
+    message reads as both ("make the hero look sharper" is a request that
+    happens to contain the word "look"), but a request never beats a negation
+    — "do not make it dark" contains "make" and is still a refusal.
+  */
+  function polarity(msg) {
+    const raw = String(msg == null ? '' : msg);
+    const n = norm(raw);
+    const request = REQUEST_PHRASE.test(n);
+    /*
+      A question asks *about* something; "what about a darker look" and "how
+      about rounder corners" are requests wearing a question mark, so a request
+      phrase settles it. Only a genuine "why is…" / "what does…" stays a
+      question — and a bare "?" at the end of the message.
+    */
+    const question = /\?\s*$/.test(raw.trim())
+      || (/^(?:what|how|why|when|where|who|which|whose)\b/.test(n.trim()) && !request && !/\b(?:please|i'?d like|i would like|i want|i need)\b/.test(n));
+    const prohibition = PROHIBITION.test(n);
+    const rejection = REJECTION.test(n);
+    const approval = APPROVAL.test(n);
+    const observation = OBSERVATION.test(n) || (!request && !question && /\blooks?\b/.test(n));
+    const negated = prohibition || rejection;
+    return {
+      question,
+      request,
+      prohibition,
+      rejection,
+      approval,
+      observation,
+      negated,
+      designOk: !negated && !approval && !observation && !question
+    };
+  }
+
+  /*
+    What the message is about, when it turns out not to be a request. A named
+    palette/pack/font/layout is the useful case — it is exactly the thing the
+    client just rejected, so it is exactly what must not be offered back.
+  */
+  function designMention(msg) {
+    const n = norm(msg);
+    const packId = matchStylePack(msg);
+    if (packId) return { kind: 'pack', id: packId };
+    const palId = matchPalette(msg);
+    if (palId) return { kind: 'palette', id: palId };
+    const fontId = matchFont(msg);
+    if (fontId) return { kind: 'font', id: fontId };
+    for (const [words, lType, lLayout, lName] of LAYOUT_WORDS) {
+      if (words.some((w) => n.indexOf(' ' + w + ' ') !== -1)) return { kind: 'layout', type: lType, layout: lLayout, name: lName };
+    }
+    const kind = (n.match(/\b(palette|colours|colors|colour|color|font|typeface|look|style|theme|layout)\b/) || [])[1];
+    return kind ? { kind: 'kind', word: kind } : null;
+  }
+
+  /*
+    Real, runnable alternatives of the kind the client just turned down. Every
+    option is a palette/pack/font/layout this build actually ships, and a
+    palette is only offered when it clears the product's own AA check — an
+    alternative that breaks legibility is not an alternative.
+  */
+  function designAlternatives(hit, site) {
+    const out = [];
+    const s = site || {};
+    const wantPalette = hit.kind === 'palette' || (hit.kind === 'kind' && /colou?r|palette/.test(hit.word || ''));
+    const wantFont = hit.kind === 'font' || (hit.kind === 'kind' && /font|typeface/.test(hit.word || ''));
+    const wantPack = hit.kind === 'pack' || (hit.kind === 'kind' && /look|style|theme/.test(hit.word || ''));
+    const wantLayout = hit.kind === 'layout' || (hit.kind === 'kind' && /layout/.test(hit.word || ''));
+
+    if (wantPalette) {
+      (DB.palettes || []).forEach((p) => {
+        if (out.length >= 3 || !p || !p.id || p.id === hit.id || p.id === s.palette) return;
+        let checks = null;
+        try { checks = DB.paletteChecks ? DB.paletteChecks(p) : null; } catch (e) { checks = null; }
+        if (checks && checks.some((c) => !c || c.ratio < c.need)) return;
+        out.push({ label: p.name || p.id, act: { op: 'palette', palette: p.id, label: 'Switched the palette to ' + (p.name || p.id) }, note: 'measured AA-safe' });
+      });
+    }
+    if (wantPack) {
+      (stylePacks || []).forEach((p) => {
+        if (out.length >= 3 || !p || !p.id || p.id === hit.id) return;
+        out.push({ label: p.name, act: { op: 'pack', pack: p.id, label: 'Applied the ' + p.name + ' look' }, note: p.tagline });
+      });
+    }
+    if (wantFont) {
+      /*
+        One serif, one sans, one display, so the three answers are visibly
+        different from each other rather than three versions of the same idea.
+      */
+      const cats = ['serif', 'sans', 'display'];
+      cats.forEach((cat) => {
+        const f = (DB.fonts || []).find((x) => x && x.id && x.cat === cat && x.id !== hit.id && x.id !== s.font);
+        if (f) out.push({ label: f.name, act: { op: 'font', font: f.id, label: 'Set the font to ' + f.name }, note: cat });
+      });
+    }
+    if (wantLayout) {
+      const list = (DB.layoutsFor && hit.type) ? (DB.layoutsFor(hit.type) || []) : [];
+      list.forEach((l) => {
+        if (out.length >= 3 || !l || !l.id || l.id === hit.layout) return;
+        out.push({ label: l.name || l.id, act: { op: 'layout', type: hit.type, layout: l.id, label: 'Changed the ' + hit.type + ' layout to ' + (l.name || l.id) } });
+      });
+    }
+    return out;
+  }
+
+  /*
+    The answer to a message that was not an instruction. Two rules hold it
+    together: nothing on the site changes, and anything that is offered is a
+    button the engine can actually run — a question that leads nowhere is a
+    worse answer than saying "I have left it alone".
+  */
+  function nonRequestResponse(P, hit, site, raw) {
+    if (P.prohibition) {
+      return { acts: [], reply: 'Understood — nothing changed there. I have left it exactly as it is.' };
+    }
+    /*
+      Praise is answered with acknowledgement, never with a redesign — offering
+      someone alternatives to a thing they just said they liked is the same
+      failure as changing it.
+    */
+    if (P.approval) {
+      return { acts: [], reply: 'Good to hear — I have left it alone. Tell me what you would like changed next.' };
+    }
+    /*
+      Alternatives are offered when the client turned something down, or when
+      they are complaining about a *kind* of thing rather than naming one of
+      our presets — "the font is not working for me" is a rejection of the
+      current font in substance even without the words. A remark that merely
+      names one of our presets ("the studio looks editorial in that photo") is
+      answered, not second-guessed.
+    */
+    const offering = P.rejection || (P.observation && hit && hit.kind === 'kind');
+    const options = (offering && hit) ? designAlternatives(hit, site) : [];
+    if (options.length >= 2) {
+      return { acts: [{ op: 'ask', question: 'Fair enough — here are some others. Which shall I try?', options }] };
+    }
+    /*
+      A complaint about a section is worth more than a generic shrug: it names
+      the thing the client is unhappy with, so the answer points at it rather
+      than at the whole site.
+    */
+    const named = mentionedSections(String(raw || '')).slice(0, 1);
+    if (P.observation) {
+      const where = named.length ? ' at the ' + named[0].type : '';
+      return { acts: [], reply: 'That reads as a description rather than an instruction, so I have left your site alone. Tell me what you would like changed' + where + ' — or say “/review” and I will go through everything properly.' };
+    }
+    if (named.length) {
+      return { acts: [], reply: 'Nothing changed — I did not read that as an instruction. If you want me to look at the ' + named[0].type + ', say “/review” and I will check it.' };
+    }
+    return { acts: [], reply: 'Nothing changed — I did not read that as an instruction. Tell me what you would like changed and I will do it.' };
+  }
+
+  /*
+    Is this sentence shaped like "set the address to X"? An explicit set verb
+    before the word, or an assignment right after it, and nothing weaker — a
+    mention alone is not a request to change anything.
+  */
+  function addressIntent(raw) {
+    const low = String(raw || '').toLowerCase();
+    if (/\b(?:set|change|update|correct|put|enter)\b[^.!?]{0,30}\baddress\b/.test(low)) return true;
+    return /\baddress\b\s*(?:is|should be|will be|:|,|=)\s*\S/.test(low);
+  }
+
+  /*
+    Does the captured value read as an address rather than the tail of a
+    sentence that happens to start after the word "address"? "The Old Mill,
+    Bakewell" passes on the name-and-place shape; "in the footer is wrong"
+    fails on both counts.
+  */
+  function looksPostal(v) {
+    const t = String(v || '').trim().replace(/[.,;:]+$/, '');
+    if (t.length < 5 || t.length > 80) return false;
+    if (/^[A-Z][\w'’-]*(?:\s+[\w'’-]+){0,3},\s*[A-Z]/.test(t)) return true;
+    if (!/\d/.test(t)) return false;
+    return !/^(?:the|a|an|in|on|at|to|of|for|is|are|was|with|near|by|from|and|or|but|field|fields|section|footer|header|page|form|line|box|area|map|label|button|text|not)\b/i.test(t);
   }
 
   // tone directions for AI rewrites
@@ -4286,13 +4808,15 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
     '📰 Give it an editorial look'
   ];
 
-  const chatHelp = 'I can restyle the whole site (“make it glassmorphism” or “luxury gold”), retune design (“rounder corners”, “more spacing”), apply catalog layouts (“make the features bento”, “terminal hero”, “masonry testimonials”), tweak copy (“make the hero punchier”), change colors, fonts, buttons and nav, and add or remove sections — “add a pricing section”, “add a map of Paris”, “weather in London”, “add an online booking block”, “delete the FAQ”, “swap the order”… I can even change your site name, phone, email or CTA, or build a full brand kit with one command. Every change is undoable (' + KBD + 'Z), and AI copy rewrites use one credit.';
+  const chatHelp = 'Ask me to review your site and I will read every page it renders, list what is wrong in order of what costs you most, and attach the fix to each one — “apply every fix you can” does all of those in a single undoable step. I can restyle the whole site (“make it glassmorphism” or “luxury gold”), retune design (“rounder corners”, “more spacing”), apply catalog layouts (“make the features bento”, “terminal hero”, “masonry testimonials”), tweak copy (“make the hero punchier”), change colors, fonts, buttons and nav, and add or remove sections — “add a pricing section”, “add a map of Paris”, “weather in London”, “add an online booking block”, “delete the FAQ”, “swap the order”… I can even change your site name, phone, email or CTA, or build a full brand kit with one command. Every change is undoable (' + KBD + 'Z), and AI copy rewrites use one credit.';
 
   function chatPlan(site, msg, ctx) {
     const raw = String(msg || '').trim();
     if (!raw) return { acts: [], reply: 'Say what you\'d like to change — for example “make it glassmorphism” or “rounder corners”.' };
     const n = norm(raw);
     const acts = [];
+    const P = polarity(raw);
+    const designOk = P.designOk;
     const isAsking = (/^(hi|hey|hello|yo)\b/.test(n.trim()) && raw.length < 30) ||
       /what can you do|help me|who are you|how does this work|what should i say|give me an example/.test(n);
     const askingOnly = isAsking && !mentionedSections(raw).length && !TONES.some((t) => n.indexOf(' ' + t + ' ') !== -1) && !/\b(add|remove|make|change|switch|set|rewrite|color|palette|font)\b/.test(n);
@@ -4301,7 +4825,17 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
     const FU = followLib();
     const followId = FU && FU.isFollowUp(raw);
     if (followId) {
-      const target = ctx && ctx.targetType;
+      /*
+        A follow-up must be able to name its own target. The copilot's greeting
+        advertises "make the hero punchier" — the phrasing the product puts in
+        front of the client — and requiring a previous edit made that answer
+        with "nothing to tweak yet", which reads as the copilot not
+        understanding its own example. A section named in the message resolves
+        the same way a remembered one does; only a target-less "make it
+        shorter" still needs context.
+      */
+      const named = mentionedSections(raw)[0];
+      const target = (ctx && ctx.targetType) || (named && named.type) || '';
       if (!target) return { acts: [], reply: 'Nothing to tweak yet — edit a section first, then say shorter, more local, or less salesy.' };
       const idx = lastSecOfType(site, target);
       if (idx < 0) return { acts: [], reply: 'Nothing to tweak yet — edit a section first, then say shorter, more local, or less salesy.' };
@@ -4310,6 +4844,75 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
     if (/\bmore like\b|\bsimilar to\b|\blike https?:\/\//i.test(raw)) {
       const url = FU && FU.likeUrl(raw);
       if (url) return { acts: [{ op: 'likeUrl', url, credit: false, label: 'Restyled from the reference site (layout only)' }] };
+    }
+
+    // ---- deliberately-optional commands ----
+    // "the review page" and "review section" are nouns — the testimonials — and
+    // answering "show me the review page" with a full audit is not what was
+    // asked for. A bare "review", or review as a verb on the site, still audits.
+    const reviewNoun = /\breview\s+(?:page|pages|section|sections|card|cards|list|panel|tab)\b/.test(n)
+      || /\b(?:the|our|your|my)\s+reviews?\b/.test(n);
+    if (!reviewNoun && (/\b(review|audit|check)\b/.test(n) && /\b(site|page|everything|it|my site)\b/.test(n) || /^\s*review\s*$/.test(n))) {
+      return { acts: [{ op: 'review', label: '' }] };
+    }
+    /*
+      The batch. /review ranks the findings; this applies every one that costs
+      nothing, in a single undoable step. The phrases are deliberately distinct
+      from "fix everything you can", which clients already know means the safe
+      model repairs — quietly turning that into a bigger operation would be a
+      surprise, and surprises in a tool that edits your site are the enemy.
+    */
+    if (/\b(?:apply|run|do|make)\s+(?:every|all)\b[\s\S]*\bfix|\bfix (?:all|it all|them all|everything at once|every(?:thing)? i can)\b|\ball the fixes\b|\bfixall\b/.test(n)) {
+      return { acts: [{ op: 'fixAll', label: '' }] };
+    }
+    if (/\bfix (everything|all|the site|what you can)\b|\bauto[- ]?fix\b|\brepair the site\b/.test(n)) {
+      return { acts: [{ op: 'repair', label: 'Fixed everything I safely could' }] };
+    }
+    if (/\b(other options|another option|other wordings?|different wordings?|alternatives?|other headings?|show me options|more options)\b/.test(n)) {
+      return { acts: [{ op: 'options', label: '' }] };
+    }
+    if (/^\s*preview\s*$/.test(n) || /\b(show|open|see) (me )?the (site|preview|designer)\b/.test(n)) {
+      return { acts: [{ op: 'preview', label: 'Opened the live preview' }] };
+    }
+    if (/^\s*export\s*$/.test(n) || /\bdownload (the )?(site|zip|files?)\b/.test(n) || /\bexport the site\b/.test(n)) {
+      return { acts: [{ op: 'export', label: 'Exported the site' }] };
+    }
+
+    /*
+      Polarity gate. Everything below matches *content*, and content cannot tell
+      a request from a refusal — "make it editorial" and "I don't like the
+      editorial look" contain the same words in the same order. So the reading
+      is taken here, once, and a message that is not an instruction is answered
+      rather than carried out.
+
+      The three cases:
+        * a design was named and this is not a request -> answer, never apply;
+        * nothing was named and this is not a request   -> answer, never apply;
+        * nothing was named but it IS a request         -> fall through, so
+          add/remove/rename/suite/review keep working inside a complaint
+          ("the FAQ is broken, please remove it").
+    */
+    if (!designOk) {
+      const hit = designMention(raw);
+      if (hit || (!P.request && !P.question)) return nonRequestResponse(P, hit, site, raw);
+    }
+
+    /*
+      Before guessing, find out whether the request is genuinely two-way.
+      "Make it premium" could be the look or the writing, and a copilot that
+      picks silently changes the client's site into something they did not ask
+      for — the moment trust in the button goes. interpret() only fires on
+      shapes it can name precisely, and always answers with options it can
+      actually carry out.
+    */
+    if (typeof Copilot !== 'undefined' && Copilot && typeof Copilot.interpret === 'function') {
+      let q = null;
+      try {
+        q = Copilot.interpret(raw, { mentions: mentionedSections(raw), site: site, hasTarget: !!(ctx && ctx.targetType) });
+      } catch (e) { q = null; }
+      if (q && q.kind === 'ask' && Array.isArray(q.options) && q.options.length >= 2) {
+        return { acts: [{ op: 'ask', question: q.question, options: q.options }] };
+      }
     }
     if (/\badd a menu\b/i.test(raw) || (/\badd\b/i.test(raw) && /\bmenu\b/i.test(raw) && /\b(wine|pub|brewery|bar)\b/i.test(raw))) {
       const niche = matchNiche(raw);
@@ -4322,20 +4925,24 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
       const next = (site && site.brief && site.brief.cta) || 'Book now';
       return { acts: [{ op: 'setField', key: 'ctaText', value: next, credit: true, label: 'Strengthened the primary CTA' }] };
     }
-    if (/\bbrand kit\b|\bbrand package\b|\blogo and (colors|colours|palette)\b|\bnew logo\b/.test(n)) {
+    if (designOk && /\bbrand kit\b|\bbrand package\b|\blogo and (colors|colours|palette)\b|\bnew logo\b/.test(n)) {
       acts.push({ op: 'brandKit', credit: true, label: 'Built you a brand kit — logo, palette, fonts and alt text' });
     }
 
     // ---- catalog layout variants ----
-    for (const [words, lType, lLayout, lName] of LAYOUT_WORDS) {
-      if (words.some((w) => n.indexOf(' ' + w + ' ') !== -1)) {
-        acts.push({ op: 'layout', type: lType, layout: lLayout, label: 'Applied the ' + lName + ' layout to the ' + lType + ' section' });
-        break;
+    // A layout is only swapped when the client asked for one. "the bento grid
+    // looks nice" names the layout and asks for nothing.
+    if (designOk) {
+      for (const [words, lType, lLayout, lName] of LAYOUT_WORDS) {
+        if (words.some((w) => n.indexOf(' ' + w + ' ') !== -1)) {
+          acts.push({ op: 'layout', type: lType, layout: lLayout, label: 'Applied the ' + lName + ' layout to the ' + lType + ' section' });
+          break;
+        }
       }
     }
 
     // ---- whole-message convenience actions (first match wins) ----
-    if (matchStylePack(raw)) {
+    if (designOk && matchStylePack(raw)) {
       const id = matchStylePack(raw);
       const pk = stylePacks.find((x) => x.id === id);
       acts.push({ op: 'pack', pack: id, label: 'Applied the ' + pk.name + ' look (' + pk.tagline + ')' });
@@ -4350,54 +4957,60 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
       return { acts };
     }
     const wantColor = /\b(color|colour|palette|shade|tone)\b/.test(n) || /\b(make|change|switch|try|use|give|paint|turn|go|set)\b/.test(n);
-    const colorId = matchPalette(raw);
+    const colorId = designOk ? matchPalette(raw) : null;
     if (colorId && wantColor && !/\b(mode|toggle|theme button)\b/.test(n)) {
       const pal = DB.getPalette(colorId);
       acts.push({ op: 'palette', palette: colorId, label: 'Switched the color palette to ' + pal.name });
     }
-    const fontId = matchFont(raw);
-    if (fontId && /\b(font|typeface|typography|lettering|serif|sans|script|mono|condensed)\b/.test(n)) {
+    /*
+      The guard is what keeps "add a script for the video" from setting every
+      heading in Pacifico. A bare serif/sans/script/mono is only read as a font
+      when the message is plainly about type: it says "font", or it names a real
+      face, or it is short enough to be nothing else ("make it serif").
+    */
+    const fontId = designOk ? matchFont(raw) : null;
+    if (fontId && (/\b(font|typeface|typography|lettering)\b/.test(n) || n.trim().split(/\s+/).length <= 5)) {
       const f = DB.getFont(fontId);
       acts.push({ op: 'font', font: fontId, label: 'Set the font to ' + f.name });
     }
     const haveActs = acts.length;
 
     // ---- design tokens ----
-    if (/\b(rounder|rounded|softer|more rounded|less rounded|sharper|square|sharp|boxy)\b/.test(n)) {
+    if (designOk && /\b(rounder|rounded|softer|more rounded|less rounded|sharper|square|sharp|boxy)\b/.test(n)) {
       const up = /\b(rounder|rounded|softer|more rounded)\b/.test(n);
       acts.push({ op: 'design', key: 'radius', delta: up ? 10 : -999, min: 0, label: up ? 'Rounder corners (radius +10)' : 'Sharpened corners (radius 0)' });
     } else {
       const rm = n.match(/\bradius\b[^0-9]{0,8}(\d{1,2})\b/);
       if (rm) acts.push({ op: 'design', key: 'radius', to: +rm[1], label: 'Corner radius set to ' + rm[1] + 'px' });
     }
-    if (/\b(spacious|roomier|roomy|more space|breathing room|airy)\b/.test(n)) {
+    if (designOk && /\b(spacious|roomier|roomy|more space|breathing room|airy)\b/.test(n)) {
       acts.push({ op: 'design', key: 'spacing', delta: 24, label: 'More space between sections (+24px)' });
-    } else if (/\b(compact|tighter|less space|cozier|smaller gaps)\b/.test(n)) {
+    } else if (designOk && /\b(compact|tighter|less space|cozier|smaller gaps)\b/.test(n)) {
       acts.push({ op: 'design', key: 'spacing', delta: -24, min: 40, label: 'Tighter layout (−24px spacing)' });
     } else {
       const sm = n.match(/\bspacing\b[^0-9]{0,8}(\d{2,3})\b/);
       if (sm) acts.push({ op: 'design', key: 'spacing', to: +sm[1], label: 'Section spacing set to ' + sm[1] + 'px' });
     }
     const wm = n.match(/\b(container )?width\b[^0-9]{0,8}(\d{3,4})\b/);
-    if (wm) acts.push({ op: 'design', key: 'containerWidth', to: +wm[2], label: 'Container width set to ' + wm[2] + 'px' });
+    if (wm && designOk) acts.push({ op: 'design', key: 'containerWidth', to: +wm[2], label: 'Container width set to ' + wm[2] + 'px' });
 
     // ---- hero layout ----
     const secMentions = mentionedSections(raw);
     const hasHero = secMentions.some((h) => h.type === 'hero');
-    if (/\b(split|two column|two column|side by side|text and image)\b/.test(n) && hasHero) {
+    if (designOk && /\b(split|two column|two column|side by side|text and image)\b/.test(n) && hasHero) {
       acts.push({ op: 'hero', layout: 'split', label: 'Hero switched to a split text + image layout' });
-    } else if (/\b(minimal|clean hero|simple hero)\b/.test(n) && hasHero) {
+    } else if (designOk && /\b(minimal|clean hero|simple hero)\b/.test(n) && hasHero) {
       acts.push({ op: 'hero', layout: 'minimal', label: 'Hero switched to the minimal layout' });
-    } else if (/\b(centered|center the hero|centre)\b/.test(n) && hasHero) {
+    } else if (designOk && /\b(centered|center the hero|centre)\b/.test(n) && hasHero) {
       acts.push({ op: 'hero', layout: 'centered', label: 'Hero centered' });
     }
 
     // ---- nav ----
     if (/\b(nav|menu|navigation|header)\b/.test(n)) {
-      if (/\b(transparent|overlay|floating)\b/.test(n)) acts.push({ op: 'navStyle', style: 'transparent', label: 'Nav is now transparent over the hero' });
-      else if (/\b(solid|opaque|normal nav|not transparent)\b/.test(n)) acts.push({ op: 'navStyle', style: '', label: 'Nav is back to a solid frosted bar' });
-      if (/\b(unsticky|not sticky|stop sticking)\b/.test(n)) acts.push({ op: 'navSticky', on: false, label: 'Nav no longer sticks to the top' });
-      else if (/\b(sticky|sticks|fixed at top)\b/.test(n)) acts.push({ op: 'navSticky', on: true, label: 'Nav is now sticky' });
+      if (designOk && /\b(transparent|overlay|floating)\b/.test(n)) acts.push({ op: 'navStyle', style: 'transparent', label: 'Nav is now transparent over the hero' });
+      else if (designOk && /\b(solid|opaque|normal nav)\b/.test(n)) acts.push({ op: 'navStyle', style: '', label: 'Nav is back to a solid frosted bar' });
+      if (designOk && /\b(unsticky|stop sticking)\b/.test(n)) acts.push({ op: 'navSticky', on: false, label: 'Nav no longer sticks to the top' });
+      else if (designOk && /\b(sticky|sticks|fixed at top)\b/.test(n)) acts.push({ op: 'navSticky', on: true, label: 'Nav is now sticky' });
       const hasNavBtn = /\b(button|cta|book now|book a|get a quote|call us|contact us|nav button)\b/.test(n);
       if (hasNavBtn) {
         if (/\b(remove|drop|delete|hide)\b/.test(n) && /\b(button|cta)\b/.test(n)) {
@@ -4441,8 +5054,24 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
       const pm = raw.slice(phStart).match(/[+]?[0-9][0-9\s().-]{6,20}/);
       if (pm) acts.push({ op: 'setField', key: 'phone', value: pm[0].trim(), label: 'Phone set to ' + pm[0].trim() });
     }
-    const ad = raw.match(/\baddress\b[^a-z0-9]{0,12}([A-Za-z0-9.,' -]{8,60})/i);
-    if (ad) acts.push({ op: 'setField', key: 'address', value: ad[1].trim(), label: 'Address updated ✓' });
+    /*
+      A postal address, and only when the client is plainly setting one.
+
+      "address" is also an ordinary verb. "address the spacing issue", "add the
+      address to the contact section", "the address in the footer is wrong" and
+      "the form address field is missing" all contain the word, and reading it as
+      a field name overwrote the site's real address with the rest of the
+      sentence — silently, because a wrong address is a valid address as far as
+      any type check can tell. So two things must both be true: the sentence is
+      shaped like a value being set, and the value reads as an address.
+    */
+    const adValue = (() => {
+      const m = raw.match(/\baddress\b\s*[:=]?\s*(?:should be|will be|is|to|as)?\s*([A-Za-z0-9][A-Za-z0-9.,'’\/ -]{3,70})/i);
+      return m ? m[1].trim().replace(/[.,;:]+$/, '') : '';
+    })();
+    if (adValue && addressIntent(raw) && looksPostal(adValue)) {
+      acts.push({ op: 'setField', key: 'address', value: adValue, label: 'Address set to ' + adValue });
+    }
     if (/\b(description|meta description|seo blurb)\b/.test(n) && quoted) acts.push({ op: 'setField', key: 'description', value: quoted, label: 'Site description updated ✓' });
     if (/\b(favicon|tab icon)\b/.test(n) && quoted) acts.push({ op: 'setField', key: 'favicon', value: quoted, label: 'Favicon set to ' + quoted });
 
@@ -4475,11 +5104,47 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
       for (const [word, id] of suiteMap) if (n.indexOf(' ' + word + ' ') !== -1) { acts.push({ op: 'unsuite', suite: id, label: 'Removed the ' + DB.getSuite(id).name }); break; }
     }
 
+    /*
+      "Copy" is this product's own word for the words on the page — the copilot's
+      help advertises "tweak copy", and the review card lists Copy as a category.
+      It is also a duplicate verb. Reading it as one meant a copy edit quietly
+      added a second section to the client's site: "punch up the hero copy"
+      rewrote the hero *and* duplicated it, so an edit they asked for arrived
+      with a change they did not — findable only by counting their sections.
+
+      So the intent is decided once, here, before the rewrite rule sees the word:
+        * "duplicate"/"dupe"/"repeat" are always cloning;
+        * "copy" clones only when it acts on a section ("copy the hero",
+          "copy this section") rather than on the words;
+        * when it is cloning, the rewrite rule must not also read it as a verb.
+    */
+    const explicitDupe = /\b(duplicate|dupe|repeat)\b/.test(n);
+    const copyOfSection = /\bcopy\s+(?:this|that|it|them)\b/.test(n)
+      || /\bcopy\s+(?:the\s+)?(?:section|block)\b/.test(n)
+      || /\bcopy\s+(?:the\s+)?(?:hero|about|features|faq|pricing|testimonials|gallery|contact|stats|blog|shop|cta|team|logos|footer|map|video|newsletter|countdown|booking|table|embed)\b/.test(n);
+    const wantsDuplicate = explicitDupe || copyOfSection;
+    // "copy this section" names no section, so it means the one the client is
+    // working on — the same remembered target a follow-up uses. With nothing
+    // remembered and nothing named, no act is emitted rather than a guess.
+    const demonstrative = /\b(?:copy|duplicate|dupe|repeat)\s+(?:this|that|it|them)\b/.test(n);
+    const dupeType = (() => {
+      if (!wantsDuplicate) return '';
+      const named = mentionedSections(raw)[0];
+      if (named) return named.type;
+      const remembered = demonstrative && ctx && ctx.targetType ? String(ctx.targetType) : '';
+      return remembered && lastSecOfType(site, remembered) >= 0 ? remembered : '';
+    })();
+    const dupeAct = dupeType
+      ? { op: 'duplicateSection', type: dupeType, label: 'Duplicated the ' + dupeType + ' section' }
+      : null;
+
     // ---- copy rewrites (cost a credit) ----
     const tone = TONES.find((t) => n.indexOf(' ' + t + ' ') !== -1);
     const rewriteAll = !secMentions.length && (/\b(rewrite|improve|polish|enhance|refine)\b/.test(n) || (tone && /\b(copy|text|site|whole)\b/.test(n)));
     const sectionTarget = secMentions.length ? secMentions[0] : null;
-    if ((rewriteAll || (secMentions.length && (tone || /\b(rewrite|copy|text|write|say)\b/.test(n))))) {
+    // "copy" is a rewrite verb only when it is not the thing being cloned
+    const copyVerb = copyOfSection ? /\b(rewrite|text|write|say)\b/ : /\b(rewrite|copy|text|write|say)\b/;
+    if ((rewriteAll || (secMentions.length && (tone || copyVerb.test(n))))) {
       if (sectionTarget && ['features', 'stats', 'pricing', 'testimonials', 'faq', 'blog', 'shop', 'gallery', 'logos'].includes(sectionTarget.type)) {
         const idx = lastSecOfType(site, sectionTarget.type);
         if (idx === -1 && /\b(add|create|new)\b/.test(n)) acts.push({ op: 'addSection', type: sectionTarget.type, label: 'Added a ' + (DB.sectionTypes[sectionTarget.type] || {}).name + ' section' });
@@ -4521,10 +5186,9 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
         acts.push({ op: 'removeSection', type: t.type, label: 'Removed the ' + t.word + ' section' });
       }
     }
-    if (/\b(duplicate|copy|repeat)\b/.test(n)) {
-      const t = mentionedSections(raw)[0];
-      if (t) acts.push({ op: 'duplicateSection', type: t.type, label: 'Duplicated the ' + t.word + ' section' });
-    }
+    // Clone a section: an explicit verb, or "copy" pointed at a section rather
+    // than at the words. Only when a section was actually named.
+    if (dupeAct) acts.push(dupeAct);
     const moveM = raw.match(/\b(move|swap|put|bring)\b.*\b(above|below|before|after|up|down|to the top|to the bottom)\b/);
     if (moveM && secMentions.length >= 2) {
       acts.push({ op: 'moveSection', a: secMentions[0].type, b: secMentions[1].type, rel: /\b(above|before|up)\b/.test(n) ? 'above' : 'below', label: 'Moved the sections around' });
@@ -4539,6 +5203,69 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
       acts.push({ op: 'help', label: '' });
     }
     return { acts };
+  }
+
+  /*
+    The alternatives the copy engine did not pick.
+
+    Every heading and subheading on a generated site is drawn from a pool of
+    real alternates, and the client only ever sees the one that was chosen. Two
+    things fall out of exposing them: a client can swap a wording they do not
+    like for one they do, and the copilot can answer "show me other options"
+    with something it is able to apply. The rotation is salted, so pressing
+    again shows different candidates instead of the same three.
+  */
+  const OPTION_FIELDS = {
+    hero: [['subtitle', 'Tagline', 'taglines']],
+    about: [['title', 'Heading', 'aboutTitle'], ['text', 'Closing line', 'aboutClose']],
+    features: [['title', 'Heading', 'featuresTitle'], ['subtitle', 'Subheading', 'featuresSub']],
+    stats: [['title', 'Heading', 'statsTitle']],
+    gallery: [['title', 'Heading', 'galleryTitle'], ['subtitle', 'Subheading', 'gallerySub']],
+    pricing: [['title', 'Heading', 'pricingTitle'], ['subtitle', 'Subheading', 'pricingSub']],
+    testimonials: [['title', 'Heading', 'testimonialsTitle'], ['subtitle', 'Subheading', 'testimonialsSub']],
+    faq: [['title', 'Heading', 'faqTitle']],
+    cta: [['title', 'Heading', 'ctaTitle'], ['text', 'Body', 'ctaText']],
+    contact: [['title', 'Heading', 'contactTitle'], ['subtitle', 'Subheading', 'contactSub']]
+  };
+
+  function copyOptions(project, section, opts = {}) {
+    const site = (project && project.site) || {};
+    const sec = typeof section === 'string' ? { type: section } : (section || {});
+    const type = TYPES.find((x) => x.id === project.aiType) || detectType(site.name || '');
+    const plan = OPTION_FIELDS[sec.type];
+    if (!plan) return [];
+    const prompt = (site.fingerprint && site.fingerprint.prompt) || site.tagline || site.name || '';
+    const brand = site.name || 'Us';
+    const focus = project.aiSubject || focusPhrase(site.name + ' ' + (site.tagline || ''));
+    const register = Copy.registerFor(type.id, detectTaste(prompt));
+    const pool = (Copy.POOLS && (Copy.POOLS[register] || Copy.POOLS.plain)) || {};
+    const salt = Number(opts.salt) || 0;
+    const limit = Math.max(1, Math.min(6, Number(opts.limit) || 3));
+    const fillLine = (line) => String(line)
+      .replace(/\{brand\}/g, brand)
+      .replace(/\{focus\}/g, focus)
+      .replace(/\{area\}/g, site.area || 'your area');
+
+    const out = [];
+    plan.forEach(([field, label, poolKey]) => {
+      const source = poolKey === 'taglines' ? (type.taglines || []) : (pool[poolKey] || []);
+      const lines = [];
+      const seen = new Set();
+      source.forEach((raw) => {
+        const line = fillLine(raw).trim();
+        const key = line.toLowerCase();
+        if (!line || seen.has(key)) return;
+        seen.add(key);
+        lines.push(line);
+      });
+      const current = String(sec[field] == null ? '' : sec[field]).trim().toLowerCase();
+      const options = lines.filter((line) => line.trim().toLowerCase() !== current);
+      if (!options.length) return;
+      const start = (hash(brand + '|' + sec.type + '|' + field) + salt) % options.length;
+      const rotated = options.slice(start).concat(options.slice(0, start)).slice(0, limit);
+      out.push({ field, label, current: sec[field] || '', options: rotated });
+    });
+    return out;
   }
 
   // Sample content bank for sections added through the copilot chat.
@@ -4604,7 +5331,7 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
   // credits consumed per action
   const COST = { site: 1, images: 1, enhance: 1, restyle: 1, shuffle: 1, section: 1, translate: 1 };
 
-  return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, studySite, isPublicFetchUrl, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, shuffleLook, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatHelp, sampleSection, imageBase, photoPicks, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES, applyNicheExtras, addServicesPage, matchNiche };
+  return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, studySite, isPublicFetchUrl, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, shuffleLook, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatHelp, sampleSection, copyOptions, imageBase, photoPicks, polarity, designMention, designAlternatives, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES, applyNicheExtras, addServicesPage, matchNiche };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = AI;

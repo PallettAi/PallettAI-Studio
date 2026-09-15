@@ -670,6 +670,10 @@ body.titlebar-inset .project-chip{-webkit-app-region:no-drag}
 .msg.user{align-self:flex-end;background:var(--grad,linear-gradient(135deg,#7cc0f8,#a9d8ff));color:#04122b;border-bottom-right-radius:4px}
 .msg.bot{align-self:flex-start;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-bottom-left-radius:4px}
 .msg.bot.ok{border-color:color-mix(in srgb,var(--ok) 45%,transparent)}
+.msg.bot.warn{border-color:color-mix(in srgb,var(--danger,#ff6b6b) 50%,transparent)}
+/* A receipt, not a reply: quieter than a bubble, but always present when a
+   credit was spent, so the balance never moves without the client seeing why. */
+.msg.bot.note{align-self:flex-start;background:transparent;border-style:dashed;color:var(--muted);font-size:.72rem}
 .msg .m-tag{display:block;font-size:.66rem;opacity:.65;margin-top:5px}
 .msg .m-act{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
 .msg .m-act button{background:color-mix(in srgb,var(--accent) 16%,transparent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);color:var(--text);font-size:.72rem;font-weight:700;padding:4px 10px;border-radius:99px;cursor:pointer}
@@ -681,6 +685,54 @@ body.titlebar-inset .project-chip{-webkit-app-region:no-drag}
 .chat-input input{flex:1;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:12px;padding:10px 12px;font-size:.86rem;outline:none}
 .chat-input input:focus{border-color:var(--accent)}
 .chat-input .btn{flex-shrink:0;border-radius:12px}
+/* ---- copilot cards: the review list, the questions it asks, and the slash menu.
+   A bubble is right for a sentence; a finding, a question or a command list
+   needs structure, so these fire full width with their own surfaces. ---- */
+.msg.card{max-width:100%;background:transparent;border:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.ask{background:var(--surface2);border:1px solid color-mix(in srgb,var(--accent) 34%,transparent);border-radius:16px;padding:11px 13px;font-size:.86rem;line-height:1.5}
+.ask-opts{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:9px}
+.ask-opts[hidden]{display:none}
+.chat-cap{font-size:.66rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.rv-head{display:flex;gap:10px;align-items:center}
+.rv-head small{display:block;color:var(--muted);font-size:.7rem;margin-top:3px;line-height:1.4}
+.rv-score{width:42px;height:42px;flex:none;display:grid;place-items:center;border-radius:12px;font-weight:800;font-size:.88rem;background:var(--surface2);border:1px solid var(--border)}
+.rv-list{display:flex;flex-direction:column;gap:8px}
+.rv-item{background:var(--surface2);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:14px;padding:10px 12px}
+.rv-item.lv-error{border-left-color:#ff6b6b}
+.rv-item.lv-warn{border-left-color:#ffb648}
+.rv-item.lv-info{border-left-color:var(--accent)}
+.rv-top{display:flex;justify-content:space-between;gap:8px;align-items:baseline;font-size:.84rem}
+.rv-lvl{font-size:.6rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);flex:none}
+.rv-item p{margin:5px 0 0;font-size:.78rem;color:var(--muted);line-height:1.5}
+.rv-item p.rv-advice{color:var(--text);opacity:.9}
+.rv-act{display:flex;gap:8px;align-items:center;margin-top:9px;flex-wrap:wrap}
+.rv-act[hidden]{display:none}
+.rv-fix{background:color-mix(in srgb,var(--accent) 20%,transparent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);color:var(--text);font-size:.74rem;font-weight:700;padding:5px 11px;border-radius:99px;cursor:pointer}
+.rv-fix:hover{background:color-mix(in srgb,var(--accent) 34%,transparent)}
+.rv-cost{font-size:.64rem;color:var(--muted)}
+.rv-ends{display:flex;align-items:baseline;gap:8px;flex:none}
+.rv-page{font-size:.6rem;letter-spacing:.05em;text-transform:uppercase;color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent);border-radius:99px;padding:2px 7px;white-space:nowrap}
+.rv-gain{color:var(--text)!important;opacity:.92}
+.rv-note{margin:4px 0 0;font-size:.72rem;color:var(--muted);line-height:1.5}
+.rv-where{display:block;color:var(--muted);font-size:.68rem;margin-top:3px}
+.rv-warn-note{color:var(--danger)}
+.rv-act-all{margin-bottom:4px}
+.rv-more{align-self:flex-start;background:none;border:1px dashed var(--border);color:var(--muted);font-size:.72rem;padding:5px 11px;border-radius:99px;cursor:pointer}
+.rv-more:hover{color:var(--text);border-color:var(--accent)}
+/* The render review — a second card, because it reports a second kind of thing:
+   what the browser measured, not what the project model says. */
+.rv-look{border-left:3px solid color-mix(in srgb,var(--accent) 40%,transparent)}
+.rv-head-look{align-items:flex-start}
+.rv-score.rv-wait{background:transparent;border-style:dashed;opacity:.75;font-size:.8rem}
+.rv-score.rv-clear-mark{background:color-mix(in srgb,#22c55e 18%,transparent);border-color:color-mix(in srgb,#22c55e 45%,transparent);color:#22c55e}
+.rv-clear{font-size:.76rem;color:var(--muted);line-height:1.5;padding:2px 0}
+.chat-slash{max-height:212px;overflow-y:auto;border-top:1px solid var(--border);background:var(--surface2)}
+.chat-slash[hidden]{display:none}
+.slash-row{display:grid;grid-template-columns:auto auto 1fr;gap:9px;align-items:baseline;width:100%;text-align:left;background:none;border:0;padding:8px 12px;cursor:pointer;color:var(--text)}
+.slash-row:hover,.slash-row:focus-visible{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.slash-row b{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;font-weight:700}
+.slash-row span{font-size:.68rem;color:var(--muted)}
+.slash-row em{font-style:normal;font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ============ AI style packs ============ */
 .packs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:12px;margin-top:6px}

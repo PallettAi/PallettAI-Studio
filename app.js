@@ -941,6 +941,7 @@ const App = (() => {
     if (!p) return null;
     let html = '';
     let htmlPages = [];
+    let compiled = true;
     try {
       const built = Builder.buildSitePages(p, exportSettings());
       htmlPages = built.map((entry) => ({
@@ -950,10 +951,116 @@ const App = (() => {
       }));
       const home = htmlPages.find((entry) => entry.slug === 'index') || htmlPages[0];
       html = home ? home.html : buildHtml(p);
+      if (!html) compiled = false;
     } catch (e) {
-      try { html = buildHtml(p); } catch (e2) { html = ''; }
+      try { html = buildHtml(p); } catch (e2) { html = ''; compiled = false; }
     }
+    // The export-level half of the audit disappears silently when the document
+    // cannot be compiled, and a review that quietly checks less than it claims
+    // is the kind of thing that gets trusted at the wrong moment. The callers
+    // that report to a client read this back.
+    lastAudit = { compiled: compiled && !!html, pages: htmlPages.length };
     return AI.qualityGate(p, { html, htmlPages });
+  }
+
+  /*
+    The copilot audits the same thing the publish gate does — the rendered
+    export, not just the model — because the two disagreed in a way that
+    mattered: a freshly generated site graded B while the contact form on the
+    page it produced accepted a message and delivered nothing. Compiling the
+    export is the expensive half, so the result is memoised on the project's
+    content: site fields plus a page/section stamp. Redrawing a suggestion chip
+    is not a reason to rebuild 100 KB of HTML.
+  */
+  let copilotAudit = null;
+  let lastAudit = { compiled: false, pages: 0 };
+  function copilotGateKey(p) {
+    let sections = '';
+    try { sections = (typeof Review !== 'undefined' && Review.stamp) ? Review.stamp(Builder.pages(p)) : ''; } catch (e) { sections = ''; }
+    let rest = '';
+    try {
+      const s = (p && p.site) || {};
+      const scalars = {};
+      Object.keys(s).forEach((k) => { if (k !== 'sections' && k !== 'pages') scalars[k] = s[k]; });
+      rest = JSON.stringify(scalars);
+    } catch (e) { rest = ''; }
+    return String((p && p.id) || '') + '|' + rest + '|' + sections;
+  }
+  function copilotGate(project) {
+    const p = project || current();
+    if (!p) return AI.qualityGate({});
+    const key = copilotGateKey(p);
+    if (key && copilotAudit && copilotAudit.key === key) return copilotAudit.gate;
+    const gate = qualityReport(p);
+    // The compiled flag travels with the memo, so a later measurement of a
+    // repaired *copy* cannot make the review claim it read a page it did not.
+    if (key) copilotAudit = { key, gate, compiled: lastAudit.compiled, pages: lastAudit.pages };
+    return gate;
+  }
+  const copilotAuditCompiled = () => !!(copilotAudit && copilotAudit.compiled);
+
+  /* ---------------- Vision — what the rendered page actually does -----------
+    The audit above reads the export as text. It can tell you a section is empty;
+    it cannot tell you the headline the client wrote wraps to seven lines on a
+    phone, or that the grey they picked is unreadable on the card behind it.
+
+    So the copilot also renders the export in an offscreen frame — scripts
+    blocked, every remote source neutralised, so nothing runs and no request
+    leaves the machine — and reads back what the browser computed. It is the
+    expensive half, so it never runs on its own: it runs when the client asks for
+    a review, once per version of the site, and the in-flight promise is shared
+    so two clicks cannot start two frames.
+  */
+  let visionCache = { key: '', report: null, wait: null };
+
+  function visionReady() {
+    return typeof Vision !== 'undefined' && Vision && typeof Vision.audit === 'function' && Vision.available();
+  }
+
+  function visionReport(p) {
+    const key = copilotGateKey(p);
+    return (key && visionCache.key === key) ? visionCache.report : null;
+  }
+
+  function visionDeps(p) {
+    let pages = [];
+    try {
+      pages = Builder.buildSitePages(p, exportSettings()).map((e) => ({
+        slug: (e.page && e.page.slug) || '',
+        name: (e.page && e.page.name) || 'Untitled',
+        html: e.html,
+        sections: (e.page && e.page.sections) || []
+      }));
+    } catch (e) { pages = []; }
+    const home = pages.find((x) => x.slug === 'index') || pages[0];
+    return {
+      pages: pages,
+      homeSlug: home ? home.slug : '',
+      palettes: DB.palettes,
+      paletteId: (p.site && p.site.palette) || '',
+      // The reading column: the audit decides whether narrowing it would fix a
+      // long line, so it needs the width the export is really built with.
+      containerWidth: Number((p.site && p.site.design && p.site.design.containerWidth) || 1140),
+      copyOptions: (type) => AI.copyOptions(p, type)
+    };
+  }
+
+  function scheduleVision(p) {
+    if (!visionReady() || !p) return null;
+    const key = copilotGateKey(p);
+    if (visionCache.key === key && visionCache.report) return null;
+    if (visionCache.wait) return visionCache.wait;
+    const wait = Vision.audit(visionDeps(p)).then((report) => {
+      // Only a measurement of the project as it is *now* may be cached: if the
+      // site changed while the frame was rendering, the report describes a
+      // version that no longer exists and must not be attributed to this one.
+      visionCache = (copilotGateKey(p) === key)
+        ? { key: key, report: report, wait: null }
+        : { key: '', report: null, wait: null };
+      return report;
+    }).catch(() => { visionCache = { key: '', report: null, wait: null }; return null; });
+    visionCache.wait = wait;
+    return wait;
   }
 
   function qualityColor(letter) {
@@ -1649,11 +1756,19 @@ const App = (() => {
     actKey: 'pallettai.streak.action.v1',
     cache: null,
     lastFetch: 0,
-    lastErr: null
+    lastErr: null,
+    // When the registry can't be reached the widget must not turn every save into
+    // another request. Failed attempts are paced with a widening gap instead.
+    lastAttempt: 0,
+    failures: 0,
+    flight: null
   };
+  const STREAK_OK_TTL = 45000;     // a known-good balance is good for 45s
+  const STREAK_FAIL_MS = 15000;    // first retry after a failure
+  const STREAK_FAIL_CAP = 300000;  // then at most every 5 minutes
   // 12 segments, drawn & documented in the same order as schema.sql §17.
   const WHEEL_SEGS = [
-    ['credits', 3], ['credits', 5], ['credits', 10], ['pro_hours', 3], ['pro_hours', 3],
+    ['credits', 3], ['credits', 5], ['credits', 10], ['pro_hours', 3], ['proplus_hours', 720],
     ['pro_hours', 12], ['pro_hours', 24], ['pro_hours', 72], ['shield', 0],
     ['pro_hours', 168], ['credits', 5], ['credits', 3]
   ];
@@ -1670,6 +1785,7 @@ const App = (() => {
       const d = h / 24;
       return (d === 1 ? '1 day' : d + ' days') + ' of Pro free';
     }
+    if (p.type === 'proplus_hours') return '1 MONTH of Pro+ free 👑';
     if (p.type === 'shield') return 'A streak shield ⛨';
     return 'Something good!';
   }
@@ -1697,16 +1813,41 @@ const App = (() => {
     STREAK.cache = null;
     STREAK.lastFetch = 0;
     STREAK.lastErr = null;
+    STREAK.lastAttempt = 0;
+    STREAK.failures = 0;
+    STREAK.flight = null;
     PLANS.store.setBonusCredits(0);
     try { localStorage.removeItem(STREAK.actKey); } catch (e) {}
   }
+  // One request at a time, however many renders ask for it.
   async function hydrateStreak(force) {
     if (!SUPABASE.isConfigured() || !SUPABASE.signedIn()) { renderStreakWidget(); return; }
-    if (!force && STREAK.cache && STREAK.cache.ok && Date.now() - STREAK.lastFetch < 45000) { renderStreakWidget(); return; }
-    const r = await SUPABASE.getStreakState();
-    STREAK.lastErr = (r && r.ok) ? null : (r && r.msg ? r.msg : 'Can’t reach the registry right now.');
-    if (r && r.ok) adoptStreakState(r);
-    renderStreakWidget();
+    if (STREAK.flight) return STREAK.flight;
+    if (!force) {
+      // After a failure the gap widens instead of every save re-asking; a
+      // success restores the normal cadence.
+      const due = ONLINE.dueForRetry({
+        lastSuccess: STREAK.lastFetch,
+        lastAttempt: STREAK.lastAttempt,
+        failures: STREAK.failures,
+        okTtlMs: STREAK_OK_TTL,
+        failMs: STREAK_FAIL_MS,
+        failCapMs: STREAK_FAIL_CAP
+      });
+      if (!due) { renderStreakWidget(); return; }
+    }
+    const flight = (async () => {
+      STREAK.lastAttempt = Date.now();
+      const r = await SUPABASE.getStreakState();
+      STREAK.lastErr = (r && r.ok) ? null : (r && r.msg ? r.msg : 'Can’t reach the registry right now.');
+      if (r && r.ok) { STREAK.failures = 0; adoptStreakState(r); }
+      else STREAK.failures++;
+      renderStreakWidget();
+    })();
+    STREAK.flight = flight;
+    const settle = () => { if (STREAK.flight === flight) STREAK.flight = null; };
+    flight.then(settle, settle);
+    return flight;
   }
 
   function renderStreakWidget() {
@@ -1845,11 +1986,13 @@ const App = (() => {
     const hueOf = (seg) => {
       if (seg[0] === 'credits') return 158;
       if (seg[0] === 'shield') return 214;
+      if (seg[0] === 'proplus_hours') return 335;  // grand prize
       if (seg[1] === 168) return 43;   // jackpot
       return 258;                      // pro hours
     };
     const labelOf = (seg) => {
       if (seg[0] === 'shield') return '⛨';
+      if (seg[0] === 'proplus_hours') return '1mo+';
       if (seg[1] === 168) return '7d★';
       if (seg[1] === 3) return '3h';
       if (seg[1] === 12) return '12h';
@@ -1866,7 +2009,7 @@ const App = (() => {
       ctx.moveTo(cx, cy);
       ctx.arc(cx, cy, R, a0, a1);
       ctx.closePath();
-      ctx.fillStyle = (seg[1] === 168) ? 'hsl(43,90%,52%)' : (i % 2 ? 'hsl(' + h + ',70%,' + (seg[0] === 'shield' ? 60 : 52) + '%)' : 'hsl(' + h + ',65%,' + (seg[0] === 'shield' ? 52 : 44) + '%)');
+      ctx.fillStyle = (seg[1] === 168) ? 'hsl(43,90%,52%)' : (seg[0] === 'proplus_hours') ? 'hsl(335,75%,52%)' : (i % 2 ? 'hsl(' + h + ',70%,' + (seg[0] === 'shield' ? 60 : 52) + '%)' : 'hsl(' + h + ',65%,' + (seg[0] === 'shield' ? 52 : 44) + '%)');
       ctx.fill();
       ctx.strokeStyle = 'rgba(0,0,0,.28)';
       ctx.lineWidth = 2;
@@ -1919,13 +2062,14 @@ const App = (() => {
     if (btn) btn.hidden = true;
     if (!res) return;
     const jackpot = p.type === 'pro_hours' && p.amount === 168;
+    const grand = p.type === 'proplus_hours';
     res.hidden = false;
-    res.className = 'wheel-result show' + (jackpot ? ' jackpot' : '');
+    res.className = 'wheel-result show' + (grand ? ' jackpot' : (jackpot ? ' jackpot' : ''));
     res.innerHTML = `
-      <div class="wr-emoji">${jackpot ? '👑' : (p.type === 'credits' ? '✨' : p.type === 'shield' ? '⛨' : '⏱')}</div>
-      <div class="wr-title">${jackpot ? 'JACKPOT!' : 'You won'}</div>
+      <div class="wr-emoji">${grand ? '👑' : (jackpot ? '🏆' : (p.type === 'credits' ? '✨' : p.type === 'shield' ? '⛨' : '⏱'))}</div>
+      <div class="wr-title">${grand ? 'GRAND PRIZE!' : (jackpot ? 'JACKPOT!' : 'You won')}</div>
       <div class="wr-prize">${prizeNice(p)}</div>
-      <div class="wr-sub">${p.type === 'pro_hours' ? 'It’s already active — every Pro feature is unlocked while it lasts.' : p.type === 'shield' ? 'Shields keep your streak alive through one missed day (max 2).' : 'Added to your AI credit balance — spendable on AI Studio, styles & Copilot.'}</div>
+      <div class="wr-sub">${grand ? 'A full month of Pro+ is active — unbranded exports, white-label handoff and brand presets, on us.' : p.type === 'pro_hours' ? 'It’s already active — every Pro feature is unlocked while it lasts.' : p.type === 'shield' ? 'Shields keep your streak alive through one missed day (max 2).' : 'Added to your AI credit balance — spendable on AI Studio, styles & Copilot.'}</div>
       <button class="btn primary" id="wheelDone">Awesome ✨</button>`;
     const done = $('#wheelDone');
     if (done) done.onclick = closeModal;
@@ -1948,8 +2092,8 @@ const App = (() => {
         <div class="wo-title">Every segment wins — one outcome is picked on the registry server (no re-rolls).</div>
         <div class="wo-list">
           <span>✨ +3 credits ×2</span><span>✨ +5 credits ×2</span><span>✨ +10 credits ×1</span>
-          <span>⏱ 3h Pro ×2</span><span>⏱ 12h Pro ×1</span><span>⏱ 1 day Pro ×1</span><span>⏱ 3 days Pro ×1</span>
-          <span>⛨ Streak shield ×1</span><span>👑 7 days Pro ×1</span>
+          <span>⏱ 3h Pro ×1</span><span>⏱ 12h Pro ×1</span><span>⏱ 1 day Pro ×1</span><span>⏱ 3 days Pro ×1</span>
+          <span>⛨ Streak shield ×1</span><span>👑 7 days Pro ×1</span><span>👑 1 month Pro+ ×1</span>
         </div>
       </div>`, true);
     drawWheel();
@@ -1970,6 +2114,7 @@ const App = (() => {
     }
     adoptStreakState(r);
     if (r.trialExpiresAt) PLANS.store.applyTrialUntil(new Date(r.trialExpiresAt).getTime());
+    if (r.reviewProPlusUntil) PLANS.store.applyReviewProPlus(new Date(r.reviewProPlusUntil).getTime());
     refreshEntitlements();
     const p = r.prize || {};
     const idx = segIndexForPrize(p);
@@ -2499,6 +2644,9 @@ const App = (() => {
       });
       return;
     }
+    // Every Designer redraw is a change worth looking at; the call is debounced
+    // and memoised, so a slider being dragged costs one measurement at the end.
+    scheduleVisionWarm(c);
     const pal = DB.getPalette(c.site.palette);
     const s = c.site;
     const customF = c.site.customFonts || [];
@@ -7484,12 +7632,17 @@ const App = (() => {
     chatState.open = !!open && !!current();
     const el = $('#chatPanel');
     if (el) el.hidden = !chatState.open;
+    const slash = $('#chatSlash');
+    if (slash) { slash.hidden = true; slash.innerHTML = ''; }
     if (chatState.open) {
       const c = current();
       $('#chatProj').textContent = c.site.name;
       const list = $('#chatList');
       if (!list.childElementCount) {
-        chatAdd('bot', 'Hi — I\'m your site copilot. Tell me what to change and I\'ll do it live.\n\nTry: “make it glassmorphism”, “make the hero punchier”, “add a pricing section” or “rounder corners”.\n\nEvery edit is undoable with <b>${KBD}Z</b> — AI rewrites cost 1 credit.');
+        // The shortcut has to be built with the app's own KBD constant: this was
+        // a plain string, so the first thing a client ever reads from the
+        // copilot said "undoable with ${KBD}Z".
+        chatAdd('bot', 'Hi — I\'m your site copilot. Tell me what to change and I\'ll do it live.\n\nTry: “make it glassmorphism”, “make the hero punchier”, “add a pricing section” or “/review”.\n\nI can also audit the whole site and fix what I safely can. Every edit is undoable with <b>' + KBD + 'Z</b> — AI rewrites cost 1 credit.');
       }
       chatRenderChips();
       const inp = $('#chatInput');
@@ -7506,8 +7659,79 @@ const App = (() => {
     list.insertAdjacentHTML('beforeend', `<div class="msg ${role}">${html}</div>`);
     list.scrollTop = list.scrollHeight;
   }
+  // Insert a bubble and hand back the element, so behaviour stays attached to
+  // the message it belongs to instead of a global index that goes stale the
+  // moment another message is added.
+  function chatAddEl(role, html) {
+    const list = $('#chatList');
+    if (!list) return null;
+    const wrap = document.createElement('div');
+    wrap.className = 'msg ' + role;
+    wrap.innerHTML = html;
+    list.appendChild(wrap);
+    list.scrollTop = list.scrollHeight;
+    return wrap;
+  }
+  function chatScroll() {
+    const list = $('#chatList');
+    if (list) list.scrollTop = list.scrollHeight;
+  }
   function chatBotLine(text) {
     chatAdd('bot ok', esc(text) + `<span class="m-act"><button data-chat-undo="1" title="Revert this last copilot change">↩ Undo this</button></span>`);
+  }
+  function chatSetBusy(on) {
+    const b = $('#chatSend');
+    if (!b) return;
+    b.disabled = !!on;
+    b.textContent = on ? '…' : '➤';
+  }
+
+  /*
+    Ask, don't guess.
+
+    When the copilot is handed a request it can read two ways ("make it
+    premium" — the look or the writing) it asks, and the answers are the real
+    actions it would have taken. Tapping one runs exactly the code path a typed
+    command would, so an option can never promise something the engine cannot
+    do.
+  */
+  function chatAsk(question, options) {
+    const el = chatAddEl('bot card', `<div class="ask"><b>${esc(question)}</b><div class="ask-opts"></div></div>`);
+    if (!el) return;
+    const row = el.querySelector('.ask-opts');
+    (options || []).forEach((opt) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip-q';
+      b.textContent = opt.label;
+      if (opt.note) b.title = opt.note;
+      b.onclick = () => { row.hidden = true; chatRunAct(opt.act, opt.label); };
+      row.appendChild(b);
+    });
+    chatScroll();
+  }
+
+  // A one-off choice the copilot is offering right now (a different heading, a
+  // palette that passes contrast) rather than a whole question.
+  function chatChoiceRow(host, label, choices) {
+    const row = document.createElement('div');
+    row.className = 'ask-opts';
+    if (label) {
+      const cap = document.createElement('span');
+      cap.className = 'chat-cap';
+      cap.textContent = label + ':';
+      row.appendChild(cap);
+    }
+    choices.forEach((ch) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip-q';
+      b.textContent = ch.label;
+      if (ch.note) b.title = ch.note;
+      b.onclick = () => chatRunAct(ch.act, ch.label);
+      row.appendChild(b);
+    });
+    host.appendChild(row);
   }
   function chatRenderChips() {
     const wrap = $('#chatChips');
@@ -7533,6 +7757,20 @@ const App = (() => {
     } else {
       out.push('Add a pricing section', 'Make the hero centered');
     }
+    // Lead with the diagnosis when there is anything worth fixing: a copilot
+    // that notices is more useful than one that only obeys.
+    try {
+      if (typeof Copilot !== 'undefined' && Copilot && typeof Copilot.review === 'function') {
+        // Once the page has been looked at, its findings are part of the count —
+        // a copilot that has seen a broken headline should keep saying so.
+        const vr = visionReport(c);
+        const r = Copilot.review(c, copilotGate(c), { visual: (vr && vr.ok && vr.findings) || [] });
+        if (r && r.total) {
+          const fixable = r.items.filter((it) => it.action).length;
+          out.unshift(fixable ? 'Review my site — ' + fixable + ' fixable' : 'Review my site — ' + r.total + ' to check');
+        }
+      }
+    } catch (e) { /* suggestions are best-effort */ }
     out.push('Make the hero punchier', 'Add a testimonials section', 'Try a dark blue palette', 'Rounder corners');
     if (!c.site.logo) out.push('Generate an AI logo');
     if (/^get started$/i.test(c.site.ctaText || '') || !(c.site.ctaText || '').trim()) out.unshift('Fix the weak CTA');
@@ -7544,69 +7782,584 @@ const App = (() => {
     return out.slice(0, 6);
   }
 
+  // ============================================================
+  // The chat input: command history and the slash menu
+  // ============================================================
+  const chatHist = { items: [], at: -1, draft: '' };
+
+  function chatHistPush(text) {
+    const t = String(text || '').trim();
+    if (!t) return;
+    if (chatHist.items[chatHist.items.length - 1] !== t) chatHist.items.push(t);
+    while (chatHist.items.length > 40) chatHist.items.shift();
+    chatHist.at = -1;
+    chatHist.draft = '';
+  }
+
+  /*
+    ↑ and ↓ walk back through what has been asked before, the way a terminal
+    does. It is the fastest way to repeat a command nobody can quite remember,
+    and the draft in progress is kept so a stray arrow key cannot lose it.
+  */
+  function chatHistStep(dir) {
+    const inp = $('#chatInput');
+    if (!inp || !chatHist.items.length) return;
+    if (chatHist.at === -1) chatHist.draft = inp.value;
+    let at = (chatHist.at === -1 ? chatHist.items.length : chatHist.at) + dir;
+    if (at < 0) at = 0;
+    if (at >= chatHist.items.length) {
+      chatHist.at = -1;
+      inp.value = chatHist.draft || '';
+      chatRenderSlash();
+      return;
+    }
+    chatHist.at = at;
+    inp.value = chatHist.items[at];
+    chatRenderSlash();
+  }
+
+  /*
+    A short list of the commands a client can be taught once. Each row stands
+    for the sentence the copilot already understands, so the menu is a shortcut
+    rather than a second command language to learn.
+  */
+  function chatRenderSlash() {
+    const box = $('#chatSlash');
+    const inp = $('#chatInput');
+    if (!box || !inp) return;
+    const matches = (typeof Copilot !== 'undefined' && Copilot && Copilot.slashMatches) ? Copilot.slashMatches(inp.value) : [];
+    if (!matches.length) {
+      box.hidden = true;
+      box.innerHTML = '';
+      return;
+    }
+    box.hidden = false;
+    box.innerHTML = matches.map((cmd) => `<button type="button" class="slash-row" data-slash="${esc(cmd.name)}"><b>/${esc(cmd.name)}</b><span>${esc(cmd.args || '')}</span><em>${esc(cmd.help)}</em></button>`).join('');
+    box.querySelectorAll('[data-slash]').forEach((row) => {
+      row.onclick = () => {
+        const cmd = matches.find((m) => m.name === row.dataset.slash);
+        if (!cmd) return;
+        box.hidden = true;
+        inp.value = '/' + cmd.name + ' ';
+        inp.focus();
+      };
+    });
+  }
+
+  // The sentence a slash command stands for: /palette emerald becomes the same
+  // request the client could have typed in full.
+  function chatExpandSlash(text) {
+    if (typeof Copilot === 'undefined' || !Copilot || typeof Copilot.slashLookup !== 'function') return text;
+    const cmd = Copilot.slashLookup(text);
+    if (!cmd) return text;
+    const args = text.replace(/^\s*\/\S*\s*/, '').trim();
+    if (args && typeof cmd.withArgs === 'function') return cmd.withArgs(args);
+    return cmd.send;
+  }
+
   async function chatSend() {
     if (!current()) return toast('Open a project first — Copilot edits the open site', false);
     if (chatState.busy) return;
     const inp = $('#chatInput');
-    const text = inp.value.trim();
+    const text = chatExpandSlash(inp.value);
     if (!text) return;
     inp.value = '';
+    chatHistPush(text);
+    chatRenderSlash();
     chatAdd('user', esc(text));
     chatState.busy = true;
-    $('#chatSend').disabled = true;
-    $('#chatSend').textContent = '…';
+    chatSetBusy(true);
     histCapture();
     try {
       const plan = AI.chatPlan(current().site, text, chatLastEdit);
-      const res = await chatExecute(plan.acts, text);
-      if (res.reply) chatAdd('bot', esc(res.reply));
-      if (res.summary.length) chatBotLine(res.summary.join('\n'));
-      if (res.needsCredit) chatAdd('bot', '⚠️ ' + esc(res.needsCredit));
-      if (res.changed) {
-        const targetAct = (plan.acts || []).find((a) => a.type || a.idx != null);
-        chatLastEdit = (typeof AiFollowup !== 'undefined')
-          ? AiFollowup.rememberEdit(chatLastEdit, {
-            raw: text,
-            targetType: (targetAct && targetAct.type) || chatLastEdit.targetType || '',
-            ops: plan.acts || []
-          })
-          : { raw: text, targetType: (targetAct && targetAct.type) || '', ops: plan.acts || [] };
-        chatFinalize(res.full);
-      }
-      else if (!res.summary.length && !res.reply) chatAdd('bot', 'Hmm, I didn\'t quite catch that — try “make it luxury gold”, “delete the FAQ section” or “set my email to hello@example.com”.');
+      await chatApplyPlan(plan, text);
     } catch (err) {
       console.error('Copilot error', err);
       chatAdd('bot', 'Something went wrong running that — please try again.');
     } finally {
       chatState.busy = false;
-      $('#chatSend').disabled = false;
-      $('#chatSend').textContent = '➤';
+      chatSetBusy(false);
       chatRenderChips();
     }
   }
 
+  /*
+    Every plan the copilot produces — typed, tapped or clicked — runs through
+    here, so a button in the review list behaves exactly like the command it
+    stands for.
+  */
+  async function chatApplyPlan(plan, text) {
+    const acts = (plan && plan.acts) || [];
+    /*
+      A plan can answer instead of acting — "nothing to tweak yet", "that reads
+      as a description rather than an instruction". Those sentences were being
+      composed and then dropped, so the client got the generic "I didn't quite
+      catch that" in place of the answer the copilot had actually written.
+    */
+    if (!acts.length && plan && plan.reply) return chatAdd('bot', esc(plan.reply));
+    const ask = acts.find((a) => a.op === 'ask');
+    if (ask) return chatAsk(ask.question, ask.options);
+    if (acts.some((a) => a.op === 'review')) return chatShowReview();
+    if (acts.some((a) => a.op === 'fixAll')) return chatFixAll();
+    if (acts.some((a) => a.op === 'options')) return chatShowOptions();
+    const res = await chatExecute(acts, text);
+    return chatReport(res, acts, text);
+  }
+
+  // Run a single action the copilot proposed from a button or a chip.
+  async function chatRunAct(act, label, verify) {
+    if (!current() || chatState.busy || !act) return;
+    chatState.busy = true;
+    chatSetBusy(true);
+    histCapture();
+    try {
+      const runnable = Object.assign({}, act, { label: act.label || label || '' });
+      const res = await chatExecute([runnable], label || '');
+      chatReport(res, [runnable], label || '');
+      /*
+        Close the loop. A fix that silently did nothing is worse than no fix,
+        because the client stops checking. This reads the concrete value back
+        and says so — and when it cannot confirm, it says that too rather than
+        claiming success.
+      */
+      const check = chatCheckVerify(current(), verify || actVerify(runnable));
+      if (check) {
+        if (check.ok) chatAdd('bot ok', '✓ Verified — the site now has what that fix promised.');
+        else chatAdd('bot warn', '⚠ That ran, but I could not confirm the change from here — open the section and check it.');
+      }
+    } catch (e) {
+      console.error('Copilot action failed', e);
+      chatAdd('bot', 'That one did not apply — please try again.');
+    } finally {
+      chatState.busy = false;
+      chatSetBusy(false);
+      chatRenderChips();
+    }
+  }
+
+  function chatReport(res, acts, text) {
+    if (!res) return;
+    if (res.reply) chatAdd('bot', esc(res.reply));
+    if (res.summary.length) chatBotLine(res.summary.join('\n'));
+    if (res.needsCredit) chatAdd('bot', '⚠️ ' + esc(res.needsCredit));
+    /*
+      Say what it cost. A credit disappears the moment an action runs, and a
+      client who has to go and find the balance to work out what just happened
+      will assume the worst. Refunded actions are netted out, so this reports the
+      money actually spent rather than the money attempted.
+    */
+    if (res.spent > 0) {
+      const c = PLANS.store.creditsLeft();
+      const left = c.left === Infinity
+        ? (isPro() ? 'unlimited on your plan' : 'unlimited')
+        : c.left + ' left';
+      chatAdd('bot note', '⚡ ' + res.spent + ' AI credit' + (res.spent === 1 ? '' : 's') + ' used · ' + left);
+    }
+    if (res.changed) {
+      const targetAct = (acts || []).find((a) => a.type || a.idx != null);
+      chatLastEdit = (typeof AiFollowup !== 'undefined')
+        ? AiFollowup.rememberEdit(chatLastEdit, {
+          raw: text,
+          targetType: (targetAct && targetAct.type) || chatLastEdit.targetType || '',
+          ops: acts || []
+        })
+        : { raw: text, targetType: (targetAct && targetAct.type) || '', ops: acts || [] };
+      chatFinalize(res.full);
+    } else if (!res.summary.length && !res.reply) {
+      chatAdd('bot', 'Hmm, I didn\'t quite catch that — try “make it luxury gold”, “delete the FAQ section” or “/review”.');
+    }
+  }
+
+  // ============================================================
+  // Copilot review — the copilot's own audit, with the fix attached
+  // ============================================================
+  const REV_BAND = { error: 'Blocks publish', warn: 'Worth fixing', info: 'Polish' };
+
+  function chatShowReview() {
+    const c = current();
+    if (!c) return;
+    if (typeof Copilot === 'undefined' || !Copilot || typeof Copilot.review !== 'function') {
+      return chatAdd('bot', 'The reviewer is unavailable right now.');
+    }
+    /*
+      Two audits run here. The model one always: it is cheap and it is what the
+      publish gate already uses. The render one only when the client asks, and
+      only once per version of the site — a clean "nothing needs fixing" from a
+      model check is not the same claim as having rendered the page and looked
+      at it, so the two are never merged into one sentence.
+    */
+    const vr = visionReport(c);
+    const wantVision = !vr && visionReady();
+    const gate = copilotGate(c);
+    const r = Copilot.review(c, gate, { copyOptions: (type) => AI.copyOptions(c, type) });
+    const spotted = (vr && vr.ok && Array.isArray(vr.findings)) ? vr.findings.length : 0;
+    if (!r.items.length && !spotted && !wantVision) {
+      if (!copilotAuditCompiled()) {
+        return chatAdd('bot', 'The export would not compile, so I could only audit the model — I have not seen the page your visitors would get. Quality ' + r.score + ' (' + r.letter + '). Try Export to see what the builder objects to.');
+      }
+      const also = (vr && vr.ok) ? ' I then rendered the export and looked at it at phone and desktop width — nothing to flag there either.' : '';
+      return chatAdd('bot ok', 'I read all ' + r.pageCount + ' rendered page' + (r.pageCount === 1 ? '' : 's') + ' — nothing needs fixing. Quality ' + r.score + ' (' + r.letter + ').' + also);
+    }
+    // Nothing for the model to fix, but the render audit still has something to
+    // say (or is about to). One line for the score, then the look.
+    if (!r.items.length) {
+      chatAdd('bot ok', 'The model side is clean — quality ' + r.score + ' (' + r.letter + '). Here is what the rendered page does:');
+      chatShowVision(c);
+      chatScroll();
+      return;
+    }
+    /*
+      The score a repair will reach is measured, not promised: simulate() runs
+      the same audit over a repaired copy of the project. Showing a number here
+      that the button then fails to hit would be worse than showing none.
+    */
+    let outlook = null;
+    try {
+      outlook = Copilot.simulate(c, {
+        gate: (p) => qualityReport(p),
+        apply: (p) => AI.repairQuality(p)
+      });
+    } catch (e) { outlook = null; }
+    const gain = (outlook && outlook.gained > 0)
+      ? `<small class="rv-gain">My safe repairs measure ${outlook.before} → ${outlook.after} (+${outlook.gained}), and ${outlook.remaining} finding${outlook.remaining === 1 ? '' : 's'} would stay.</small>`
+      : '';
+    // Say what was actually read. A review that found nothing because it could
+    // not compile the page is not the same as a clean site.
+    const readNote = copilotAuditCompiled()
+      ? ' · read from ' + r.pageCount + ' rendered page' + (r.pageCount === 1 ? '' : 's')
+      : ' · <b class="rv-warn-note">the export did not compile, so only the model was audited</b>';
+    const where = Object.keys(r.byPage || {}).length > 1
+      ? `<small class="rv-where">By page — ${esc(Object.keys(r.byPage).map((nm) => nm + ' ' + r.byPage[nm]).join(' · '))}</small>`
+      : '';
+    const head = `<div class="rv-head"><span class="rv-score">${esc(r.score)}</span>`
+      + `<div><b>Site review</b><small>${r.counts.error} blocking · ${r.counts.warn} to fix · ${r.counts.info} to polish${r.actionable ? ' · ' + r.actionable + ' I can do now' : ''}${readNote}</small>${where}${gain}</div></div>`;
+    const el = chatAddEl('bot card', head + '<div class="rv-list"></div>');
+    if (!el) return;
+    const list = el.querySelector('.rv-list');
+    if (outlook && outlook.changed) {
+      const row = document.createElement('div');
+      row.className = 'rv-act rv-act-all';
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'rv-fix';
+      b.textContent = 'Run ' + outlook.changed + ' safe repair' + (outlook.changed === 1 ? '' : 's');
+      b.onclick = () => { row.hidden = true; chatRunAct({ op: 'repair', label: 'Fixed everything I safely could' }); };
+      row.appendChild(b);
+      const note = document.createElement('span');
+      note.className = 'rv-cost';
+      note.textContent = 'no credits';
+      row.appendChild(note);
+      list.appendChild(row);
+    }
+    const fixes = [];
+    chatReviewRows(list, r.items, fixes);
+    chatShowVision(c);
+    chatScroll();
+  }
+
+  /*
+    Render the render review, and patch it in place when the measurement lands.
+    Nothing is re-rendered wholesale: the card this call created is the card it
+    fills, so asking for two reviews at once cannot leave a stranded card
+    mid-measurement.
+  */
+  function chatShowVision(c) {
+    const vr = visionReport(c);
+    const want = !vr && visionReady();
+    if (!vr && !want) return;
+    const card = chatVisionCard(c, vr);
+    if (!want) return;
+    const wait = scheduleVision(c);
+    if (wait && card) wait.then((report) => chatVisionFill(card, c, report));
+  }
+
+  /*
+    A quiet look at the page shortly after the client stops editing.
+
+    The render audit is only worth having if it can be in the way of a mistake,
+    and by the time someone thinks to ask for a review they have usually already
+    published. So it also runs itself — once per version of the site, two and a
+    half seconds after the last change, and never while a panel is still being
+    dragged. Single-flight and budgeted inside Vision, so this can only ever cost
+    one measurement at a time, and it never spends a credit.
+  */
+  let visionIdle = null;
+  // Finding ids already seen per project, so the copilot speaks when the page
+  // *starts* misbehaving and not on every subsequent edit that leaves it so.
+  const visionSeen = {};
+
+  function scheduleVisionWarm(p) {
+    if (visionIdle) { clearTimeout(visionIdle); visionIdle = null; }
+    if (!p || !visionReady()) return;
+    const id = p.id;
+    visionIdle = setTimeout(() => {
+      visionIdle = null;
+      const open = current();
+      // The client may have switched project while the timer ran.
+      if (!open || open.id !== id) return;
+      if (visionReport(open)) return;      // already measured this version
+      const wait = scheduleVision(open);
+      if (!wait) return;
+      wait.then((report) => {
+        chatRenderChips();
+        if (!report || !report.ok) return;
+        const findings = report.findings || [];
+        const baseline = !visionSeen[id];
+        const seen = visionSeen[id] || (visionSeen[id] = {});
+        const fresh = findings.filter((f) => f.level === 'warn' && !seen[f.id]);
+        findings.forEach((f) => { seen[f.id] = true; });
+        // The first look at a project is a baseline, not a change — announcing
+        // it would read as the copilot being alarmed by a site it just met.
+        if (baseline || !fresh.length) return;
+        if (fresh.length === 1) chatAdd('bot', 'Heads up — ' + esc(fresh[0].msg) + (fresh[0].fix ? ' ' + esc(fresh[0].fix) : ''));
+        else chatAdd('bot', 'Heads up — the page picked up ' + fresh.length + ' things worth a look since you started editing. Ask me to review my site and I will list them with fixes.');
+        chatScroll();
+      });
+    }, 2500);
+  }
+
+  /*
+    One review row. Both audits render through here, so the promise a fix button
+    makes cannot drift between the model review and the render review — and a
+    finding either carries an executable action or carries none.
+  */
+  function chatReviewRows(list, items, fixes) {
+    if (!list) return;
+    (items || []).forEach((it) => {
+      const card = document.createElement('div');
+      card.className = 'rv-item lv-' + it.level;
+      const advice = (!it.action && it.advice) ? `<p class="rv-advice">→ ${esc(it.advice)}</p>` : '';
+      const pageTag = it.page ? `<span class="rv-page">${esc(it.page)}</span>` : '';
+      card.innerHTML = `<div class="rv-top"><b>${esc(it.title)}</b><span class="rv-ends">${pageTag}<span class="rv-lvl">${REV_BAND[it.level]}</span></span></div>`
+        + `<p>${esc(it.detail)}</p>${advice}`;
+      if (it.action) {
+        const row = document.createElement('div');
+        row.className = 'rv-act';
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'rv-fix';
+        b.textContent = it.action.label;
+        if (it.action.credit) b.title = 'Uses 1 AI credit';
+        const idx = fixes.push(it.action) - 1;
+        b.onclick = () => { row.hidden = true; chatRunAct(fixes[idx].act, fixes[idx].label); };
+        row.appendChild(b);
+        if (it.action.credit) {
+          const cost = document.createElement('span');
+          cost.className = 'rv-cost';
+          cost.textContent = '1 credit';
+          row.appendChild(cost);
+        }
+        card.appendChild(row);
+      }
+      if (it.action && it.action.choices && it.action.choices.length > 1) chatChoiceRow(card, it.action.choicesLabel || 'Other options', it.action.choices);
+      list.appendChild(card);
+    });
+  }
+
+  /*
+    The render review as its own card. It is a different audit of a different
+    thing — the browser's own computed layout rather than the project model — and
+    saying so is the point: "nothing needs fixing" from a model check and "I
+    rendered the page and looked at it" are not the same claim.
+  */
+  function chatVisionBody(c, report) {
+    let r = null;
+    if (report && report.ok) {
+      try {
+        r = Copilot.review(c, { issues: report.findings, score: 0, letter: '', ready: false },
+          { copyOptions: (type) => AI.copyOptions(c, type) });
+      } catch (e) { r = null; }
+    }
+    const pages = (report && report.pages) ? report.pages.length : 0;
+    const plural = pages === 1 ? '' : 's';
+    let head = '';
+    let note = '';
+    if (!report) {
+      head = '<span class="rv-score rv-wait">···</span>';
+      note = 'Measuring the export in a real browser — scripts blocked, nothing fetched.';
+    } else if (!report.ok) {
+      head = '<span class="rv-score rv-wait">?</span>';
+      note = esc(report.reason || 'the page could not be measured');
+    } else if (r && r.items.length) {
+      head = '<span class="rv-score rv-wait">' + r.items.filter((i) => i.level === 'warn').length + '</span>';
+      note = (r.counts.warn ? r.counts.warn + ' to fix · ' : '')
+        + (r.counts.info ? r.counts.info + ' to polish · ' : '')
+        + 'measured on ' + pages + ' rendered page' + plural + ' at phone and desktop width';
+    } else {
+      head = '<span class="rv-score rv-clear-mark">✓</span>';
+      note = 'measured on ' + pages + ' rendered page' + plural + ' — nothing to flag';
+    }
+    // A card with nothing in its body reads as a failure, so a clean render is
+    // said in words rather than left blank.
+    const clear = (report && report.ok && (!r || !r.items.length))
+      ? '<div class="rv-clear">\u2713 Nothing on the rendered page needs attention.</div>'
+      : '';
+    return {
+      html: '<div class="rv-head rv-head-look">' + head + '<div><b>What the page looks like</b><small>' + note + '</small></div></div><div class="rv-list">' + clear + '</div>',
+      review: r
+    };
+  }
+
+  function chatVisionCard(c, report) {
+    const body = chatVisionBody(c, report);
+    const el = chatAddEl('bot card rv-look', body.html);
+    if (el && body.review) chatReviewRows(el.querySelector('.rv-list'), body.review.items, []);
+    return el;
+  }
+
+  function chatVisionFill(el, c, report) {
+    if (!el || !el.parentNode) return;
+    const body = chatVisionBody(c, report);
+    el.innerHTML = body.html;
+    if (body.review) chatReviewRows(el.querySelector('.rv-list'), body.review.items, []);
+  }
+
+
+  // ============================================================
+  // The batch — every fix that needs no credits, in one undoable step
+  // ============================================================
+
+  /*
+    Three deliberate limits keep a batch from being a surprise. It never spends
+    a credit the client has not agreed to. It never runs an action that targets
+    a section by index — which ops qualify is decided by the copilot, so the rule
+    is testable rather than buried in the UI. And it reports what actually
+    happened by re-auditing the site, instead of restating what it intended.
+  */
+  const batchable = (it) => (typeof Copilot !== 'undefined' && Copilot && Copilot.batchable) ? Copilot.batchable(it) : false;
+
+  async function chatFixAll() {
+    const c = current();
+    if (!c) return;
+    if (typeof Copilot === 'undefined' || !Copilot || typeof Copilot.review !== 'function') {
+      return chatAdd('bot', 'The reviewer is unavailable right now.');
+    }
+    const r = Copilot.review(c, copilotGate(c), { copyOptions: (type) => AI.copyOptions(c, type) });
+    // Classified by why it was left out, not by which rule caught it: a
+    // credit-priced rewrite is not "structural", and saying so would be a
+    // misleading receipt.
+    const batch = r.items.filter((it) => batchable(it) && !it.action.credit);
+    const credit = r.items.filter((it) => it.action && it.action.credit);
+    const structural = r.items.filter((it) => it.action && !it.action.credit && !batchable(it));
+    if (!batch.length) {
+      return chatAdd('bot', 'There is nothing I can apply without your say-so — every remaining fix either costs a credit or changes the structure of a page.');
+    }
+    const acts = batch.map((it) => Object.assign({}, it.action.act, { label: it.title }));
+    const out = await chatExecute(acts, 'apply every fix you can');
+    chatFinalize(out.full);
+    // Each row is checked against the value it promised, so a batch that only
+    // half landed cannot report itself as complete.
+    const checks = acts.map((a) => chatCheckVerify(c, actVerify(a)));
+    // The site changed, so the memoised audit must not answer for it any more.
+    copilotAudit = null;
+    const after = qualityReport(c);
+    const delta = after.score - r.score;
+    const head = `<div class="rv-head"><span class="rv-score">${esc(after.score)}</span>`
+      + `<div><b>Applied ${batch.length} fix${batch.length === 1 ? '' : 'es'} in one step</b>`
+      + `<small>Quality ${r.score} → ${after.score}${delta ? (delta > 0 ? ' (+' + delta + ')' : ' (' + delta + ')') : ' (unchanged)'}`
+      + ` · ${after.issues.length} finding${after.issues.length === 1 ? '' : 's'} left · one ${esc(KBD)}Z undoes the lot</small></div></div>`;
+    const el = chatAddEl('bot card', head + '<div class="rv-list"></div>');
+    if (!el) return;
+    const list = el.querySelector('.rv-list');
+    const lines = (out.summary || []).map(String);
+    batch.forEach((it, i) => {
+      const line = lines.find((s) => s.indexOf(it.title) === 0) || '';
+      const detail = !line ? 'Nothing to change.' : (line === it.title ? 'Done.' : line.slice(it.title.length + 3));
+      const check = checks[i];
+      const mark = !check ? 'applied' : (check.ok ? 'verified' : 'unconfirmed');
+      const card = document.createElement('div');
+      card.className = 'rv-item lv-' + it.level;
+      const where = it.page ? `<span class="rv-page">${esc(it.page)}</span>` : '';
+      card.innerHTML = `<div class="rv-top"><b>${esc(it.title)}</b><span class="rv-ends">${where}<span class="rv-lvl">${mark}</span></span></div>`
+        + `<p>${esc(detail)}</p>`;
+      list.appendChild(card);
+    });
+    const note = document.createElement('p');
+    note.className = 'rv-note';
+    const tails = [];
+    if (credit.length) tails.push(credit.length + (credit.length === 1 ? ' needs a credit' : ' need a credit each'));
+    if (structural.length) tails.push(structural.length + (structural.length === 1 ? ' changes the shape of a page' : ' change the shape of a page'));
+    if (tails.length) {
+      note.textContent = 'Not applied: ' + tails.join('; ') + '. Ask me for those one at a time and you can see each before it runs.';
+      list.appendChild(note);
+    }
+    chatScroll();
+  }
+
+  // ============================================================
+  // Other options — the alternates the copy engine did not pick
+  // ============================================================
+  let chatOptSalt = 0;
+
+  function chatShowOptions() {
+    const c = current();
+    if (!c) return;
+    const idx = (selectedSec != null && c.site.sections[selectedSec]) ? selectedSec : null;
+    const sec = idx != null ? c.site.sections[idx] : (c.site.sections || []).slice().reverse().find((s) => s && s.type !== 'hero') || (c.site.sections || [])[0];
+    if (!sec) return chatAdd('bot', 'There is nothing to reword yet — add a section first.');
+    const realIdx = idx != null ? idx : c.site.sections.indexOf(sec);
+    const groups = (typeof AI.copyOptions === 'function') ? AI.copyOptions(c, sec, { salt: ++chatOptSalt * 7 }) : [];
+    const usable = groups.filter((g) => g.options && g.options.length);
+    if (!usable.length) {
+      return chatAdd('bot', 'I do not have alternate wordings for this kind of section — but I can rewrite it with AI if you ask me to.');
+    }
+    const el = chatAddEl('bot card', `<div class="rv-head"><span class="rv-score">Aa</span><div><b>Other options for the ${esc(sec.type)} section</b><small>${esc((DB.sectionTypes[sec.type] || {}).name || sec.type)} — tap one to use it</small></div></div><div class="rv-list"></div>`);
+    if (!el) return;
+    const list = el.querySelector('.rv-list');
+    usable.forEach((group) => {
+      const card = document.createElement('div');
+      card.className = 'rv-item lv-info';
+      card.innerHTML = `<div class="rv-top"><b>${esc(group.label)}</b><span class="rv-lvl">in use</span></div><p>${esc(group.current || '(not set)')}</p>`;
+      chatChoiceRow(card, 'Try', group.options.map((value) => ({
+        label: value,
+        act: { op: 'copyOption', idx: realIdx, field: group.field, value, label: 'Set the ' + sec.type + ' ' + group.label.toLowerCase() + ' to “' + value + '”' }
+      })));
+      list.appendChild(card);
+    });
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'rv-more';
+    more.textContent = '↻ Show me different ones';
+    more.onclick = () => { more.disabled = true; chatShowOptions(); };
+    list.appendChild(more);
+    chatScroll();
+  }
+
   async function chatExecute(acts, text) {
-    const out = { reply: '', summary: [], changed: false, full: false, needsCredit: '' };
+    const out = { reply: '', summary: [], changed: false, full: false, needsCredit: '', spent: 0 };
     for (const act of (acts || [])) {
       const c = current();
       if (!c) break;
       if (act.op === 'help') { out.reply = AI.chatHelp; continue; }
       if (act.op === 'closeChat') { chatOpenPanel(false); continue; }
+      // These produce a rendered answer rather than an edit, and are drawn by
+      // chatApplyPlan once the plan is known.
+      if (act.op === 'ask' || act.op === 'review' || act.op === 'options') continue;
       if (act.op === 'undo') { histUndo(); out.changed = true; out.full = true; return out; }
       if (act.credit && !spendCredit()) {
         out.needsCredit = 'That action needs an AI credit — the free plan includes 3 (Pro is unlimited).';
         continue;
       }
+      if (act.credit) out.spent++;
       try {
         const r = chatAct(c, act, text);
         if (r && r.then) await r;
         const meta = r || {};
-        if (meta.skipped) { if (act.credit) refundCredit(); out.summary.push(act.label + ' — ' + meta.reason); continue; }
+        if (meta.skipped) {
+          if (act.credit) { refundCredit(); out.spent--; }
+          out.summary.push(act.label + ' — ' + meta.reason);
+          continue;
+        }
         out.summary.push(act.label);
         out.changed = true;
         if (meta.full || act.credit || act.op === 'suite' || act.op === 'unsuite' || act.op === 'logo') out.full = true;
       } catch (e) {
         console.error('Copilot act failed', e);
+        // A credit-priced action that throws has taken the client's credit and
+        // delivered nothing. The `skipped` path above always gave it back; this
+        // path did not, so paying for a crash was the one outcome the ledger
+        // could not undo. It is given back here too.
+        if (act.credit) { refundCredit(); out.spent--; }
         out.summary.push(act.label + ' — could not be applied');
       }
     }
@@ -7630,6 +8383,70 @@ const App = (() => {
     return { full: true };
   }
 
+  /*
+    Resolve the page an action names, by value rather than by position: an
+    earlier fix in the same batch can renumber a page array, and a page insert
+    that landed on the wrong page would be worse than no insert at all. A
+    page-targeted action that cannot be resolved is refused.
+  */
+  function chatPageFor(c, act) {
+    const pages = (typeof Builder !== 'undefined' && Builder.pages) ? Builder.pages(c) : [];
+    if (!pages.length) return null;
+    const byId = act && act.pageId ? pages.find((pg) => pg && pg.id === act.pageId) : null;
+    if (byId) return byId;
+    return (act && act.pageSlug) ? (pages.find((pg) => pg && pg.slug === act.pageSlug) || null) : null;
+  }
+  const chatWantsPage = (act) => !!(act && (act.pageId || act.pageSlug));
+
+  // The copilot owns the write surface. When it is not loaded, nothing may be
+  // written through these paths at all — fail closed rather than write blind.
+  const chatWrite = (key, value) => (typeof Copilot !== 'undefined' && Copilot && Copilot.sanitiseSiteField)
+    ? Copilot.sanitiseSiteField(key, value)
+    : { ok: false, value: '', reason: 'the copilot is unavailable, so nothing was changed' };
+  const chatWriteSection = (field, value) => (typeof Copilot !== 'undefined' && Copilot && Copilot.sanitiseSectionField)
+    ? Copilot.sanitiseSectionField(field, value)
+    : { ok: false, value: '', reason: 'the copilot is unavailable, so nothing was changed' };
+  const actVerify = (act) => (typeof Copilot !== 'undefined' && Copilot && Copilot.verifyFor) ? Copilot.verifyFor(act) : null;
+  const chatChoice = (kind, id) => (typeof Copilot !== 'undefined' && Copilot && Copilot.sanitiseChoice) ? Copilot.sanitiseChoice(kind, id) : '';
+
+  /*
+    Did the action do what it promised? Checked against the concrete value, not
+    against the review finding's number — findings are numbered by position and
+    an earlier fix in the same batch can move those numbers, which would make a
+    passing fix look like a failure and a failure look like a pass.
+  */
+  function chatCheckVerify(c, verify) {
+    if (!verify || verify.kind === 'none' || verify.kind === 'anyChange' || !c) return null;
+    const s = c.site || {};
+    const D = (typeof Copilot !== 'undefined' && Copilot) ? Copilot : null;
+    if (verify.kind === 'site') {
+      const want = (D && D.sanitiseSiteField) ? D.sanitiseSiteField(verify.key, verify.value).value : verify.value;
+      const now = s[verify.key];
+      return { ok: String(now == null ? '' : now) === String(want == null ? '' : want) };
+    }
+    if (verify.kind === 'design') {
+      return { ok: !!(s.design && s.design[verify.key] != null) };
+    }
+    const pages = (typeof Builder !== 'undefined' && Builder.pages) ? Builder.pages(c) : [];
+    if (verify.kind === 'section') {
+      let sec = null;
+      pages.forEach((pg) => (pg.sections || []).forEach((x) => { if (x && x.id === verify.sectionId) sec = x; }));
+      if (!sec) return { ok: false };
+      const want = (D && D.sanitiseSectionField) ? D.sanitiseSectionField(verify.field, verify.value).value : verify.value;
+      const now = sec[verify.field];
+      return { ok: String(now == null ? '' : now) === String(want == null ? '' : want) };
+    }
+    if (verify.kind === 'pageSection') {
+      // With no page named, the insert targets the page being edited, which is
+      // the array site.sections aliases.
+      const arr = verify.pageSlug
+        ? ((pages.find((x) => x && x.slug === verify.pageSlug) || {}).sections || [])
+        : (Array.isArray(s.sections) ? s.sections : []);
+      return { ok: arr.some((x) => x && x.type === verify.type) };
+    }
+    return null;
+  }
+
   function chatAct(c, act, text) {
     const s = c.site;
     switch (act.op) {
@@ -7638,8 +8455,21 @@ const App = (() => {
         AI.applyStylePack(c, act.pack);
         return { full: true };
       }
-      case 'palette': s.palette = act.palette; return { full: true };
-      case 'font': s.font = act.font; return { full: true };
+      // Catalogue ids are checked at the write: an id that does not exist would
+      // render as an unstyled fallback and then be reported as a palette the
+      // product could not score.
+      case 'palette': {
+        const id = chatChoice('palette', act.palette);
+        if (!id) return { skipped: true, reason: 'that is not a palette this build ships' };
+        s.palette = id;
+        return { full: true };
+      }
+      case 'font': {
+        const id = chatChoice('font', act.font);
+        if (!id) return { skipped: true, reason: 'that is not a font this build ships' };
+        s.font = id;
+        return { full: true };
+      }
       case 'design': {
         s.design = s.design || {};
         const defs = { radius: 20, spacing: 96, containerWidth: 1140 };
@@ -7651,22 +8481,32 @@ const App = (() => {
         s.design[act.key] = v;
         return { full: true };
       }
-      case 'hero': s.heroLayout = act.layout; return { full: true };
+      case 'hero': {
+        const id = chatChoice('hero', act.layout);
+        if (!id) return { skipped: true, reason: 'that is not a hero layout this build ships' };
+        s.heroLayout = id;
+        return { full: true };
+      }
       case 'layout': {
         const secSuite = PLANS.sectionSuite[act.type];
         if (secSuite && !isPro()) return { skipped: true, reason: 'the ' + ((DB.sectionTypes[act.type] || {}).name || act.type) + ' section is a Pro feature — upgrade to add it' };
+        // A layout the renderer does not know for this section type would be
+        // stored and then reported back as an unknown variant, so it is refused
+        // here instead.
+        let layout = act.layout ? chatChoice('layout:' + act.type, act.layout) : '';
+        if (act.layout && !layout) return { skipped: true, reason: 'that is not a layout this build ships for that section' };
         const i = chatLastIdx(s, act.type);
         if (i === -1) {
           if (!isPro() && totalSections(c) >= PLANS.getPlan('free').limits.sectionsPerSite) {
             return { skipped: true, reason: 'the free plan allows ' + PLANS.getPlan('free').limits.sectionsPerSite + ' sections per site — upgrade for unlimited' };
           }
           const ns = AI.sampleSection(act.type, c);
-          ns.layout = act.layout;
+          ns.layout = layout;
           const last = s.sections[s.sections.length - 1];
           s.sections.splice((last && last.type === 'contact') ? s.sections.length - 1 : s.sections.length, 0, ns);
           return { full: true };
         }
-        s.sections[i].layout = act.layout;
+        s.sections[i].layout = layout;
         return { full: true };
       }
       case 'brandKit': {
@@ -7679,36 +8519,115 @@ const App = (() => {
       case 'navSticky': s.navSticky = act.on; return { full: true };
       case 'navCta': s.navCta = act.text; return { full: true };
       case 'themeToggle': s.themeToggle = act.on; return { full: true };
-      case 'setField': s[act.key] = act.value; return { full: ['name', 'tagline', 'description', 'ctaText', 'ctaLink', 'favicon', 'email'].includes(act.key) };
+      /*
+        formEndpoint belongs in the re-render list: the copilot's one-tap form
+        fix writes it, and without a repaint the field still reads empty while
+        the export is already delivering. The key and value are both validated
+        by the copilot's own allowlist, so an action cannot write __proto__ or
+        any field the product does not own.
+      */
+      case 'setField': {
+        const write = chatWrite(act.key, act.value);
+        if (!write.ok) return { skipped: true, reason: write.reason };
+        s[act.key] = write.value;
+        return { full: ['name', 'tagline', 'description', 'metaDescription', 'ctaText', 'ctaLink', 'favicon', 'email', 'url', 'formEndpoint'].includes(act.key) };
+      }
+      case 'repair': {
+        const r = AI.repairQuality(c) || { changed: 0 };
+        if (!r.changed) return { skipped: true, reason: 'there was nothing left that I can fix safely' };
+        return { full: true };
+      }
+      case 'copyOption': {
+        // Swap one generated line for another from the same pool. The section
+        // is found by id when the copilot named it (a review finding) and by
+        // index when it came from the section the client has open.
+        let target = null;
+        if (act.sectionId) {
+          const pages = (typeof Builder !== 'undefined' && Builder.pages) ? Builder.pages(c) : [];
+          pages.forEach((pg) => (pg.sections || []).forEach((x) => { if (x && x.id === act.sectionId) target = x; }));
+        }
+        if (!target && act.idx != null) target = s.sections[act.idx];
+        if (!target) return { skipped: true, reason: 'that section is no longer on the page' };
+        const write = chatWriteSection(act.field, act.value);
+        if (!write.ok) return { skipped: true, reason: write.reason };
+        target[act.field] = write.value;
+        return { full: true };
+      }
+      case 'preview': switchView('designer'); return {};
+      case 'export': downloadSiteZip(c); return {};
       case 'logo': AI.logo(c); return { full: true };
       case 'alt': AI.altText(c); return {};
       case 'suite': return chatSuite(c, act.suite, true);
       case 'unsuite': return chatSuite(c, act.suite, false);
       case 'addSection': {
-        const secSuite = PLANS.sectionSuite[act.type];
-        if (secSuite && !isPro()) return { skipped: true, reason: 'the ' + ((DB.sectionTypes[act.type] || {}).name || act.type) + ' section is a Pro feature — upgrade to add it' };
+        // The type has to be one this build can actually render. An unknown
+        // type would compile to an empty block and trip the gate's own
+        // unknown-section error, so the "fix" would break the page it fixed.
+        const type = (typeof Copilot !== 'undefined' && Copilot && Copilot.sanitiseSectionType)
+          ? Copilot.sanitiseSectionType(act.type)
+          : String(act.type || '');
+        if (!type) return { skipped: true, reason: 'that is not a section this build can render' };
+        const secSuite = PLANS.sectionSuite[type];
+        if (secSuite && !isPro()) return { skipped: true, reason: 'the ' + ((DB.sectionTypes[type] || {}).name || type) + ' section is a Pro feature — upgrade to add it' };
         if (!isPro() && totalSections(c) >= PLANS.getPlan('free').limits.sectionsPerSite) {
           return { skipped: true, reason: 'the free plan allows ' + PLANS.getPlan('free').limits.sectionsPerSite + ' sections per site — upgrade for unlimited' };
         }
-        const ns = AI.sampleSection(act.type, c);
+        const target = chatWantsPage(act) ? chatPageFor(c, act) : null;
+        if (chatWantsPage(act) && !target) return { skipped: true, reason: 'that page is no longer on the site' };
+        const arr = target ? (Array.isArray(target.sections) ? target.sections : (target.sections = [])) : s.sections;
+        const ns = AI.sampleSection(type, c);
         if (act.extra) ns.extra = act.extra;
-        if (act.type === 'booking') {
+        // A caller-supplied heading is taken through the same field allowlist as
+        // any other generated line.
+        if (act.title) {
+          const t = chatWriteSection('title', act.title);
+          if (t.ok && t.value) ns.title = t.value;
+        }
+        /*
+          Settle the heading here, against the site as it is now. Two page fixes
+          offered by the same review are planned independently and come back with
+          the same heading; applying both would trip the repeated-heading rule and
+          make the pair of fixes a downgrade. The insert sees the whole site, so
+          the insert decides.
+        */
+        if (typeof Copilot !== 'undefined' && Copilot && Copilot.settleLines) {
+          const settled = Copilot.settleLines(c, { type: type, title: ns.title, subtitle: ns.subtitle }, { copyOptions: (t) => AI.copyOptions(c, t) });
+          /*
+            A page-targeted insert is a fix for a finding about repetition, so
+            it may not itself repeat a heading. When the site has used every
+            line there is, the honest move is to refuse and say so — inserting a
+            duplicate would add the warning the fix was meant to clear.
+          */
+          if (!settled.ok) {
+            if (chatWantsPage(act)) {
+              return { skipped: true, reason: 'there is no heading left that would not repeat another page — add one by hand and give it its own words' };
+            }
+          } else {
+            ns.title = settled.title;
+            ns.subtitle = settled.subtitle;
+          }
+        }
+        if (type === 'booking') {
           if (act.bookingUrl) ns.bookingUrl = act.bookingUrl;
           if (act.bookingProvider) ns.bookingProvider = act.bookingProvider;
           if (!ns.bookingUrl && ns.extra) ns.bookingUrl = ns.extra;
           if (ns.bookingUrl) ns.extra = ns.bookingUrl;
         }
-        const last = s.sections[s.sections.length - 1];
-        const idx = (last && last.type === 'contact') ? s.sections.length - 1 : s.sections.length;
-        s.sections.splice(idx, 0, ns);
-        selectedSec = idx;
+        const last = arr[arr.length - 1];
+        const idx = (last && last.type === 'contact') ? arr.length - 1 : arr.length;
+        arr.splice(idx, 0, ns);
+        if (arr === s.sections) selectedSec = idx;
         return { full: true };
       }
       case 'removeSection': {
-        const i = chatLastIdx(s, act.type);
-        if (i === -1) return { skipped: true, reason: 'there is no ' + act.type + ' section on this site' };
-        s.sections.splice(i, 1);
-        if (selectedSec != null) selectedSec = Math.min(selectedSec, Math.max(0, s.sections.length - 1));
+        const target = chatWantsPage(act) ? chatPageFor(c, act) : null;
+        if (chatWantsPage(act) && !target) return { skipped: true, reason: 'that page is no longer on the site' };
+        const arr = target ? (target.sections || []) : s.sections;
+        let i = -1;
+        for (let k = arr.length - 1; k >= 0; k--) if (arr[k] && arr[k].type === act.type) { i = k; break; }
+        if (i === -1) return { skipped: true, reason: 'there is no ' + act.type + ' section ' + (target ? 'on that page' : 'on this site') };
+        arr.splice(i, 1);
+        if (arr === s.sections && selectedSec != null) selectedSec = Math.min(selectedSec, Math.max(0, arr.length - 1));
         return { full: true };
       }
       case 'duplicateSection': {
@@ -7752,7 +8671,9 @@ const App = (() => {
       }
       case 'rewriteAll': {
         return (async () => {
-          await AI.enhanceCopy(c, text, settings.onlineEnabled !== false);
+          // A tapped option carries its own instruction; a typed command falls
+          // back to the sentence the client wrote.
+          await AI.enhanceCopy(c, act.prompt || text, settings.onlineEnabled !== false);
           return { full: true };
         })();
       }
@@ -8461,7 +9382,17 @@ const App = (() => {
     // ---- copilot chat bindings ----
     $('#chatClose').onclick = () => chatOpenPanel(false);
     $('#chatSend').onclick = chatSend;
-    $('#chatInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); chatSend(); } });
+    $('#chatInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); chatSend(); return; }
+      if (e.key === 'Escape' && !$('#chatSlash').hidden) { e.preventDefault(); $('#chatSlash').hidden = true; return; }
+      // ↑/↓ only take over once the menu is out of the way, so a plain arrow
+      // key still moves the caret inside a multi-word request.
+      if ($('#chatSlash').hidden) {
+        if (e.key === 'ArrowUp') { e.preventDefault(); chatHistStep(-1); return; }
+        if (e.key === 'ArrowDown') { e.preventDefault(); chatHistStep(1); return; }
+      }
+    });
+    $('#chatInput').addEventListener('input', chatRenderSlash);
     $('#chatList').addEventListener('click', (e) => {
       const b = e.target.closest('[data-chat-undo]');
       if (b) histUndo();

@@ -101,9 +101,13 @@ const about = (studied.site.pages || studied.site.sections && [{ sections: studi
   .flatMap((p) => p.sections || []).find((s) => s.type === 'about')
   || (studied.site.sections || []).find((s) => s.type === 'about');
 assert(!about || !/Rival about paragraph/i.test(about.text || ''), 'rival about is not pasted over a filled brief');
-const featStudied = (studied.site.pages || []).flatMap((p) => p.sections || []).find((s) => s.type === 'features')
-  || (studied.site.sections || []).find((s) => s.type === 'features');
-assert(featStudied && featStudied.items.some((it) => it.title === 'Wholesale Beans'), 'studied service titles are used');
+// A multi-page site gives the service list its own page, so search every page
+// rather than only the first features section — the requirement is that the
+// studied service names are used somewhere, not which page happens to sit first.
+const studiedFeats = (studied.site.pages || []).flatMap((p) => p.sections || []).filter((s) => s.type === 'features');
+(studied.site.sections || []).forEach((s) => { if (s.type === 'features' && !studiedFeats.includes(s)) studiedFeats.push(s); });
+assert(studiedFeats.some((s) => (s.items || []).some((it) => it.title === 'Wholesale Beans')), 'studied service titles are used');
+const featStudied = studiedFeats[0] || null;
 assert(featStudied && !featStudied.items.some((it) => /SECRET COPY/i.test(it.text || '')), 'studied service body copy is not stolen');
 assert(studied.site.studied && studied.site.studied.length === 1 && studied.site.studied[0].url === 'https://rival.test/', 'site.studied is attached');
 

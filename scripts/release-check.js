@@ -109,10 +109,19 @@ const SMOKES = [
   ['scripts/ai-brief-smoke.js', 'AI brief smoke'],
   ['scripts/ai-niche-smoke.js', 'AI niche smoke'],
   ['scripts/ai-followup-smoke.js', 'AI follow-up smoke'],
+  ['scripts/copy-edit-smoke.js', 'Copy-edit intent smoke'],
+  ['scripts/intent-polarity-smoke.js', 'Intent polarity smoke'],
   ['scripts/ai-translate-smoke.js', 'AI translate smoke'],
+  ['scripts/translate-budget-smoke.js', 'Translation request-budget smoke'],
+  ['scripts/outbound-pacing-smoke.js', 'Outbound retry pacing smoke'],
   ['scripts/ai-fingerprint-smoke.js', 'AI fingerprint smoke'],
   ['scripts/ai-photos-smoke.js', 'AI photo ranker smoke'],
   ['scripts/ai-compose-smoke.js', 'AI compose smoke'],
+  // The wording engine: two clients in one industry must never be handed
+  // word-for-word identical sites, and a client's own proofs must drive copy.
+  ['scripts/copy-smoke.js', 'Copy engine smoke'],
+  ['scripts/copilot-smoke.js', 'Copilot reasoning smoke'],
+  ['scripts/vision-smoke.js', 'Copilot render audit smoke'],
   ['scripts/palette-lab-smoke.js', 'Palette Lab smoke'],
   ['scripts/briefs-smoke.js', 'Saved briefs smoke'],
   // Offline and self-contained: guards determinism, palette binding and the size

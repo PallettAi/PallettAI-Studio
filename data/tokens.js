@@ -75,6 +75,21 @@ const Tokens = (() => {
       [['bg', pal.bg], ['surface', pal.surface], ['primary', pal.primary], ['accent', pal.accent], ['text', pal.text], ['muted', pal.muted]]
         .forEach(([k, v]) => { const h = hex(v); if (h) colors[k] = h; });
     }
+    /*
+      The brand accents are too pale (or too dark) to be read as text on 17 of
+      the 27 palettes, which is why the generated site paints words with a
+      derived variant. A handoff that ships only the brand colour would hand the
+      developer the failing one, so the legible roles ship alongside it.
+    */
+    let textRoles = null;
+    try {
+      if (pal && typeof DB !== 'undefined' && DB && typeof DB.textRoles === 'function') textRoles = DB.textRoles(pal);
+    } catch (e) { textRoles = null; }
+    if (textRoles) {
+      const p = hex(textRoles.primary), a = hex(textRoles.accent);
+      if (p) colors.primaryText = p;
+      if (a) colors.accentText = a;
+    }
 
     const typography = {};
     if (font) typography.sans = String(font.css || '').trim() || "'Inter', sans-serif";
@@ -117,6 +132,10 @@ const Tokens = (() => {
     Object.keys(t.colors).forEach((k) => lines.push('  --color-' + k + ': ' + t.colors[k] + ';'));
     if (t.typography.sans) lines.push('  --font-sans: ' + t.typography.sans + ';');
     if (t.typography.display) lines.push('  --font-display: ' + t.typography.display + ';');
+    // Emitted next to the brand colours so nobody reaches for --color-primary as
+    // a text colour and ships the contrast failure this file was fixed to avoid.
+    if (t.colors.primaryText) lines.push('  --color-primary-text: ' + t.colors.primaryText + '; /* use for text */');
+    if (t.colors.accentText) lines.push('  --color-accent-text: ' + t.colors.accentText + '; /* use for text */');
     lines.push('  --radius-base: ' + t.radius.base + 'px;');
     lines.push('  --radius-card: ' + t.radius.card + 'px;');
     lines.push('  --radius-pill: ' + t.radius.pill + 'px;');

@@ -558,6 +558,35 @@ const ONLINE = {
     return DB.fonts.map((f) => ({ ...f, sample }));
   },
 
+  /*
+    Is a repeated external read due yet?
+
+    Free tiers are spent by the requests a UI makes when nothing changed. The
+    pattern that causes it is retrying on failure more eagerly than on success:
+    an unreachable registry, a paused project or a pulled cable used to make
+    every save fire another request, so the harder the service was struggling
+    the faster we asked. Pacing has to widen while a service is failing, and
+    only a success may restore the normal cadence.
+
+    Pure on purpose: it takes the clock as an argument, so the behaviour above
+    is asserted in tests rather than described in a comment.
+  */
+  dueForRetry(state, now) {
+    const s = state || {};
+    const at = Number.isFinite(now) ? now : Date.now();
+    const ok = Number(s.okTtlMs) > 0 ? Number(s.okTtlMs) : 45000;
+    const base = Number(s.failMs) > 0 ? Number(s.failMs) : 15000;
+    const cap = Number(s.failCapMs) > 0 ? Number(s.failCapMs) : 300000;
+    const failures = Math.max(0, Math.floor(Number(s.failures) || 0));
+    // A known-good read is trustworthy for its full window.
+    if (failures === 0) {
+      return !(Number(s.lastSuccess) > 0 && at - Number(s.lastSuccess) < ok);
+    }
+    // After failures, wait longer each time — never forever, never instantly.
+    const wait = Math.min(cap, base * Math.pow(2, failures - 1));
+    return !(Number(s.lastAttempt) > 0 && at - Number(s.lastAttempt) < wait);
+  },
+
   clearCache() {
     this.cache = Object.create(null);
     this.cacheMeta = Object.create(null);

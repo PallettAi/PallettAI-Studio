@@ -732,15 +732,65 @@ DB.adjustUntil = (hex, fn, darkenFirst) => {
     return '#' + to8(hue2rgb(p, q, h2 / 360 + 1 / 3)) + to8(hue2rgb(p, q, h2 / 360)) + to8(hue2rgb(p, q, h2 / 360 - 1 / 3));
   }
 };
+/*
+  DB.textRoles(pal) -> { primary, accent, checks }
+
+  The accent colours a palette ships are *brand* colours: chosen to look right as
+  a gradient, a border, a fill. Several of them are far too light or too dark to
+  be read as small text — measured on the rendered export, an eyebrow line was
+  sitting at 3.77:1 and a hero badge at 2.8:1 against the page behind it, on
+  every site generated with that palette. Nothing in the product had ever checked
+  the accent roles, so nothing had ever noticed.
+
+  Rather than throw away 17 of the 27 palettes, the roles the *reader* meets get
+  their own derived colours: the brand hue, shifted in lightness by the same
+  search the Palette Lab's "AA tune" uses, until it clears 4.5:1 on both the page
+  and a card. The saturated original is untouched, so every gradient, border and
+  fill looks exactly as designed; only the words change.
+
+  Deterministic, and safe to call on every render — the search converges in a few
+  steps because `text` and `muted` already clear the same grounds.
+*/
+DB.textRoles = (pal, over) => {
+  if (!pal) return { primary: '', accent: '', checks: [] };
+  const o = over || {};
+  // The grounds matter: the theme toggle repaints the page with its own bg and
+  // surface, so a colour readable on the palette's dark page is not necessarily
+  // readable on the light theme's. `over` lets the same derivation be run for
+  // those grounds, which is what stops the toggle from undoing the fix.
+  const dark = o.dark == null ? !!pal.dark : !!o.dark;
+  const bg = o.bg || pal.bg;
+  const surface = o.surface || pal.surface;
+  const need = 4.5;
+  const grounds = [bg, surface].filter(Boolean);
+  // Light grounds carry dark text, so an accent has to go darker to be read;
+  // dark grounds need the opposite. `adjustUntil` walks the lightness in the
+  // direction it is told, preserving hue and saturation.
+  const readable = (hex) => DB.adjustUntil(hex, (c) => grounds.every((g) => DB.contrast(c, g) >= need), !dark);
+  const primary = readable(pal.primary);
+  const accent = readable(pal.accent);
+  const roles = [
+    { role: 'Primary text on background', fg: primary, bg: bg, need },
+    { role: 'Primary text on cards', fg: primary, bg: surface, need },
+    { role: 'Accent text on background', fg: accent, bg: bg, need },
+    { role: 'Accent text on cards', fg: accent, bg: surface, need }
+  ];
+  return { primary, accent, checks: roles.map((r) => ({ ...r, ratio: DB.contrast(r.fg, r.bg) })) };
+};
+
 // Key text roles of a palette + their WCAG ratio vs the surfaces they sit on.
+// The accent roles are measured on the derived text colours the stylesheet
+// actually paints with (DB.textRoles), not on the brand colours, so this reports
+// what a visitor reads rather than what the palette file says.
 DB.paletteChecks = (pal) => {
   if (!pal) return [];
+  const t = DB.textRoles(pal);
   const roles = [
     { role: 'Body text on background', fg: pal.text, bg: pal.bg, need: 4.5 },
     { role: 'Secondary text on background', fg: pal.muted, bg: pal.bg, need: 4.5 },
     { role: 'Body text on cards', fg: pal.text, bg: pal.surface, need: 4.5 },
     { role: 'Secondary text on cards', fg: pal.muted, bg: pal.surface, need: 4.5 }
-  ];
+  ].concat(t.checks);
   return roles.map((r) => ({ ...r, ratio: DB.contrast(r.fg, r.bg) }));
 };
 

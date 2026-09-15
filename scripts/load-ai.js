@@ -20,6 +20,8 @@ function loadAI() {
   sandbox.AiFingerprint = require(path.join(ROOT, 'data', 'ai-fingerprint.js'));
   sandbox.AiPhotos = require(path.join(ROOT, 'data', 'ai-photos.js'));
   sandbox.AiCompose = require(path.join(ROOT, 'data', 'ai-compose.js'));
+  sandbox.Copy = require(path.join(ROOT, 'data', 'copy.js'));
+  sandbox.Copilot = require(path.join(ROOT, 'data', 'copilot.js'));
   vm.createContext(sandbox);
   const code = fs.readFileSync(path.join(ROOT, 'modules', 'ai.js'), 'utf8');
   vm.runInContext(code + '\n;globalThis.AI = AI;', sandbox);

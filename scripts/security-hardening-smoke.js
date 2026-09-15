@@ -93,6 +93,75 @@ assert(Builder.safeEmbedUrl('https://open.spotify.com/embed/playlist/1') === 'ht
   assert(!/src="javascript:/i.test(html), 'compiled HTML does not emit javascript: iframe src');
 }
 
+/*
+  The copilot can write to the client's site, so its write surface is a security
+  boundary rather than a convenience. An action that can write an arbitrary key
+  can write __proto__; an action that can write an arbitrary string can plant a
+  javascript: URL in the client's own CTA. Both are refused at the source, and
+  this asserts it from the outside.
+*/
+console.log('\n== Copilot write surface ==');
+{
+  const Copilot = require(path.join(ROOT, 'data', 'copilot.js'));
+  assert(typeof Copilot.sanitiseSiteField === 'function', 'the copilot exposes a site-field sanitiser');
+  assert(typeof Copilot.SITE_FIELDS === 'object' && Copilot.SITE_FIELDS !== null, 'the writable site fields are an explicit allowlist');
+
+  ['__proto__', 'prototype', 'constructor'].forEach((k) => {
+    const r = Copilot.sanitiseSiteField(k, 'x');
+    assert(r.ok === false && r.value === '', 'a prototype key cannot be written: ' + k);
+  });
+  assert(!Object.prototype.polluted, 'the prototype chain is untouched after those refusals');
+  assert(Copilot.sanitiseSiteField('tokens', 'x').ok === false, 'a field outside the allowlist cannot be written');
+  assert(Copilot.sanitiseSiteField('pages', [1]).ok === false, 'the page model cannot be replaced from chat');
+
+  assert(Copilot.sanitiseSiteField('url', 'javascript:alert(1)').ok === false, 'javascript: cannot be written into the public address');
+  assert(Copilot.sanitiseSiteField('url', 'http://example.com').ok === false, 'a plain-http public address is refused');
+  assert(Copilot.sanitiseSiteField('ctaLink', 'javascript:alert(1)').ok === false, 'javascript: cannot be written into the main button');
+  assert(Copilot.sanitiseSiteField('ctaLink', 'data:text/html,<script>x</script>').ok === false, 'data: cannot be written into the main button');
+  assert(Copilot.sanitiseSiteField('ctaLink', '//evil.example/x').ok === false, 'a protocol-relative button link is refused');
+  assert(Copilot.sanitiseSiteField('email', '').ok === true, 'clearing an address is allowed');
+  assert(Copilot.sanitiseSiteField('formEndpoint', 'https://api.web3forms.com/submit').ok === true, 'a real endpoint is accepted');
+
+  assert(Copilot.sanitiseSectionField('__proto__', 'x').ok === false, 'a section field cannot be a prototype key');
+  assert(Copilot.sanitiseSectionField('id', 'renamed').ok === false, 'a section id cannot be rewritten from chat');
+  assert(Copilot.sanitiseSectionField('type', 'hero').ok === false, 'a section type cannot be rewritten from chat');
+  assert(Copilot.sanitiseSectionType('bogus') === '', 'an unknown section type cannot be inserted');
+  assert(Copilot.sanitiseSectionType('__proto__') === '', 'a prototype key is not a section type');
+  assert(Copilot.sanitiseSectionType('hero') === 'hero', 'a real section type still passes');
+
+  assert(Copilot.sanitiseSiteField('tagline', 'x'.repeat(4000)).value.length <= 300, 'written text is length-capped');
+  assert(Copilot.sanitiseSectionField('text', 'x'.repeat(4000)).value.length <= 600, 'written section text is length-capped');
+  assert(!/[\u0000-\u001f]/.test(Copilot.sanitiseSectionField('title', 'a\u0000b\u001fc').value), 'control characters are stripped from a written line');
+
+  // Nothing the surface refuses can reach an export through it.
+  const refusedLink = Copilot.sanitiseSiteField('ctaLink', 'javascript:alert(1)').value;
+  const safeHtml = Builder.buildSiteHTML({
+    id: 'surface', name: 'Surface', suites: [],
+    site: {
+      name: 'Surface', tagline: 't', palette: 'midnight', font: 'inter',
+      ctaLink: refusedLink || '#top',
+      sections: [{ type: 'hero', id: 'h', title: 'H' }]
+    }
+  }, { onlineEnabled: false });
+  assert(!/javascript:/i.test(safeHtml), 'nothing the surface refused reaches the export');
+
+  // A catalogue id is checked against the catalogue it will be looked up in, so
+  // a made-up one cannot be stored and then reported as an unscorable palette.
+  assert(typeof Copilot.sanitiseChoice === 'function', 'the copilot exposes a catalogue-choice sanitiser');
+  assert(Copilot.sanitiseChoice('palette', 'midnight') === 'midnight', 'a real palette is accepted');
+  assert(Copilot.sanitiseChoice('palette', 'nope') === '', 'a palette that does not exist is refused');
+  assert(Copilot.sanitiseChoice('palette', '__proto__') === '', 'a prototype key is not a palette');
+  assert(Copilot.sanitiseChoice('font', 'comic-sans') === '', 'a font that does not exist is refused');
+  assert(Copilot.sanitiseChoice('layout:features', 'spiral') === '', 'a layout that does not exist for that section is refused');
+  assert(Copilot.sanitiseChoice('hero', 'centered') === 'centered', 'the hero layout the product itself ships is still accepted');
+  assert(Copilot.sanitiseChoice('navStyle', 'weird') === '', 'a nav style that is not one of the two is refused');
+
+  // batchability is decided by the copilot, and it must not be mutable from out here
+  const actSet = Copilot.BATCH_OPS;
+  assert(actSet === undefined, 'the batch list is not exported as a mutable set');
+  assert(typeof Copilot.batchable === 'function', 'batch eligibility is asked for through a function');
+}
+
 console.log('\n== Widget HTML escaping ==');
 {
   const src = Builder.buildSiteHTML({

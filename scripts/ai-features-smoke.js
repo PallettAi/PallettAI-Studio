@@ -223,7 +223,13 @@ const harness = `
   ok(multiAudit.issues.some((i) => /About/.test(i.msg)), 'gate names findings on additional pages');
   const multiRepair = AI.repairQuality(multi);
   ok(multiRepair.changed > 0, 'repair traverses every page');
-  ok(multi.site.pages[1].sections.some((s) => s.type === 'hero') && multi.site.pages[1].sections.some((s) => s.type === 'contact'), 'repair gives an empty secondary page a safe structure');
+  ok(multi.site.pages[1].sections.some((s) => s.type === 'hero'), 'repair gives a secondary page the opening it is missing');
+  // It must NOT invent a contact block here. It used to, on every page, with the
+  // same heading every time — so each page repeated a heading the previous one
+  // used and running the repair LOWERED the site's own quality score. The gate's
+  // own advice for that finding is "link visitors to a clear way to get in
+  // touch", and it is info-level: a suggestion, not a defect.
+  ok(!multi.site.pages[1].sections.some((s) => s.type === 'contact'), 'and does not invent a contact block that would repeat another page heading');
   ok(multi.site.sections === multi.site.pages[0].sections, 'repair preserves the active home-page alias');
 
   console.log('');
