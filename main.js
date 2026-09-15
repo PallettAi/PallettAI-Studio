@@ -655,8 +655,11 @@ function main() {
           // Linux get it here in Help instead.
           ...(!isMac ? [{ label: 'Check for Updates…', click: () => { checkForUpdatesManually(); } }, { type: 'separator' }] : []),
           { label: 'Open pallettai.org', click: () => shell.openExternal('https://pallettai.org') },
-          { label: 'Report a Bug', click: () => shell.openExternal('https://pallettai.org/contact') },
-          { label: 'Download for Another Platform', click: () => shell.openExternal('https://pallettai.org') }
+          // Both of these point at real pages on the site. The support desk is where a
+          // bug report lands, and the downloads page is where the other builds are —
+          // the bare domain and a /contact route would have sent people to a 404.
+          { label: 'Report a Bug', click: () => shell.openExternal('https://pallettai.org/support') },
+          { label: 'Download for Another Platform', click: () => shell.openExternal('https://pallettai.org/downloads') }
         ]
       }
     ];
