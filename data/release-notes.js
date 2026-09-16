@@ -4,29 +4,29 @@
 // Bump `version` when you ship. Each entry: version, date, tagline, highlights[].
 // Keep highlights to 3-4 items, written as user-facing wins (not commit logs).
 const RELEASE_NOTES = {
-  version: '0.4.3',
-  date: 'September 14, 2026',
-  tagline: 'Every export now arrives with the evidence to back it up',
+  version: '0.4.4',
+  date: 'September 16, 2026',
+  tagline: 'The copilot reads what you actually asked for \u2014 and stops acting on what you did not',
   highlights: [
     {
-      icon: 'check',
-      title: 'The export argues for itself',
-      desc: 'Every export carries a delivery report and a manifest: what was measured, what is worth fixing, and a SHA-256 for every file. Anyone you send the folder to can confirm it is unaltered rather than taking your word for it \u2014 and the report is written for the client, not for you, so it can be forwarded as it is.'
+      icon: 'chat',
+      title: 'It reads the sentence, not just the words',
+      desc: '\u201cDo not make it dark\u201d used to switch your site to Midnight. \u201cI don\u2019t like the editorial look\u201d used to apply it. A message is now read for what it is \u2014 a request, a refusal, a question, praise \u2014 before anything is planned, so a design change happens only when you asked for one, and a refusal is answered with alternatives rather than the thing you just turned down. Scope works the same way: two named sections are both handled, \u201cevery section\u201d means every section, and \u201cbut keep the words\u201d is honoured instead of quietly dropped.'
     },
     {
-      icon: 'globe',
-      title: 'A finished site, right to its edges',
-      desc: 'Each page gets its own share image drawn from your palette, so a link unfurls as the page it points at instead of a bare title. A mistyped URL now lands on a 404 that wears the site\u2019s own navigation, and the export ships the host policy files \u2014 security headers included \u2014 so what you hand over is hardened from the first upload.'
+      icon: 'undo',
+      title: 'Undo one change, and keep everything after it',
+      desc: '\u2318Z walks backwards a step at a time, but the sentence you actually type is \u201cput the colours back\u201d \u2014 and answering that with \u201cI undid your last change\u201d asks you to remember what order you did things in. It now finds your most recent change to the colours and restores only that, leaving the work you did afterwards untouched. Because it works in paths rather than steps, either half of \u201cmake the hero punchier and switch to ocean\u201d can be put back on its own.'
     },
     {
-      icon: 'gauge',
-      title: 'Faster for visitors, kinder to keyboards',
-      desc: 'Images now offer the browser a smaller file wherever the host can resize, so a phone stops downloading a desktop-sized picture. Keyboard visitors get a skip link, a focus ring the site\u2019s own styles cannot remove, and navigation that tells them which page they are on.'
+      icon: 'shield',
+      title: 'Publish is a decision, not a button',
+      desc: 'Six failures only exist once a site is live, and every one of them is invisible until a visitor finds it: two pages exporting to the same file, a menu link to a page that was never made, an enquiry with nowhere to go, an insecure destination, a blank description, nothing to publish at all. The publish button now stops on them and says which one, rather than letting a stranger discover it first.'
     },
     {
-      icon: 'handoff',
-      title: 'Hand over the system, not just the pixels',
-      desc: 'The export includes your design tokens as CSS, JSON and a working Tailwind config, with the contrast of each text pairing stated. Copy is read for clarity \u2014 the longest sentence, the filler, the page that never asks for the work \u2014 and every link, anchor and asset is resolved before you send it.'
+      icon: 'pulse',
+      title: 'Sites that keep working once you have moved on',
+      desc: 'A new audit asks the question no other one asks \u2014 is this still true? Placeholder copy never filled in, our own template\u2019s sample address and phone number, an event date that has passed, last year\u2019s price sitting beside your money, # links, images with no alt text. Alongside it: animated backgrounds that bind to your own palette and honour motion settings, a free-tier badge carrying your referral link so every site you sell recruits for you, and 7 free AI credits instead of 3.'
     }
   ]
 };
