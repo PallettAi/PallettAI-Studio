@@ -63,7 +63,7 @@ The same studio ships as a **direct-download Mac app** (Electron 44 — **macOS 
 | Sections per site | 10 | Unlimited | Unlimited |
 | Templates | 4 (3 locked) | All | All |
 | Suites | Animation + Contact Pro | All | All |
-| AI Studio | 3 credits | Unlimited | Unlimited |
+| AI Studio | 7 credits | Unlimited | Unlimited |
 | Brand systems | — | Save up to 12 | Save up to 12 |
 | Exports | "Made with PallettAI" badge | Unbranded site export | White-label client handoff ZIP |
 
@@ -76,7 +76,7 @@ Give a friend **30 days of Pro free**; you earn **7 Pro days** every time a frie
 
 **Two modes.** Connected to a Supabase project (setup below): each account gets **one stable code, minted at signup, that never changes**; every redemption is verified server-side by the `redeem_code` RPC and written to a stamped trace log (`verified` / `already-used` / `self-redeemed` / `not-found`); the redeemer's +30d and referrer's +7d are granted atomically on the server, so rewards are real and follow the account across devices. Signed out (or no project connected): an honest single-machine demo — the “simulate redemption” button exercises the loop locally.
 
-> ⚠️ **Payments are still a demo.** Wire Stripe / Paddle / Lemon Squeezy into `PLANS.store.activate()` for real checkout (see `data/plans.js`). Referral *verification* is now genuinely server-side via Supabase; paid billing remains the final milestone.
+> **Billing runs on Dodo Payments.** The studio asks the registry for a checkout session (Edge Function `dodo-checkout`), Dodo takes the payment, and `dodo-webhook` grants **Pro** or **Pro+** on the signed-in account once the subscription is active. Nothing unlocks locally: `PLANS.store.activate()` refuses any source except the registry. See **[docs/DODO-SETUP.md](docs/DODO-SETUP.md)** for the product ids, secrets and webhook wiring.
 
 ## Supabase cloud registry — setup (~10 minutes, free)
 
@@ -273,7 +273,7 @@ Toggle it in Settings ▸ Cloud backup (Automatic backup switch); the merge engi
 
 **Still planned:**
 - **Phase 1 — offline signed codes:** referral codes become ECDSA-signed payloads (`PAL-REF-<kind>-<issuedAt>-<validUntil>-<sig>`) verified in-app via built-in WebCrypto with an embedded public key (private key stays with PallettAI, so users can’t mint). This turns the app-side verifier into a true offline fallback when the registry is unreachable.
-- **Sales plumbing:** a checkout page that mints license keys via a secure Edge Function + Stripe/Paddle/Lemon Squeezy wired into `PLANS.store.activate()`.
+- **Sales plumbing:** a self-serve sales page that mints license keys via a secure Edge Function, so a key can be bought without going through the in-app Upgrade flow.
 
 ## Security posture & audit (2026-09-04)
 
@@ -300,4 +300,4 @@ Toggle it in Settings ▸ Cloud backup (Automatic backup switch); the merge engi
 
 - Contact & newsletter forms in exported sites **deliver for real** when the client pastes a third-party endpoint (Formspree / Web3Forms / any JSON-capable URL) into **Design & branding ▸ Form delivery endpoint** — the exported page POSTs straight to that service, never to PallettAI servers. Without an endpoint, forms stay demo flows. Shop checkout remains a demo.
 - AI image generation depends on the free Pollinations API; when unreachable or rate-limited the studio falls back to Picsum and local copy.
-- Projects, palettes and subscription state live in `localStorage` on this machine. Optional cloud layer: referral codes and earned trials live on your Supabase project (free tier) and sync in the background. Paid plans are billed through Stripe Payment Links; a webhook unlocks Pro or Pro+ on the signed-in Studio account after Stripe confirms payment.
+- Projects, palettes and subscription state live in `localStorage` on this machine. Optional cloud layer: referral codes and earned trials live on your Supabase project (free tier) and sync in the background. Paid plans are billed through Dodo Payments — the session is created server-side so it is bound to the account you signed in with, and a Standard-Webhooks-signed webhook unlocks Pro or Pro+ once Dodo confirms the subscription.

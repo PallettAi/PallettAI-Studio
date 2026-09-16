@@ -4500,6 +4500,130 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
     return -1;
   };
 
+  /*
+    The nth section of a type, so "the last pricing section" can mean that
+    rather than "the last section". -1 means the last one, matching how the
+    ordinals below are spelled.
+  */
+  function nthSecOfType(site, type, n) {
+    const hits = [];
+    for (let i = 0; i < site.sections.length; i++) if (site.sections[i].type === type) hits.push(i);
+    if (!hits.length) return -1;
+    const want = n === -1 ? hits.length - 1 : n;
+    return want >= 0 && want < hits.length ? hits[want] : -1;
+  }
+
+  /*
+    Positional references — "the second section", "the last one". People point
+    at what they can see, and describing a section by where it sits on the page
+    is at least as natural as naming its kind.
+  */
+  const ORDINALS = [
+    [/\b(?:first|1st)\b/, 0],
+    [/\b(?:second|2nd)\b/, 1],
+    [/\b(?:third|3rd)\b/, 2],
+    [/\b(?:fourth|4th)\b/, 3],
+    [/\b(?:fifth|5th)\b/, 4],
+    [/\b(?:sixth|6th)\b/, 5],
+    [/\b(?:seventh|7th)\b/, 6],
+    [/\b(?:eighth|8th)\b/, 7],
+    [/\b(?:ninth|9th)\b/, 8],
+    [/\b(?:tenth|10th)\b/, 9],
+    [/\b(?:last|final)\b/, -1]
+  ];
+  const SECTION_NOUN = /\b(?:section|sections|block|blocks|area|part|panel|band|one)\b/;
+
+  /*
+    "first" and "last" appear constantly in ordinary copy — "first impressions",
+    "last year". A counted position therefore needs the word *section* beside it,
+    or it is almost certainly not a position at all. "…the last one" is exempt
+    from that rule only when nothing else in the sentence names a target, which
+    the caller decides.
+  */
+  function sectionOrdinal(msg) {
+    const n = norm(msg);
+    const noun = SECTION_NOUN.test(n);
+    for (const [re, index] of ORDINALS) {
+      const m = n.match(re);
+      if (!m) continue;
+      if (!noun && index !== -1) continue;
+      return { index: index, at: m.index, word: m[0].trim() };
+    }
+    return null;
+  }
+
+  /*
+    Where a target-less or lightly-specified sentence points. One place, so the
+    follow-up path and the repeat path cannot drift apart on what "the footer"
+    or "the second section" means.
+
+    Returns either { idx, type, how } or { fail, type? }. The failure is named
+    rather than boolean so the copilot can say which thing is missing instead of
+    answering every miss with the same sentence.
+  */
+  function resolveTarget(site, raw, ctx) {
+    const named = mentionedSections(raw)[0];
+    const ord = sectionOrdinal(raw);
+
+    /* A named kind outranks a bare position: "the last pricing section" is
+       about pricing first and which one of them second. */
+    if (named) {
+      const idx = ord ? nthSecOfType(site, named.type, ord.index) : lastSecOfType(site, named.type);
+      if (idx >= 0) return { idx: idx, type: named.type, how: 'name' };
+      return { fail: ord ? 'that-position' : 'not-on-site', type: named.type };
+    }
+    if (ord) {
+      const idx = ord.index === -1 ? site.sections.length - 1 : ord.index;
+      const sec = site.sections[idx];
+      if (sec) return { idx: idx, type: sec.type, how: 'position' };
+      return { fail: 'that-position' };
+    }
+    if (ctx && ctx.targetType) {
+      const idx = lastSecOfType(site, ctx.targetType);
+      if (idx >= 0) return { idx: idx, type: ctx.targetType, how: 'remembered' };
+    }
+    return { fail: 'no-target' };
+  }
+
+  /*
+    A section pointed at by position, shaped like a named mention so the section
+    commands can consume it without needing to know the difference. Null when the
+    position is past the end of the page, which the callers treat as a refusal.
+  */
+  function positionalMention(site, raw) {
+    const ord = sectionOrdinal(raw);
+    if (!ord) return null;
+    const idx = ord.index === -1 ? site.sections.length - 1 : ord.index;
+    const sec = site.sections[idx];
+    if (!sec) return null;
+    return { type: sec.type, idx: idx, word: ord.word, at: ord.at, positional: true };
+  }
+
+  /*
+    Why a target could not be found. Naming the miss is the whole point: "nothing
+    to tweak yet" is the right answer when there is no context yet, and the wrong
+    one when the real answer is "this site has no pricing section". A client told
+    the second thing can act on it; a client told the first just tries again.
+  */
+  function followMiss(target, site) {
+    if (target.fail === 'that-position') {
+      const n = site.sections.length;
+      return 'There is no section in that position — this site has ' + n + (n === 1 ? ' section.' : ' sections.');
+    }
+    if (target.fail === 'not-on-site') {
+      return 'There is no ' + target.type + ' section on this site yet.';
+    }
+    return 'Nothing to tweak yet — edit a section first, then say shorter, more local, or less salesy.';
+  }
+
+  function repeatMiss(prev) {
+    // The example has to be a section that actually exists to point at: an
+    // example the copilot would itself refuse is worse than none.
+    if (prev.reason === 'none') return 'Nothing to repeat yet — make a change first, then say “same for the FAQ”.';
+    if (prev.reason === 'site-wide') return 'That last change applied to the whole site, so there is no one section to repeat it on.';
+    return 'That last change is not one I can safely repeat on another section.';
+  }
+
   // color words -> palette id (palettes are the DB palette list incl. pack + custom)
   const COLOR_WORDS = [
     ['glass frost', 'pack_glass'], ['brutal paper', 'pack_brutal'], ['neo retro', 'pack_retro'],
@@ -4808,9 +4932,9 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
     '📰 Give it an editorial look'
   ];
 
-  const chatHelp = 'Ask me to review your site and I will read every page it renders, list what is wrong in order of what costs you most, and attach the fix to each one — “apply every fix you can” does all of those in a single undoable step. I can restyle the whole site (“make it glassmorphism” or “luxury gold”), retune design (“rounder corners”, “more spacing”), apply catalog layouts (“make the features bento”, “terminal hero”, “masonry testimonials”), tweak copy (“make the hero punchier”), change colors, fonts, buttons and nav, and add or remove sections — “add a pricing section”, “add a map of Paris”, “weather in London”, “add an online booking block”, “delete the FAQ”, “swap the order”… I can even change your site name, phone, email or CTA, or build a full brand kit with one command. Every change is undoable (' + KBD + 'Z), and AI copy rewrites use one credit.';
+  const chatHelp = 'Ask me to review your site and I will read every page it renders, list what is wrong in order of what costs you most, and attach the fix to each one — “apply every fix you can” does all of those in a single undoable step. I can restyle the whole site (“make it glassmorphism” or “luxury gold”), retune design (“rounder corners”, “more spacing”), apply catalog layouts (“make the features bento”, “terminal hero”, “masonry testimonials”), tweak copy (“make the hero punchier”), change colors, fonts, buttons and nav, and add or remove sections — “add a pricing section”, “add a map of Paris”, “weather in London”, “add an online booking block”, “delete the FAQ”, “swap the order”… I can even change your site name, phone, email or CTA, or build a full brand kit with one command. You can point at a section by where it sits instead of what it is — “make the second section punchier”, “delete the last one” — and once you have changed something, “same for the FAQ” carries that instruction to a different section. Every change is undoable (' + KBD + 'Z), and AI copy rewrites use one credit.';
 
-  function chatPlan(site, msg, ctx) {
+  function chatPlanOne(site, msg, ctx) {
     const raw = String(msg || '').trim();
     if (!raw) return { acts: [], reply: 'Say what you\'d like to change — for example “make it glassmorphism” or “rounder corners”.' };
     const n = norm(raw);
@@ -4834,12 +4958,59 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
         the same way a remembered one does; only a target-less "make it
         shorter" still needs context.
       */
-      const named = mentionedSections(raw)[0];
-      const target = (ctx && ctx.targetType) || (named && named.type) || '';
-      if (!target) return { acts: [], reply: 'Nothing to tweak yet — edit a section first, then say shorter, more local, or less salesy.' };
-      const idx = lastSecOfType(site, target);
-      if (idx < 0) return { acts: [], reply: 'Nothing to tweak yet — edit a section first, then say shorter, more local, or less salesy.' };
-      return { acts: [{ op: 'rewriteSection', type: target, idx, mode: followId, prompt: raw, credit: true, label: 'Rewrote the ' + target + ' section' }] };
+      const target = resolveTarget(site, raw, ctx);
+      if (target.fail) return { acts: [], reply: followMiss(target, site) };
+      return { acts: [{ op: 'rewriteSection', type: target.type, idx: target.idx, mode: followId, prompt: raw, credit: true, label: 'Rewrote the ' + target.type + ' section' }] };
+    }
+
+    /*
+      "Same for the footer."
+
+      The client has just watched one change land and wants it again somewhere
+      else. The instruction is carried forward so the second target does not
+      need the whole sentence typed out again — which is most of the difference
+      between a command line and a collaborator.
+
+      Deliberately AFTER the follow-up branch: "same for the about section,
+      shorter" names a mode, so it is a follow-up with a target, not a replay of
+      whatever happened last.
+    */
+    const rep = FU && FU.isRepeat(raw);
+    if (rep) {
+      const prev = FU.repeatableOp(ctx && ctx.ops);
+      if (!prev.ok) return { acts: [], reply: repeatMiss(prev) };
+
+      const target = resolveTarget(site, raw, null);
+      if (target.fail) {
+        // A kind we know by name but cannot find is a different answer from a
+        // kind we could not place at all, and both differ from naming nothing.
+        if (target.fail !== 'no-target') return { acts: [], reply: followMiss(target, site) };
+
+        const tail = FU && FU.repeatTail ? FU.repeatTail(raw) : '';
+        if (tail) {
+          const shown = tail.length > 40 ? tail.slice(0, 40).trim() + '…' : tail;
+          return {
+            acts: [],
+            reply: 'I could not tell which section “' + shown + '” means, so I have not changed anything. '
+              + 'Name it the way it reads on the page — “the hero”, “the FAQ”, “the about section” — or by position, like “the second section”.'
+          };
+        }
+
+        /*
+          "Same again" names no target at all. Repeating on the same section is
+          the natural reading, and asking which one they meant is a question
+          whose answer they gave a moment ago.
+        */
+        if (prev.type) {
+          const again = lastSecOfType(site, prev.type);
+          if (again >= 0) {
+            return { acts: [{ op: prev.op, type: prev.type, idx: again, mode: prev.mode, prompt: prev.prompt || raw, credit: true, label: 'Repeated that on the ' + prev.type + ' section' }] };
+          }
+          return { acts: [], reply: 'The ' + prev.type + ' section is no longer on this page, so there is nothing to repeat it on.' };
+        }
+        return { acts: [], reply: repeatMiss({ reason: 'none' }) };
+      }
+      return { acts: [{ op: prev.op, type: target.type, idx: target.idx, mode: prev.mode, prompt: prev.prompt || raw, credit: true, label: 'Applied the same change to the ' + target.type + ' section' }] };
     }
     if (/\bmore like\b|\bsimilar to\b|\blike https?:\/\//i.test(raw)) {
       const url = FU && FU.likeUrl(raw);
@@ -5134,9 +5305,13 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
       const remembered = demonstrative && ctx && ctx.targetType ? String(ctx.targetType) : '';
       return remembered && lastSecOfType(site, remembered) >= 0 ? remembered : '';
     })();
+    /* “Duplicate the last one” points at a section without naming a kind. */
+    const dupePos = (!dupeType && wantsDuplicate) ? positionalMention(site, raw) : null;
     const dupeAct = dupeType
       ? { op: 'duplicateSection', type: dupeType, label: 'Duplicated the ' + dupeType + ' section' }
-      : null;
+      : (dupePos
+        ? { op: 'duplicateSection', type: dupePos.type, idx: dupePos.idx, label: 'Duplicated the ' + dupePos.word + ' section' }
+        : null);
 
     // ---- copy rewrites (cost a credit) ----
     const tone = TONES.find((t) => n.indexOf(' ' + t + ' ') !== -1);
@@ -5182,8 +5357,21 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
           : '';
         acts.push({ op: 'addSection', type: t.type, extra, bookingUrl: t.type === 'booking' ? extra : '', bookingProvider, label: 'Added a ' + (DB.sectionTypes[t.type] || {}).name + ' section' + (extra ? ' (' + extra.slice(0, 24) + ')' : '') });
       }
-      if (/\b(remove|delete|drop|take out|get rid of)\b/.test(n) && t && !acts.some((a) => a.op === 'removeSection')) {
-        acts.push({ op: 'removeSection', type: t.type, label: 'Removed the ' + t.word + ' section' });
+      /*
+        “Delete the second section” names no kind, so nothing above matched it and
+        the request fell through to the generic excuse. A position is a target too,
+        but only for removal: feeding it to the ADD branch would insert a copy of
+        whichever section happens to sit in that position, which is not a request
+        anyone made.
+      */
+      const posM = (!t && !bookingIntent) ? positionalMention(site, raw) : null;
+      if (/\b(remove|delete|drop|take out|get rid of)\b/.test(n) && (t || posM) && !acts.some((a) => a.op === 'removeSection')) {
+        const target = t || posM;
+        const act = { op: 'removeSection', type: target.type, label: 'Removed the ' + target.word + ' section' };
+        // Carried as an exact index so the executor removes the section that was
+        // pointed at, not the last one of that kind.
+        if (posM) act.idx = posM.idx;
+        acts.push(act);
       }
     }
     // Clone a section: an explicit verb, or "copy" pointed at a section rather
@@ -5203,6 +5391,98 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
       acts.push({ op: 'help', label: '' });
     }
     return { acts };
+  }
+
+  /* ---------------- Compound intent --------------
+    "Make the hero punchier and switch to a serif" is two instructions, and the
+    planner reads it as one string: the font matcher fires, the copy rewrite does
+    not, and the client is left believing half their sentence was ignored. That is
+    the polarity bug in a different costume — the words were read, the meaning was
+    not.
+
+    Splitting is attempted only where it cannot possibly do harm, and the guard
+    that does the work is the last one: EVERY clause must carry out an action of
+    its own when it is planned alone. That single rule is the whole difference
+    between a copilot that reads you and one that invents work:
+
+      "black and white"                    -> "white" acts on nothing       -> one plan
+      "make the hero shorter and punchier" -> "punchier" alone has no target -> one plan
+      "the menu and pricing are fine"      -> neither clause acts           -> one plan
+      "make the hero punchier and use a
+       serif"                              -> both clauses act              -> two acts
+
+    help and ask are not actions, so a clause the planner did not understand —
+    which answers with help by design — never counts as one, and a message that
+    only half-parses is left to the single-clause planner to read whole. Anything
+    that fails a guard falls through to that same planner, which is exactly the
+    program that ran before this existed.
+  */
+  function realActs(plan) {
+    return ((plan && plan.acts) || []).filter((a) => a && a.op !== 'help' && a.op !== 'ask');
+  }
+
+  function splitCompound(raw) {
+    const msg = String(raw || '').trim();
+    if (!msg || msg.length > 300) return null;
+    // A quoted span is content the client wants kept exactly as written, never
+    // prose to cut. Cheap to exclude, and getting it wrong would edit their words.
+    if (msg.indexOf('"') !== -1) return null;
+    // A URL can carry "and" between hyphens; the likeUrl path owns whole URLs.
+    if (/https?:\/\//i.test(msg)) return null;
+    // Longest connective first, so "and then" is not left as a bare "then".
+    const parts = msg
+      .split(/\s*(?:;\s*|\band also\b|\band then\b|\bas well as\b|\bthen\b|\balso\b|\bplus\b|\band\b)\s*/i)
+      .map((s) => s.trim().replace(/^[,;]\s*/, '').trim())
+      .filter(Boolean);
+    return parts.length > 1 ? parts : null;
+  }
+
+  /*
+    Ops that rewrite a section's copy with the model. Two of these in one message
+    is one instruction with a compound predicate — "shorter and punchier" — not two
+    requests. Splitting it would run the model twice, charge twice, and hand the
+    writer half the sentence to work with, when reading it whole is both cheaper
+    and better. So at most one rewrite may appear in a compound plan.
+  */
+  const REWRITE_OPS = { rewriteSection: 1, likeUrl: 1 };
+
+  function chatPlan(site, msg, ctx) {
+    const raw = String(msg || '').trim();
+    const parts = splitCompound(raw);
+    if (parts) {
+      const plans = parts.map((p) => chatPlanOne(site, p, ctx));
+      /*
+        Every clause must either carry out an action or have been a deliberate
+        non-request. A clause that produced nothing while ASKING for something is
+        prose the planner did not understand, and that is the evidence the
+        conjunction belonged to the sentence rather than between two sentences —
+        "make sure it works" is not a second instruction to guess at.
+
+        The polarity reading is what makes this the right test rather than a
+        length test, and designOk is the flag within it — not request. "don't make
+        it dark" CONTAINS the word make, so it reads as a request; what makes it a
+        prohibition is the negation, which is exactly what designOk folds in.
+        A negated clause is not a failure to understand, it is a statement about
+        the site as it already stands, so the instruction beside it still runs.
+      */
+      const understood = parts.every((clause, i) => realActs(plans[i]).length || !polarity(clause).designOk);
+      if (understood) {
+        const acts = [];
+        plans.forEach((pl) => realActs(pl).forEach((a) => acts.push(a)));
+        const rewrites = acts.filter((a) => REWRITE_OPS[a.op]).length;
+        if (acts.length && rewrites <= 1) {
+          const replies = plans.map((pl) => String((pl && pl.reply) || '').trim()).filter(Boolean);
+          return {
+            acts: acts,
+            compound: acts.length,
+            // Clause replies are kept in order, so a message that asked two things
+            // is answered for both rather than done twice and explained once.
+            reply: replies.join(' ')
+          };
+        }
+      }
+    }
+    return chatPlanOne(site, raw, ctx);
   }
 
   /*
@@ -5331,7 +5611,8 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
   // credits consumed per action
   const COST = { site: 1, images: 1, enhance: 1, restyle: 1, shuffle: 1, section: 1, translate: 1 };
 
-  return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, studySite, isPublicFetchUrl, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, shuffleLook, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatHelp, sampleSection, copyOptions, imageBase, photoPicks, polarity, designMention, designAlternatives, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES, applyNicheExtras, addServicesPage, matchNiche };
+  return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, studySite, isPublicFetchUrl, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, shuffleLook, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatPlanOne, splitCompound, chatHelp, sampleSection, copyOptions, imageBase, photoPicks, polarity, designMention, designAlternatives,
+    nthSecOfType, sectionOrdinal, resolveTarget, positionalMention, followMiss, repeatMiss, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES, applyNicheExtras, addServicesPage, matchNiche };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = AI;

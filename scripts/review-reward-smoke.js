@@ -66,7 +66,7 @@ console.log('\n== Paid Pro+ consumes the claim without extra days ==');
 {
   const db = empty();
   Object.assign(db.profiles.get(ACCOUNT), {
-    plan: 'proplus', entitlement_source: 'stripe', plan_expires_at: null
+    plan: 'proplus', entitlement_source: 'dodo', plan_expires_at: null
   });
   const r = reward.applyReviewClaim(db, { accountId: ACCOUNT, name: 'Corey', quote: QUOTE, now });
   assert(r.outcome === 'already-paid', 'paid Pro+ is already-paid');

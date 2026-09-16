@@ -18,27 +18,32 @@ try {
   process.exit(1);
 }
 
-console.log('== Billing status from Stripe event ==');
-assert(rec.billingStatusFromEvent('invoice.paid', true) === 'ok', 'paid event is ok');
-assert(rec.billingStatusFromEvent('invoice.payment_failed', false) === 'failed', 'payment_failed is failed');
-assert(rec.billingStatusFromEvent('customer.subscription.deleted', false) === 'canceled', 'deleted is canceled');
-assert(rec.billingStatusFromEvent('customer.subscription.paused', false) === 'paused', 'paused is paused');
-assert(rec.billingStatusFromEvent('checkout.session.expired', false) === 'expired', 'expired is expired');
-assert(rec.billingStatusFromEvent('invoice.payment_action_required', false) === 'action_required', 'action_required maps');
-assert(rec.billingStatusFromEvent('customer.subscription.updated', false) === 'past_due', 'unpaid update defaults to past_due');
+console.log('== Billing status from a Dodo event ==');
+assert(rec.billingStatusFromEvent('subscription.renewed', true) === 'ok', 'a paid event is ok');
+assert(rec.billingStatusFromEvent('subscription.failed', false) === 'failed', 'failed is failed');
+assert(rec.billingStatusFromEvent('subscription.cancelled', false) === 'cancelled', 'cancelled is cancelled');
+assert(rec.billingStatusFromEvent('subscription.paused', false) === 'paused', 'paused is paused');
+assert(rec.billingStatusFromEvent('subscription.expired', false) === 'expired', 'expired is expired');
+assert(rec.billingStatusFromEvent('subscription.on_hold', false) === 'on_hold', 'on_hold maps');
+assert(rec.billingStatusFromEvent('subscription.past_due', false) === 'past_due', 'past_due maps');
+// Every event the mapper can decide is unpaid carries one of these words, so
+// the fallback is only ever a belt-and-braces default.
+assert(rec.billingStatusFromEvent('payment.cancelled', false) === 'cancelled', 'a cancelled one-off maps too');
 
 console.log('\n== Failure copy ==');
 assert(rec.failureCopy('failed') === 'Payment failed — you are back on Free.', 'failed copy');
-assert(rec.failureCopy('canceled') === 'Subscription canceled — you are back on Free.', 'canceled copy');
-assert(rec.failureCopy('past_due') === 'Payment past due — you are back on Free.', 'past_due copy');
+assert(rec.failureCopy('cancelled') === 'Subscription cancelled — you are back on Free.', 'cancelled copy');
+assert(rec.failureCopy('past_due') === 'Payment past due — you are back on Free, for now.', 'past_due copy');
+assert(rec.failureCopy('on_hold') === 'Subscription on hold after a failed renewal — you are back on Free.', 'on_hold copy');
 assert(rec.failureCopy('ok') === '', 'ok has no warning');
 assert(rec.failureCopy('') === '', 'empty has no warning');
+assert(rec.failureCopy('some-status-from-the-future') === '', 'an unknown status says nothing rather than something wrong');
 
 console.log('\n== Receipt lines ==');
 {
   const lines = rec.receiptLines({
     plan: 'pro',
-    source: 'stripe',
+    source: 'dodo',
     expiresAt: '2030-01-15T00:00:00.000Z',
     billingStatus: 'ok',
     lastEventType: 'invoice.paid',
@@ -47,9 +52,9 @@ console.log('\n== Receipt lines ==');
   });
   const by = Object.fromEntries(lines.map((l) => [l.label, l.value]));
   assert(by.Plan === 'Pro', 'receipt names Pro');
-  assert(by.Source === 'Stripe', 'receipt source is Stripe');
+  assert(by.Source === 'Dodo Payments', 'receipt source names the provider that actually charges');
   assert(/15/.test(by.Renews || ''), 'receipt includes renewal date');
-  assert(by['Last event'] === 'invoice.paid', 'receipt includes last Stripe event');
+  assert(by['Last event'] === 'invoice.paid', 'receipt includes the last billing event');
 }
 {
   const lines = rec.receiptLines({ plan: 'free', source: 'license', trialDays: 5, billingStatus: 'ok' });
@@ -72,6 +77,9 @@ console.log('\n== Receipt lines ==');
   assert(by.Source === 'Review gift', 'review source stays Review gift');
   assert(by.Remaining === '71h 24m', 'receipt remaining is hours and minutes');
 }
+
+console.log('\n== The portal return helper is gone with the provider ==');
+assert(typeof rec.portalReturnUrl === 'undefined', 'portalReturnUrl was Stripe-only and is no longer exported');
 
 console.log('\n== Paid return ==');
 assert(rec.isPaidReturn('?paid=1') === true, 'paid=1 is a return');

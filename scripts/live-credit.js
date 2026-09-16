@@ -21,6 +21,9 @@ global.localStorage = {
 };
 
 const SUPABASE = require('../modules/supabase.js');
+// Read the allowance from the product, so this suite cannot drift from it the way
+// a literal would (it asserted 3 until the free tier became 7).
+const FREE = require('../data/plans.js').getPlan('free').limits.aiCredits;
 const MAIL = 'https://api.mail.tm';
 const PW = 'Check12345!';
 let pass = 0, fail = 0;
@@ -102,30 +105,31 @@ async function makeUser(tag) {
   if (!alice) process.exit(fail ? 1 : 0);
 
   let r = await SUPABASE.getCreditState();
-  check('fresh: free, base 3, used 0, bonus 0, left 3', r.ok && !r.unlimited && r.baseCredits === 3 && r.used === 0 && r.bonusCredits === 0 && r.left === 3, r);
+  check('fresh: free, base ' + FREE + ', used 0, bonus 0, left ' + FREE,
+    r.ok && !r.unlimited && r.baseCredits === FREE && r.used === 0 && r.bonusCredits === 0 && r.left === FREE, r);
 
   r = await SUPABASE.spendCredit('lc1');
-  check('spend lc1 → spent, used 1, left 2', r.ok && r.outcome === 'spent' && r.used === 1 && r.left === 2, r);
-  await SUPABASE.spendCredit('lc2');
-  r = await SUPABASE.spendCredit('lc3');
-  check('spend lc3 → used 3, left 0', r.ok && r.outcome === 'spent' && r.used === 3 && r.left === 0);
-  r = await SUPABASE.spendCredit('lc4');
-  check('4th spend → insufficient, used stays 3', r.ok && r.outcome === 'insufficient' && r.used === 3, r);
+  check('spend lc1 → spent, used 1, left ' + (FREE - 1), r.ok && r.outcome === 'spent' && r.used === 1 && r.left === FREE - 1, r);
+  for (let i = 2; i <= FREE; i++) r = await SUPABASE.spendCredit('lc' + i);
+  check('spend to the ceiling → used ' + FREE + ', left 0', r.ok && r.outcome === 'spent' && r.used === FREE && r.left === 0);
+  r = await SUPABASE.spendCredit('lc-over');
+  check('the next spend → insufficient, used stays ' + FREE, r.ok && r.outcome === 'insufficient' && r.used === FREE, r);
   r = await SUPABASE.spendCredit('lc2');
-  check('replay ref lc2 → already-spent (no double debit)', r.ok && r.outcome === 'already-spent' && r.used === 3, r);
+  check('replay ref lc2 → already-spent (no double debit)', r.ok && r.outcome === 'already-spent' && r.used === FREE, r);
 
   r = await SUPABASE.refundCredit('lc2');
-  check('refund lc2 → refunded, used 2', r.ok && r.outcome === 'refunded' && r.used === 2, r);
+  check('refund lc2 → refunded, used ' + (FREE - 1), r.ok && r.outcome === 'refunded' && r.used === FREE - 1, r);
   r = await SUPABASE.refundCredit('lc2');
-  check('double refund lc2 → already-refunded', r.ok && r.outcome === 'already-refunded' && r.used === 2);
+  check('double refund lc2 → already-refunded', r.ok && r.outcome === 'already-refunded' && r.used === FREE - 1);
   r = await SUPABASE.refundCredit('ghost-ref');
-  check('refund unknown ref → not-found', r.ok && r.outcome === 'not-found' && r.used === 2);
+  check('refund unknown ref → not-found', r.ok && r.outcome === 'not-found' && r.used === FREE - 1);
 
   // audit rows readable via RLS (own only)
   const s = SUPABASE.session();
   const hdr = { apikey: key, Authorization: 'Bearer ' + s.accessToken };
   const rows = await fetch(url + '/rest/v1/credit_spends?select=ref,amount,refunded_at&user_id=eq.' + s.uid, { headers: hdr }).then((x) => x.json()).catch(() => null);
-  check('credit_spends rows visible: 3 total, 1 refunded', !!rows && rows.length === 3 && rows.filter((x) => x.refunded_at).length === 1 && rows.filter((x) => !x.refunded_at).length === 2, rows);
+  check('credit_spends rows visible: ' + FREE + ' total, 1 refunded',
+    !!rows && rows.length === FREE && rows.filter((x) => x.refunded_at).length === 1 && rows.filter((x) => !x.refunded_at).length === FREE - 1, rows);
 
   // ---- bob: +30d referral trial → unlimited branch ----
   console.log('\n[bob — referral trial → unlimited]');

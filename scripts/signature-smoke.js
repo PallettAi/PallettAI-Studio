@@ -33,7 +33,11 @@ const PALETTES = {
   mono:    { id: 'mono',    name: 'Mono',         bg: '#101014', surface: '#1b1b21', primary: '#f5f5f4', accent: '#f5f5f4', text: '#fafaf9', muted: '#9d9da8', dark: true }
 };
 
-const ENGINES = ['signal', 'halftone'];
+// Every engine the product offers, so palette binding, size and document
+// structure are asserted for each rather than for whichever two existed first.
+// Signature.ENGINES is the source of truth; this list only excludes the
+// deliberately empty 'none'.
+const ENGINES = Signature.ENGINES.map((e) => e.id).filter((id) => id !== 'none');
 
 function hexesIn(svg) {
   return (svg.match(/#[0-9a-fA-F]{6}/g) || []).map((h) => h.toLowerCase());
@@ -156,8 +160,11 @@ for (const engine of ENGINES) {
     const gz = zlib.gzipSync(Buffer.from(r.svg, 'utf8')).length;
     ok(engine + '/' + key + ' gzips under 3 KB', gz < 3072, gz + ' bytes gzipped');
 
+    // The allow-list is the contract for what a piece may contain: inline SVG
+    // primitives, gradient stops, and one <style> for the animated engines. A tag
+    // outside it means an engine reached for something the export never sanitised.
     ok(engine + '/' + key + ' is a balanced <svg> document',
-      r.svg.startsWith('<svg ') && r.svg.endsWith('</svg>') && !/<(?!\/?(svg|g|defs|rect|circle|polyline|linearGradient|radialGradient|stop)\b)/.test(r.svg));
+      r.svg.startsWith('<svg ') && r.svg.endsWith('</svg>') && !/<(?!\/?(?:svg|g|defs|style|rect|circle|ellipse|line|polyline|linearGradient|radialGradient|stop)\b)/.test(r.svg));
   }
 }
 

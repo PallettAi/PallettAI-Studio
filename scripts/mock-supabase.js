@@ -10,7 +10,7 @@
 //   POST /auth/v1/signup · /auth/v1/token?grant_type=password|refresh_token · /auth/v1/logout
 //   GET  /rest/v1/profiles · /rest/v1/referral_codes · /rest/v1/licenses · /rest/v1/credit_spends
 //   POST /rest/v1/rpc/redeem_code · /rest/v1/rpc/activate_license
-//        /rest/v1/rpc/apply_stripe_entitlement · /rest/v1/rpc/claim_review_reward
+//        /rest/v1/rpc/apply_dodo_entitlement · /rest/v1/rpc/claim_review_reward
 //        /rest/v1/rpc/get_streak_state · /rest/v1/rpc/claim_daily_reward · /rest/v1/rpc/spin_wheel
 //        /rest/v1/rpc/get_credit_state · /rest/v1/rpc/spend_credit · /rest/v1/rpc/refund_credit
 // Test hooks (used by the smoke suites + manual UI testing):
@@ -25,7 +25,7 @@
 const http = require('http');
 const crypto = require('crypto');
 const path = require('path');
-const StripeEntitlement = require(path.join(__dirname, '..', 'supabase', 'functions', 'stripe-webhook', 'entitlement.js'));
+const DodoEntitlement = require(path.join(__dirname, '..', 'supabase', 'functions', 'dodo-webhook', 'entitlement.js'));
 const ReviewReward = require(path.join(__dirname, '..', 'data', 'review-reward.js'));
 const reviewDb = { profiles: new Map(), rewards: new Map() };
 function syncReviewProfile(u) {
@@ -42,12 +42,12 @@ function claimReviewRewardRpc(u, payload) {
   Object.assign(u.profile, reviewDb.profiles.get(u.id) || {});
   return r;
 }
-const stripeEventIds = new Set();
-function applyStripeEntitlementRpc(payload) {
-  const db = StripeEntitlement.emptyDb();
-  db.events = stripeEventIds;
+const dodoEventIds = new Set();
+function applyDodoEntitlementRpc(payload) {
+  const db = DodoEntitlement.emptyDb();
+  db.events = dodoEventIds;
   for (const user of users.values()) db.profiles.set(user.id, user.profile);
-  return StripeEntitlement.applyEntitlement(db, {
+  return DodoEntitlement.applyEntitlement(db, {
     ignore: false,
     eventId: payload.p_event_id,
     eventType: payload.p_event_type,
@@ -94,7 +94,7 @@ function uid() { return crypto.randomUUID(); }
 function newUser(email, password) {
   const u = {
     id: uid(), email, password,
-    profile: { id: null, email, plan: 'free', plan_expires_at: null, trial_expires_at: null, stripe_customer_id: null, stripe_subscription_id: null, entitlement_source: null, billing_status: null, billing_status_at: null, last_stripe_event_type: null, review_proplus_until: null, review_claimed_at: null, created_at: new Date().toISOString() },
+    profile: { id: null, email, plan: 'free', plan_expires_at: null, trial_expires_at: null, dodo_customer_id: null, dodo_subscription_id: null, entitlement_source: null, billing_status: null, billing_status_at: null, last_dodo_event_type: null, review_proplus_until: null, review_claimed_at: null, created_at: new Date().toISOString() },
     code: { owner_id: null, code: genCode(), created_at: new Date().toISOString() },
     redemptions: [],
     // daily streak state (Part 3) — lazily created like the DB row
@@ -296,7 +296,7 @@ function creditPayload(u) {
   const reviewActive = !!u.profile.review_proplus_until && new Date(u.profile.review_proplus_until).getTime() > Date.now();
   const unlimited = planActive || trialActive || reviewActive;
   const used = u.creditSpends.filter((s) => !s.refunded_at).reduce((n, x) => n + x.amount, 0);
-  const base = 3; // mirrors PLANS free limits.aiCredits + schema.sql §21
+  const base = 7; // mirrors PLANS free limits.aiCredits + schema.sql §21
   return {
     ok: true,
     plan: plan || 'free',
@@ -396,8 +396,8 @@ const server = http.createServer((req, res) => {
       return json(res, 200, { ok: true, today: mockDate() });
     }
 
-    if (req.method === 'POST' && p === '/rest/v1/rpc/apply_stripe_entitlement') {
-      return json(res, 200, applyStripeEntitlementRpc(payload));
+    if (req.method === 'POST' && p === '/rest/v1/rpc/apply_dodo_entitlement') {
+      return json(res, 200, applyDodoEntitlementRpc(payload));
     }
 
     // ---- authenticated REST ----

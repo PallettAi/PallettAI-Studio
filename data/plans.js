@@ -3,10 +3,46 @@
 // Free / Pro / Pro+ tiers. Paid unlocks and referral days are granted
 // only after the cloud registry verifies them — local checkout and
 // checksum keys are not entitlements.
+//
+// Billing runs on Dodo Payments. There are no checkout links in this file
+// any more: the session is created server-side (Edge Function dodo-checkout)
+// so the account is taken from the caller's verified token rather than from a
+// URL the client can edit. All this file holds is where the customer portal
+// lives, filled in from the Dodo dashboard — see docs/DODO-SETUP.md.
 // ============================================================
 
+const DODO = {
+  // ──────────────────────────────────────────────────────────────
+  // NOT a secret. The API key and webhook signing secret never appear in
+  // this app; they live in Supabase Edge Function secrets.
+  //
+  // Dodo dashboard → Settings → Business details → Business id.
+  businessId: 'bus_0NnEtKuHuT45ZvVKlok21',
+  // 'test' until live keys are installed, then 'live'.
+  mode: 'live',
+  // ──────────────────────────────────────────────────────────────
+
+  isConfigured() {
+    return /^[A-Za-z0-9_-]{6,}$/.test(String(this.businessId || '')) && this.businessId !== 'REPLACE_WITH_DODO_BUSINESS_ID';
+  },
+  portalBase() {
+    return this.mode === 'live'
+      ? 'https://customer.dodopayments.com'
+      : 'https://test.customer.dodopayments.com';
+  },
+  // The portal is a static, email-verified link rather than a per-session URL
+  // like Stripe's, so there is nothing to create server-side and nothing to
+  // leak: an unconfigured business id yields no link at all.
+  portalUrl() {
+    if (!this.isConfigured()) return '';
+    return this.portalBase() + '/login/' + encodeURIComponent(String(this.businessId));
+  }
+};
+
 const PLANS = {
-  version: '1.6.0',
+  version: '1.7.0',
+
+  billing: DODO,
 
   currency: { symbol: '£', code: 'GBP' },
 
@@ -22,10 +58,10 @@ const PLANS = {
         '22 core fonts + 19 free catalog layouts',
         'Free live widgets: map, weather, embeds, online booking',
         '4 free online databases (photos, people, quotes, fonts)',
-        '3 AI Studio credits',
+        '7 AI Studio credits',
         '“Made with PallettAI” badge on exports'
       ],
-      limits: { projects: 2, sectionsPerSite: 10, aiCredits: 3 }
+      limits: { projects: 2, sectionsPerSite: 10, aiCredits: 7 }
     },
     {
       id: 'pro', name: 'Pro', price: 9, period: 'month', popular: true,
@@ -42,8 +78,7 @@ const PLANS = {
         'AI image generation',
         'Priority support'
       ],
-      limits: { projects: Infinity, sectionsPerSite: Infinity, aiCredits: Infinity },
-      checkoutUrl: 'https://buy.stripe.com/fZu3co2pDesB7wyfWL2B20m'
+      limits: { projects: Infinity, sectionsPerSite: Infinity, aiCredits: Infinity }
     },
     {
       id: 'proplus', name: 'Pro+', price: 19, period: 'month', popular: false,
@@ -56,8 +91,7 @@ const PLANS = {
         'No PallettAI attribution in the hosting guide or brand kit',
         'A polished delivery pack for every client project'
       ],
-      limits: { projects: Infinity, sectionsPerSite: Infinity, aiCredits: Infinity },
-      checkoutUrl: 'https://buy.stripe.com/4gM4gsggtfwFcQS11R2B20l'
+      limits: { projects: Infinity, sectionsPerSite: Infinity, aiCredits: Infinity }
     }
   ],
 
@@ -89,28 +123,40 @@ const PLANS = {
     const normalized = this.normalizePlan(id);
     return this.plans.find((p) => p.id === normalized) || this.plans[0];
   },
-  isStripePaymentLink(url) {
+  // True for a plan the registry can actually bill. Kept as a named method
+  // because the answer is not "is there a URL" any more — the URL is built at
+  // checkout time — but "does this tier exist and cost money".
+  isBillablePlan(planId) {
+    const plan = this.getPlan(planId);
+    return !!plan && plan.price > 0 && (plan.id === 'pro' || plan.id === 'proplus');
+  },
+  // Where signed-in subscribers manage cards, invoices and cancellation.
+  // Empty when the business id has not been filled in yet, so the app hides
+  // the control rather than opening a dead end.
+  customerPortalUrl() {
+    return DODO.portalUrl();
+  },
+  // The checkout URL arrives from our own Edge Function, but it is still
+  // checked here before it becomes a link. An allowlist at the last step is
+  // what stops a mis-set secret or a compromised upstream from turning the
+  // Upgrade button into an open redirect.
+  isDodoCheckoutUrl(url) {
     try {
       const parsed = new URL(String(url || ''));
       if (parsed.protocol !== 'https:') return false;
-      if (parsed.hostname !== 'buy.stripe.com') return false;
       if (parsed.username || parsed.password) return false;
-      return /^\/[A-Za-z0-9]+$/.test(parsed.pathname);
+      if (parsed.hostname !== 'checkout.dodopayments.com'
+        && parsed.hostname !== 'test.checkout.dodopayments.com') return false;
+      // The host is what actually protects us; the path check is only hygiene.
+      // Deliberately not pinned to one shape: Dodo uses /buy/{product} for a
+      // static link and a session path for a created session, and a rule tight
+      // enough to reject a future form would break checkout rather than secure it.
+      // There is no `..` case to guard — the URL parser has already resolved
+      // any traversal before this runs, and the host is unchanged by it.
+      return /^\/[A-Za-z0-9_\-./]*$/.test(parsed.pathname);
     } catch (_) {
       return false;
     }
-  },
-  getCheckoutUrl(planId) {
-    const url = (this.getPlan(planId) || {}).checkoutUrl;
-    return this.isStripePaymentLink(url) ? url : '';
-  },
-  checkoutUrlForAccount(planId, accountId) {
-    const base = this.getCheckoutUrl(planId);
-    const uid = String(accountId || '');
-    if (!base || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uid)) return '';
-    const parsed = new URL(base);
-    parsed.searchParams.set('client_reference_id', uid);
-    return parsed.toString();
   },
 
   // ---------- License keys ----------

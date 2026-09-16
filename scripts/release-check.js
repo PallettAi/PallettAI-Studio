@@ -121,6 +121,7 @@ const SMOKES = [
   // word-for-word identical sites, and a client's own proofs must drive copy.
   ['scripts/copy-smoke.js', 'Copy engine smoke'],
   ['scripts/copilot-smoke.js', 'Copilot reasoning smoke'],
+  ['scripts/copilot-repeat-smoke.js', 'Copilot repeat & positional targeting smoke'],
   ['scripts/vision-smoke.js', 'Copilot render audit smoke'],
   ['scripts/palette-lab-smoke.js', 'Palette Lab smoke'],
   ['scripts/briefs-smoke.js', 'Saved briefs smoke'],
@@ -154,7 +155,15 @@ const SMOKES = [
   // Pre-flight stands between a project and a live URL, so its suite is split
   // between what it must stop and what it must not: a gate that blocks a good
   // site teaches the creator to click past it.
-  ['scripts/preflight-smoke.js', 'Pre-flight smoke (publish blockers, link resolution)']
+  ['scripts/preflight-smoke.js', 'Pre-flight smoke (publish blockers, link resolution)'],
+  // Animated artwork ends up inlined on a client's live site, so its suite is
+  // about what may NOT move (no filter, no transform-origin, nothing outside
+  // prefers-reduced-motion) as much as about what does.
+  ['scripts/animated-art-smoke.js', 'Animated artwork smoke (motion safety, scoping)'],
+  // Splitting a sentence into instructions is dangerous, so this suite is
+  // weighted towards what must NOT split — and towards proving a compound plan
+  // invents nothing the clauses did not already carry.
+  ['scripts/compound-intent-smoke.js', 'Compound intent smoke (what splits, what refuses)']
 ];
 
 function runScript(args, label) {
@@ -284,10 +293,9 @@ function checkBuilder() {
   runScript(['scripts/security-hardening-smoke.js'], 'Security hardening smoke');
   runScript(['scripts/templates-view-smoke.js'], 'Templates view smoke');
   runScript(['scripts/streak-placement-smoke.js'], 'Streak placement smoke');
-  runScript(['scripts/payment-links-smoke.js'], 'Payment links smoke');
+  runScript(['scripts/dodo-checkout-smoke.js'], 'Dodo checkout smoke');
   runScript(['scripts/proplus-perks-smoke.js'], 'Pro+ perks smoke');
-  runScript(['scripts/stripe-entitlement-smoke.js'], 'Stripe entitlement smoke');
-  runScript(['scripts/billing-portal-smoke.js'], 'Billing portal smoke');
+  runScript(['scripts/dodo-entitlement-smoke.js'], 'Dodo entitlement smoke');
   runScript(['scripts/registry-connect-smoke.js'], 'Registry connect smoke');
   runScript(['scripts/account-panel-smoke.js'], 'Account panel smoke');
   runScript(['scripts/plan-receipt-smoke.js'], 'Plan receipt smoke');

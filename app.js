@@ -1382,9 +1382,13 @@ const App = (() => {
     try { localStorage.setItem(WHATSNEW_KEY, v); } catch (e) {}
   }
 
-  function openPricing() {
+  // `reason` is why this screen is open. Without one this is a sales pitch that
+  // appeared for no stated cause, which is worse than useless when the visitor
+  // clicked something they had every reason to believe was free.
+  function openPricing(reason) {
     const pro = isPro();
     const body = `
+      ${reason ? `<p class="price-reason">${esc(reason)}</p>` : ''}
       <div class="pricing-grid">
         ${PLANS.plans.map((p) => {
           const hot = p.popular ? ' hot' : '';
@@ -1392,10 +1396,10 @@ const App = (() => {
           const price = p.price === 0
             ? '<div class="pc-price">Free<small> forever</small></div>'
             : `<div class="pc-price">${PLANS.currency.symbol}${p.price}<small>/mo</small></div>`;
-          const stripeCustomer = !!(cloudProfile && cloudProfile.stripe_customer_id);
+          const hasDodoCustomer = !!(cloudProfile && cloudProfile.dodo_customer_id);
           const btn = p.price === 0
             ? (pro
-              ? (stripeCustomer
+              ? (hasDodoCustomer
                 ? '<button class="btn ghost small" id="btnPricePortal">Manage billing</button>'
                 : '<button class="btn ghost small" data-down>Switch to Free</button>')
               : '<button class="btn ghost small" disabled>Current plan</button>')
@@ -1427,7 +1431,7 @@ const App = (() => {
     $$('[data-choose]').forEach((b) => b.onclick = () => checkoutFlow(b.dataset.choose));
     $$('[data-down]').forEach((b) => b.onclick = downgradePlan);
     const pricePortal = $('#btnPricePortal');
-    if (pricePortal) pricePortal.onclick = openBillingPortalFlow;
+    if (pricePortal) pricePortal.onclick = openCustomerPortalFlow;
     $('#licActivate').onclick = () => activateLicense($('#licKey').value);
     $('#licKey').onkeydown = (e) => { if (e.key === 'Enter') activateLicense($('#licKey').value); };
     // cloud-aware redemption: verifies against the registry when signed in
@@ -1435,58 +1439,87 @@ const App = (() => {
     $('#refCodeInput').onkeydown = (e) => { if (e.key === 'Enter') applyReferralCode($('#refCodeInput').value); };
   }
 
-  function checkoutFlow(planId) {
+  function checkoutReturnUrl() {
+    return (typeof PlanReceipt !== 'undefined')
+      ? PlanReceipt.paidReturnUrl(location)
+      : 'https://pallettai.org/?paid=1';
+  }
+
+  // The session is created by the registry (Edge Function dodo-checkout), which
+  // reads the account from this request's own token — so unlike the old Payment
+  // Link there is no account id in a URL for anyone to edit, and no shared link
+  // that could pay for the wrong person.
+  async function checkoutFlow(planId) {
     const plan = PLANS.getPlan(planId);
     const signedIn = SUPABASE.isConfigured() && SUPABASE.signedIn();
     if (!signedIn) {
       openModal('Sign in to upgrade', `
-        <p style="color:var(--muted);line-height:1.55">Paid plans are billed through Stripe and unlocked with a registry license key. Sign in from Settings, then choose a plan or paste a key.</p>
+        <p style="color:var(--muted);line-height:1.55">Paid plans are billed through Dodo Payments and unlocked on the account you sign in with. Sign in from Settings, then choose a plan or paste a key.</p>
         <button class="btn primary" id="goSettings">Open Settings</button>`, true);
       $('#goSettings').onclick = () => { closeModal(); settingsTab = 'account'; switchView('settings'); };
       return;
     }
-    const payUrl = PLANS.checkoutUrlForAccount(planId, (SUPABASE.session() || {}).uid);
-    openModal('Upgrade — ' + plan.name, `
+    if (!PLANS.isBillablePlan(planId)) {
+      openModal('Upgrade — ' + plan.name, `
+        <div class="checkout-form">
+          <div class="demo-note">This plan cannot be paid for by card. Activate a registry license key or redeem a referral code — nothing is unlocked locally.</div>
+          <button class="btn ghost small" id="ccBack">← Back to plans</button>
+        </div>`, true);
+      $('#ccBack').onclick = openPricing;
+      return;
+    }
+
+    openModal('Upgrade — ' + esc(plan.name), `
       <div class="checkout-form">
-        <div class="demo-note">${payUrl
-          ? 'Pay on Stripe — the plan lands on this signed-in account, even if you use a different email at checkout. It unlocks after Stripe confirms the payment (come back to Studio). Failed or canceled payments do not unlock Pro.'
-          : 'Card checkout is not configured for this plan. Activate a registry license key or redeem a referral code — nothing is unlocked locally.'}</div>
-        <div class="checkout-sum"><span>${esc(plan.name)} · billed ${esc(plan.period)}</span><b>${plan.price ? PLANS.currency.symbol + plan.price + '/mo' : 'Free'}</b></div>
-        ${payUrl ? '<button class="btn primary" id="ccPay">Pay with Stripe</button>' : ''}
+        <div class="acc-status" id="ccPrep">Preparing secure checkout…</div>
+      </div>`, true);
+
+    const r = await SUPABASE.startCheckout(planId, checkoutReturnUrl());
+    const payUrl = r.ok && PLANS.isDodoCheckoutUrl(r.url) ? r.url : '';
+    if (!payUrl) {
+      // Say which failure it was. "Unavailable" on its own sends people to
+      // support when the honest answer was "paste your license key".
+      openModal('Upgrade — ' + esc(plan.name), `
+        <div class="checkout-form">
+          <div class="demo-note">${esc(r.msg || 'Checkout is unavailable right now — please try again.')}</div>
+          <div class="checkout-sum"><span>${esc(plan.name)} · billed ${esc(plan.period)}</span><b>${PLANS.currency.symbol}${plan.price}/mo</b></div>
+          <button class="btn ghost small" id="ccBack">← Back to plans</button>
+        </div>`, true);
+      $('#ccBack').onclick = openPricing;
+      return;
+    }
+
+    // A link the customer clicks rather than a tab we open after an await:
+    // window.open() outside the original gesture is what popup blockers eat.
+    openModal('Upgrade — ' + esc(plan.name), `
+      <div class="checkout-form">
+        <div class="demo-note">Pay on Dodo Payments — the plan lands on this signed-in account, even if you use a different email at checkout. It unlocks after Dodo confirms the payment (come back to Studio). Failed or cancelled payments do not unlock Pro.</div>
+        <div class="checkout-sum"><span>${esc(plan.name)} · billed ${esc(plan.period)}</span><b>${PLANS.currency.symbol}${plan.price}/mo</b></div>
+        <a class="btn primary" id="ccPay" href="${esc(payUrl)}" target="_blank" rel="noopener noreferrer">Pay with Dodo</a>
         <button class="btn ghost small" id="ccBack">← Back to plans</button>
       </div>`, true);
     const payBtn = $('#ccPay');
-    if (payBtn && payUrl) {
-      payBtn.onclick = () => {
-        window.open(payUrl, '_blank', 'noopener,noreferrer');
-        startCheckoutWait(plan.name);
-      };
-    }
+    if (payBtn) payBtn.onclick = () => startCheckoutWait(plan.name);
     $('#ccBack').onclick = openPricing;
   }
 
-  async function openBillingPortalFlow() {
+  // Dodo's portal is a static link that verifies the customer by emailed code,
+  // so there is no per-session URL to mint and no secret involved.
+  function openCustomerPortalFlow() {
     if (!(SUPABASE.isConfigured() && SUPABASE.signedIn())) {
       return toast('Sign in to manage billing.', false);
     }
-    const returnUrl = (typeof PlanReceipt !== 'undefined')
-      ? PlanReceipt.paidReturnUrl(location)
-      : 'https://pallettai.org/?paid=1';
-    const r = await SUPABASE.openBillingPortal(returnUrl);
-    if (!r.ok) return toast(r.msg || 'Billing portal is unavailable right now.', false);
-    window.open(r.url, '_blank', 'noopener,noreferrer');
-    toast('Stripe billing opened — come back here when you are done', true);
+    const url = PLANS.customerPortalUrl();
+    if (!url) return toast('The billing portal is not configured yet.', false);
+    window.open(url, '_blank', 'noopener,noreferrer');
+    toast('Dodo billing opened — come back here when you are done', true);
   }
 
   function startCheckoutWait(planName) {
     if (checkoutWaitTimer) { clearInterval(checkoutWaitTimer); checkoutWaitTimer = null; }
-    const returnUrl = (typeof PlanReceipt !== 'undefined')
-      ? PlanReceipt.paidReturnUrl(location)
-      : (location.origin + location.pathname + '?paid=1');
-    openModal('Waiting for Stripe', `
-      <p style="color:var(--muted);line-height:1.55">Finish paying in the Stripe tab, then come back here. We unlock <b>${esc(planName)}</b> on this signed-in account after Stripe confirms the payment.</p>
-      <p class="set-desc">If you set the Payment Link redirect, use ${esc(returnUrl)}</p>
-      <div class="acc-status" id="payWaitStatus">Unlocking after Stripe confirms the payment…</div>
+    openModal('Waiting for Dodo', `
+      <p style="color:var(--muted);line-height:1.55">Finish paying in the Dodo tab, then come back here. We unlock <b>${esc(planName)}</b> on this signed-in account after Dodo confirms the payment.</p>
+      <div class="acc-status" id="payWaitStatus">Unlocking after Dodo confirms the payment…</div>
       <div style="display:flex;gap:8px;margin-top:14px">
         <button class="btn primary" id="payWaitRefresh">Refresh plan</button>
         <button class="btn ghost" id="payWaitClose">I’ll wait here</button>
@@ -2508,15 +2541,9 @@ const App = (() => {
       </div>`;
     }).join('');
 
-    $$('#tplGrid [data-use]').forEach((b) => b.onclick = () => {
-      const t = DB.getTemplate(b.dataset.use);
-      if (PLANS.proTemplates.includes(t.id) && !isPro()) {
-        openPricing();
-        toast('Upgrade to Pro to unlock this template 🔒', false);
-        return;
-      }
-      createProject(t);
-    });
+    // No tier check in this handler on purpose — createProject owns it, so this
+    // button and the preview modal's cannot disagree about who gets in.
+    $$('#tplGrid [data-use]').forEach((b) => b.onclick = () => createProject(DB.getTemplate(b.dataset.use)));
     $$('#tplGrid [data-prev]').forEach((b) => b.onclick = () => previewTemplate(DB.getTemplate(b.dataset.prev)));
   }
 
@@ -2626,14 +2653,37 @@ const App = (() => {
     if (isPro()) return true;
     const lim = PLANS.getPlan('free').limits.projects;
     if (projects.length >= lim) {
-      openPricing();
-      toast(`Free plan allows ${lim} project${lim === 1 ? '' : 's'} — upgrade for unlimited`, false);
+      // Name the limit that was actually reached. This used to open the pricing
+      // screen with no explanation, so a click on a FREE template read as "that
+      // template is premium" — the visitor was stopped by their project count,
+      // which has nothing to do with the tier of the thing they clicked.
+      openPricing(`The free plan includes ${lim} projects and you have ${projects.length}. Delete or back up one to start another, or go unlimited with Pro.`);
+      toast(`Free plan includes ${lim} projects — you have ${projects.length}`, false);
       return false;
     }
     return true;
   }
 
+  // The Pro gate lives HERE rather than in whichever button happened to need it
+  // first. The Templates grid checked the tier inside its own click handler, so
+  // the second route into a project — the preview modal's "Create project" — had
+  // no check at all and a Pro template was two clicks away for free. A gate in
+  // the caller is a gate every future caller can forget; a gate at the choke
+  // point is one nobody has to remember.
+  function templateAllowed(tpl) {
+    const id = tpl && tpl.id;
+    if (!id || !(PLANS.proTemplates || []).includes(id) || isPro()) return true;
+    openPricing(`“${tpl.name}” is one of the ${(PLANS.proTemplates || []).length} Pro starting points. Pro unlocks all ${DB.templates.length} of them, every upgrade suite, and unlimited AI generations.`);
+    toast('Upgrade to Pro to unlock this template 🔒', false);
+    return false;
+  }
+
   function createProject(tpl) {
+    // Tier before capacity, always. The template is what was just chosen, so
+    // that is the answer worth giving; reporting "out of projects" when the real
+    // obstacle is the tier would send someone to delete work that was never in
+    // the way.
+    if (!templateAllowed(tpl)) return;
     if (!ensureProjectCapacity()) return;
     const p = projectFromTemplate(tpl);
     projects.unshift(p);
@@ -7154,7 +7204,7 @@ const App = (() => {
           reviewUntil: reviewGiftOn ? reviewUntil : 0,
           expiresAt: (cloudProfile && cloudProfile.plan_expires_at) || sub.planExpiresAt || null,
           billingStatus: cloudProfile && cloudProfile.billing_status,
-          lastEventType: cloudProfile && cloudProfile.last_stripe_event_type,
+          lastEventType: cloudProfile && cloudProfile.last_dodo_event_type,
           lastEventAt: cloudProfile && cloudProfile.billing_status_at,
           trialDays: reviewGiftOn ? 0 : trialD
         })
@@ -7162,7 +7212,7 @@ const App = (() => {
     const receiptHtml = receiptRows.length
       ? `<dl class="bill-receipt">${receiptRows.map((row) => `<dt>${esc(row.label)}</dt><dd>${esc(row.value)}</dd>`).join('')}</dl>`
       : '';
-    const stripeCustomer = !!(cloudProfile && cloudProfile.stripe_customer_id);
+    const hasDodoCustomer = !!(cloudProfile && cloudProfile.dodo_customer_id);
     const billingWarn = (typeof PlanReceipt !== 'undefined' && cloudProfile)
       ? PlanReceipt.failureCopy(cloudProfile.billing_status)
       : '';
@@ -7235,7 +7285,7 @@ const App = (() => {
           <div class="bill-rail">
             <span class="plan-name">${esc(reviewLabel || (plan.name + (plan.price ? ' · ' + PLANS.currency.symbol + plan.price + '/mo' : '')))}</span>
             <div class="bill-actions">
-              ${stripeCustomer ? '<button class="btn primary small" id="btnBillingPortal">Manage billing</button>' : ''}
+              ${hasDodoCustomer ? '<button class="btn primary small" id="btnBillingPortal">Manage billing</button>' : ''}
               <button class="${pro ? 'btn ghost small' : 'plan-go'}" id="btnManagePlan">${pro ? 'View plans' : 'Upgrade'}</button>
             </div>
           </div>
@@ -7391,9 +7441,9 @@ const App = (() => {
       cards('studio', `
       <div class="settings-card">
         <h3>Keys & services</h3>
-        <p class="sub">Third-party keys never ship inside Studio. DeepL and Stripe live on the registry. Netlify, Neocities and Pixabay are yours, stored on this device.</p>
+        <p class="sub">Third-party keys never ship inside Studio. DeepL, Dodo Payments and the mail relay live on the registry. Netlify, Neocities and Pixabay are yours, stored on this device.</p>
         <div class="set-row keys-note"><div><label>DeepL translations</label><div class="set-desc">Once a DeepL API key is set on the registry, signed-in translates use DeepL. Until then, MyMemory runs with no key. The key is not entered in this app. <a href="https://www.deepl.com/pro-api" target="_blank" rel="noopener">Get a DeepL API key</a></div></div></div>
-        <div class="set-row keys-note"><div><label>Stripe billing</label><div class="set-desc">Once a restricted Stripe key is set on the registry, Manage billing opens the Customer Portal for this signed-in account. The key is not entered in this app. <a href="https://dashboard.stripe.com/apikeys" target="_blank" rel="noopener">Get a restricted key</a></div></div></div>
+        <div class="set-row keys-note"><div><label>Dodo Payments</label><div class="set-desc">Checkout sessions and subscription webhooks are handled entirely on the registry — the API key and signing secret never enter this app. Manage billing opens Dodo's customer portal for this signed-in account.</div></div></div>
         <div class="set-row keys-note"><div><label>Netlify publish</label><div class="set-desc">Once a personal access token is entered in Publish, one-click Netlify deploys work. <a href="https://app.netlify.com/user/applications#personal-access-tokens" target="_blank" rel="noopener">Get a Netlify token</a></div></div></div>
         <div class="set-row keys-note"><div><label>Neocities publish</label><div class="set-desc">Once you sign in from Publish, one-click Neocities deploys work. <a href="https://neocities.org" target="_blank" rel="noopener">Create a Neocities site</a></div></div></div>
         <div class="set-row keys-note"><div><label>Pixabay photos</label><div class="set-desc">Once your free API key is entered under Online data, topic photo search is enabled. Stored only on this device. <a href="https://pixabay.com/api/docs/" target="_blank" rel="noopener">Get a Pixabay API key</a></div></div></div>
@@ -7446,7 +7496,7 @@ const App = (() => {
     set('#setCreditsTxt', (el) => { el.textContent = cred.limit === Infinity ? 'AI Studio: unlimited generations' : 'AI Studio: ' + cred.used + ' of ' + cred.limit + ' credits used'; });
     set('#creditsBar', (el) => { el.style.width = (cred.limit === Infinity ? 100 : Math.min(100, Math.round((cred.used / cred.limit) * 100))) + '%'; });
     set('#btnManagePlan', (el) => { el.onclick = openPricing; });
-    set('#btnBillingPortal', (el) => { el.onclick = openBillingPortalFlow; });
+    set('#btnBillingPortal', (el) => { el.onclick = openCustomerPortalFlow; });
     on('#setTheme', 'change', (e) => { settings.theme = e.target.value; saveSettings(); });
     on('#setSysAccent', 'change', (e) => { settings.useSystemAccent = e.target.checked; saveSettings(); });
     on('#setBrandFooter', 'change', (e) => { settings.brandFooter = e.target.checked; saveSettings(); renderPreview(); });
@@ -8437,7 +8487,12 @@ const App = (() => {
       if (act.op === 'ask' || act.op === 'review' || act.op === 'options') continue;
       if (act.op === 'undo') { histUndo(); out.changed = true; out.full = true; return out; }
       if (act.credit && !spendCredit()) {
-        out.needsCredit = 'That action needs an AI credit — the free plan includes 3 (Pro is unlimited).';
+        // Read the allowance rather than stating it. This message said "includes 3"
+        // in the one place a client with no credits left is guaranteed to read it,
+        // and it went stale the moment the free tier changed.
+        let free = 0;
+        try { free = PLANS.getPlan('free').limits.aiCredits; } catch (e) { free = 0; }
+        out.needsCredit = 'That action needs an AI credit' + (free ? ' — the free plan includes ' + free : '') + ' (Pro is unlimited).';
         continue;
       }
       if (act.credit) out.spent++;
@@ -8724,14 +8779,27 @@ const App = (() => {
         if (chatWantsPage(act) && !target) return { skipped: true, reason: 'that page is no longer on the site' };
         const arr = target ? (target.sections || []) : s.sections;
         let i = -1;
-        for (let k = arr.length - 1; k >= 0; k--) if (arr[k] && arr[k].type === act.type) { i = k; break; }
+        /*
+          A positional target ("the second section") was resolved to an exact
+          index when the plan was made, so use that one rather than the last of
+          its kind. The type is re-checked because the page may have changed
+          between planning and applying — and deleting the wrong section is not
+          a mistake worth risking to save a comparison.
+        */
+        if (act.idx != null && arr[act.idx] && arr[act.idx].type === act.type) {
+          i = act.idx;
+        } else {
+          for (let k = arr.length - 1; k >= 0; k--) if (arr[k] && arr[k].type === act.type) { i = k; break; }
+        }
         if (i === -1) return { skipped: true, reason: 'there is no ' + act.type + ' section ' + (target ? 'on that page' : 'on this site') };
         arr.splice(i, 1);
         if (arr === s.sections && selectedSec != null) selectedSec = Math.min(selectedSec, Math.max(0, arr.length - 1));
         return { full: true };
       }
       case 'duplicateSection': {
-        const i = chatLastIdx(s, act.type);
+        const i = (act.idx != null && s.sections[act.idx] && s.sections[act.idx].type === act.type)
+          ? act.idx
+          : chatLastIdx(s, act.type);
         if (i === -1) return { skipped: true, reason: 'there is no ' + act.type + ' section on this site' };
         const copy = JSON.parse(JSON.stringify(s.sections[i]));
         copy.id = uid();

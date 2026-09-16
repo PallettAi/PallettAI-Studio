@@ -704,7 +704,11 @@ declare
   v_bonus int := 0;
   v_used int := 0;
   v_unlimited boolean;
-  v_base constant int := 3;   -- mirrors PLANS free limits.aiCredits
+  -- The free monthly allowance. CHANGING THIS IS A DEPLOY, not an edit: the
+  -- client's PLANS free limits.aiCredits, mock-supabase.js and the website's
+  -- pricing table all state the same number, and a mismatch shows a customer one
+  -- allowance and charges them another. Keep all four in step.
+  v_base constant int := 7;   -- mirrors PLANS free limits.aiCredits
 begin
   select * into v_prof from public.profiles where id = auth.uid();
   -- NOTE: SELECT … INTO with no matching row sets the target to NULL (it does
@@ -843,34 +847,50 @@ from anon, public;
 revoke usage on schema public from anon;
 
 -- ============================================================
--- PART 5 — Stripe entitlements (Payment Links → profiles)
--- Webhook verifies the Stripe signature in Edge Function
--- stripe-webhook, then this RPC writes the plan. Email is
--- ignored: the account is client_reference_id or a stored
--- Stripe customer/subscription id. Re-run is idempotent.
+-- PART 5 — Dodo Payments entitlements (Checkout → profiles)
+-- Webhook verifies the Standard Webhooks signature in Edge
+-- Function dodo-webhook, then this RPC writes the plan. Email
+-- is ignored: the account is the account_id that dodo-checkout
+-- wrote into the session metadata from the caller's own JWT, or
+-- a stored Dodo customer/subscription id. Re-run is idempotent.
 -- ============================================================
 
-alter table public.profiles add column if not exists stripe_customer_id text;
-alter table public.profiles add column if not exists stripe_subscription_id text;
 alter table public.profiles add column if not exists entitlement_source text;
 alter table public.profiles add column if not exists billing_status text;
 alter table public.profiles add column if not exists billing_status_at timestamptz;
-alter table public.profiles add column if not exists last_stripe_event_type text;
 
-create unique index if not exists profiles_stripe_customer_id_uidx
-  on public.profiles (stripe_customer_id) where stripe_customer_id is not null;
-create unique index if not exists profiles_stripe_subscription_id_uidx
-  on public.profiles (stripe_subscription_id) where stripe_subscription_id is not null;
+-- The provider switched from Stripe to Dodo here. The stripe_* columns are
+-- deliberately NOT dropped: they hold the customer and subscription ids of
+-- everyone who subscribed before the switch, and a dropped column cannot be
+-- read back. Nothing in the app reads or writes them any more — see the
+-- migration note at the end of this file.
+alter table public.profiles add column if not exists stripe_customer_id text;
+alter table public.profiles add column if not exists stripe_subscription_id text;
 
-create table if not exists public.stripe_events (
+alter table public.profiles add column if not exists dodo_customer_id text;
+alter table public.profiles add column if not exists dodo_subscription_id text;
+alter table public.profiles add column if not exists last_dodo_event_type text;
+
+create unique index if not exists profiles_dodo_customer_id_uidx
+  on public.profiles (dodo_customer_id) where dodo_customer_id is not null;
+create unique index if not exists profiles_dodo_subscription_id_uidx
+  on public.profiles (dodo_subscription_id) where dodo_subscription_id is not null;
+
+create table if not exists public.dodo_events (
   id text primary key,
   type text not null default '',
   outcome text,
   created_at timestamptz not null default now()
 );
-alter table public.stripe_events enable row level security;
+alter table public.dodo_events enable row level security;
 
-create or replace function public.apply_stripe_entitlement(
+-- Dropped rather than merely left unused. It stayed executable by
+-- service_role, and a webhook-shaped function whose whole purpose is to grant
+-- Pro has no business outliving the provider it was written for.
+drop function if exists public.apply_stripe_entitlement(text, text, boolean, uuid, text, text, text, timestamptz);
+drop table if exists public.stripe_events;
+
+create or replace function public.apply_dodo_entitlement(
   p_event_id text,
   p_event_type text,
   p_paid boolean,
@@ -890,7 +910,7 @@ begin
     return jsonb_build_object('outcome', 'bad-event');
   end if;
 
-  insert into public.stripe_events (id, type)
+  insert into public.dodo_events (id, type)
   values (v_event, coalesce(p_event_type, ''))
   on conflict (id) do nothing;
   if not found then
@@ -901,14 +921,14 @@ begin
     select * into v_prof from public.profiles where id = p_account_id;
   end if;
   if v_prof.id is null and coalesce(p_subscription_id, '') <> '' then
-    select * into v_prof from public.profiles where stripe_subscription_id = p_subscription_id;
+    select * into v_prof from public.profiles where dodo_subscription_id = p_subscription_id;
   end if;
   if v_prof.id is null and coalesce(p_customer_id, '') <> '' then
-    select * into v_prof from public.profiles where stripe_customer_id = p_customer_id;
+    select * into v_prof from public.profiles where dodo_customer_id = p_customer_id;
   end if;
 
   if v_prof.id is null then
-    update public.stripe_events set outcome = 'no-account' where id = v_event;
+    update public.dodo_events set outcome = 'no-account' where id = v_event;
     return jsonb_build_object('outcome', 'no-account');
   end if;
 
@@ -918,64 +938,69 @@ begin
       v_plan := case when v_prof.plan in ('pro', 'proplus') then v_prof.plan else '' end;
     end if;
     if v_plan not in ('pro', 'proplus') then
-      update public.stripe_events set outcome = 'bad-plan' where id = v_event;
+      update public.dodo_events set outcome = 'bad-plan' where id = v_event;
       return jsonb_build_object('outcome', 'bad-plan');
     end if;
 
     update public.profiles set
       plan = v_plan,
       plan_expires_at = coalesce(p_expires_at, plan_expires_at),
-      stripe_customer_id = coalesce(nullif(p_customer_id, ''), stripe_customer_id),
-      stripe_subscription_id = coalesce(nullif(p_subscription_id, ''), stripe_subscription_id),
-      entitlement_source = 'stripe',
+      dodo_customer_id = coalesce(nullif(p_customer_id, ''), dodo_customer_id),
+      dodo_subscription_id = coalesce(nullif(p_subscription_id, ''), dodo_subscription_id),
+      entitlement_source = 'dodo',
       billing_status = 'ok',
       billing_status_at = now(),
-      last_stripe_event_type = coalesce(p_event_type, '')
+      last_dodo_event_type = coalesce(p_event_type, '')
     where id = v_prof.id;
 
-    update public.stripe_events set outcome = 'granted' where id = v_event;
+    update public.dodo_events set outcome = 'granted' where id = v_event;
     return jsonb_build_object('outcome', 'granted', 'plan', v_plan, 'accountId', v_prof.id);
   end if;
 
   if v_prof.entitlement_source = 'license' then
-    update public.stripe_events set outcome = 'kept-license' where id = v_event;
+    update public.dodo_events set outcome = 'kept-license' where id = v_event;
     return jsonb_build_object('outcome', 'kept-license', 'accountId', v_prof.id);
   end if;
 
-  if v_prof.entitlement_source = 'stripe'
-     or (coalesce(p_subscription_id, '') <> '' and v_prof.stripe_subscription_id = p_subscription_id) then
+  -- Only subscriptions we own are revoked. A profile still carrying
+  -- entitlement_source = 'stripe' is left exactly as it is: the code is cut
+  -- over, but silently stripping Pro from somebody still paying on the old
+  -- provider is a decision to make by hand, not one for a webhook to take.
+  if v_prof.entitlement_source = 'dodo'
+     or (coalesce(p_subscription_id, '') <> '' and v_prof.dodo_subscription_id = p_subscription_id) then
     update public.profiles set
       plan = 'free',
       plan_expires_at = null,
-      stripe_subscription_id = null,
+      dodo_subscription_id = null,
       entitlement_source = null,
       billing_status = case
         when coalesce(p_event_type, '') ilike '%expired%' then 'expired'
+        when coalesce(p_event_type, '') ilike '%on_hold%' then 'on_hold'
         when coalesce(p_event_type, '') ilike '%paused%' then 'paused'
-        when coalesce(p_event_type, '') ilike '%deleted%'
-          or coalesce(p_event_type, '') ilike '%canceled%' then 'canceled'
-        when coalesce(p_event_type, '') ilike '%action_required%' then 'action_required'
+        when coalesce(p_event_type, '') ilike '%cancelled%'
+          or coalesce(p_event_type, '') ilike '%canceled%' then 'cancelled'
+        when coalesce(p_event_type, '') ilike '%past_due%' then 'past_due'
         when coalesce(p_event_type, '') ilike '%failed%' then 'failed'
-        when coalesce(p_event_type, '') ilike '%unpaid%' then 'unpaid'
-        else 'past_due'
+        when coalesce(p_event_type, '') ilike '%pending%' then 'pending'
+        else 'failed'
       end,
       billing_status_at = now(),
-      last_stripe_event_type = coalesce(p_event_type, '')
+      last_dodo_event_type = coalesce(p_event_type, '')
     where id = v_prof.id;
-    update public.stripe_events set outcome = 'revoked' where id = v_event;
+    update public.dodo_events set outcome = 'revoked' where id = v_event;
     return jsonb_build_object('outcome', 'revoked', 'accountId', v_prof.id);
   end if;
 
-  update public.stripe_events set outcome = 'ignored' where id = v_event;
+  update public.dodo_events set outcome = 'ignored' where id = v_event;
   return jsonb_build_object('outcome', 'ignored', 'accountId', v_prof.id);
 end $$;
 
-revoke all on function public.apply_stripe_entitlement(text, text, boolean, uuid, text, text, text, timestamptz)
+revoke all on function public.apply_dodo_entitlement(text, text, boolean, uuid, text, text, text, timestamptz)
   from public, anon, authenticated;
-grant execute on function public.apply_stripe_entitlement(text, text, boolean, uuid, text, text, text, timestamptz)
+grant execute on function public.apply_dodo_entitlement(text, text, boolean, uuid, text, text, text, timestamptz)
   to service_role;
 
-revoke all on table public.stripe_events from anon, public;
+revoke all on table public.dodo_events from anon, public;
 
 -- ============================================================
 -- PART 6 — One-time review reward (3 days of Pro+)
@@ -1035,7 +1060,7 @@ begin
   insert into public.review_rewards (owner_id, display_name, quote)
   values (auth.uid(), v_name, v_quote);
 
-  v_paid := v_prof.entitlement_source in ('stripe', 'license')
+  v_paid := v_prof.entitlement_source in ('dodo', 'license')
     and v_prof.plan in ('pro', 'proplus')
     and (v_prof.plan_expires_at is null or v_prof.plan_expires_at > now());
 

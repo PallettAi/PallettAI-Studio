@@ -11,7 +11,7 @@ const COMMANDS = [
   { id: 'qr', title: 'QR Codes', hint: 'Link, Wi-Fi, vCard', group: 'Go', view: 'qr', keywords: 'qr qrcode wifi email vcard url' },
   { id: 'account', title: 'Account & billing', hint: 'Plan and login', group: 'Settings', view: 'settings', tab: 'account', keywords: 'billing plan sign in' },
   { id: 'appearance', title: 'Appearance', hint: 'Theme and accent', group: 'Settings', view: 'settings', tab: 'appearance', keywords: 'dark light system' },
-  { id: 'upgrade', title: 'Upgrade plan', hint: 'Free, Pro, Pro+', group: 'Account', action: 'upgrade', keywords: 'pricing stripe pay' },
+  { id: 'upgrade', title: 'Upgrade plan', hint: 'Free, Pro, Pro+', group: 'Account', action: 'upgrade', keywords: 'pricing dodo pay' },
   { id: 'copilot', title: 'Open Copilot', hint: 'Edit in plain English', group: 'AI', action: 'copilot', keywords: 'chat' },
   { id: 'export', title: 'Export & hand off', hint: 'Download or publish', group: 'Project', action: 'export', keywords: 'zip publish' },
   { id: 'tour', title: 'Tour', hint: 'Studio walkthrough', group: 'Help', action: 'tour', keywords: 'help onboard' },

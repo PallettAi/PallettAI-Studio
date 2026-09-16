@@ -265,7 +265,14 @@ body.photo-grade{
         engine: chosen.engine,
         variation: chosen.variation,
         intensity: chosen.intensity,
-        direction: direction
+        direction: direction,
+        // Animated artwork answers to the project's motion setting and to the
+        // visitor's own preference (which the piece declares for itself), and to
+        // nothing else. Deliberately NOT gated on the Animation Pack suite: the
+        // artwork is identical on a free project, which is the whole point of
+        // `signature-smoke` asserting it — an animated background is design, not
+        // a paid extra, so a free site must not look like a lesser one.
+        animate: String(site.motion || 'full') !== 'off'
       });
       return (out && out.html) || '';
     } catch (err) {

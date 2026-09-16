@@ -56,7 +56,7 @@ begin
   insert into public.review_rewards (owner_id, display_name, quote)
   values (auth.uid(), v_name, v_quote);
 
-  v_paid := v_prof.entitlement_source in ('stripe', 'license')
+  v_paid := v_prof.entitlement_source in ('dodo', 'license')
     and v_prof.plan in ('pro', 'proplus')
     and (v_prof.plan_expires_at is null or v_prof.plan_expires_at > now());
 

@@ -1,27 +1,31 @@
 'use strict';
 
 const PLAN_NAMES = { free: 'Free', pro: 'Pro', proplus: 'Pro+' };
-const SOURCE_NAMES = { stripe: 'Stripe', license: 'License key', trial: 'Trial', registry: 'Registry', review: 'Review gift' };
+const SOURCE_NAMES = { dodo: 'Dodo Payments', license: 'License key', trial: 'Trial', registry: 'Registry', review: 'Review gift' };
+// Keys are Dodo's subscription statuses. The copy matters more than the label:
+// each line answers "what happened to my site?" without the customer having to
+// read their provider's dashboard to find out.
 const FAIL_COPY = {
   failed: 'Payment failed — you are back on Free.',
-  canceled: 'Subscription canceled — you are back on Free.',
-  past_due: 'Payment past due — you are back on Free.',
-  unpaid: 'Invoice unpaid — you are back on Free.',
+  cancelled: 'Subscription cancelled — you are back on Free.',
+  past_due: 'Payment past due — you are back on Free, for now.',
+  on_hold: 'Subscription on hold after a failed renewal — you are back on Free.',
   paused: 'Subscription paused — you are back on Free.',
-  expired: 'Checkout expired — no plan was unlocked.',
-  action_required: 'Payment needs another step — you are back on Free.'
+  expired: 'Subscription expired — you are back on Free.',
+  pending: 'Payment still pending — the plan unlocks once it clears.'
 };
 
 function billingStatusFromEvent(eventType, paid) {
   if (paid) return 'ok';
   const t = String(eventType || '');
   if (t.indexOf('expired') !== -1) return 'expired';
+  if (t.indexOf('on_hold') !== -1) return 'on_hold';
   if (t.indexOf('paused') !== -1) return 'paused';
-  if (t.indexOf('deleted') !== -1 || t.indexOf('canceled') !== -1) return 'canceled';
-  if (t.indexOf('action_required') !== -1) return 'action_required';
+  if (t.indexOf('cancelled') !== -1 || t.indexOf('canceled') !== -1) return 'cancelled';
+  if (t.indexOf('past_due') !== -1) return 'past_due';
   if (t.indexOf('failed') !== -1) return 'failed';
-  if (t.indexOf('unpaid') !== -1) return 'unpaid';
-  return 'past_due';
+  if (t.indexOf('pending') !== -1) return 'pending';
+  return 'failed';
 }
 
 function failureCopy(status) {
@@ -50,7 +54,7 @@ function receiptLines(input) {
   const reviewActive = !!remaining;
   const plan = reviewActive ? 'Pro+ Review Trial' : (PLAN_NAMES[rec.plan] || rec.plan || 'Free');
   const source = reviewActive ? (SOURCE_NAMES.review)
-    : (rec.trialDays > 0 && rec.source !== 'stripe' && rec.source !== 'license'
+    : (rec.trialDays > 0 && rec.source !== 'dodo' && rec.source !== 'license'
       ? 'Trial'
       : (SOURCE_NAMES[rec.source] || (rec.source ? rec.source : 'This device')));
   const lines = [
@@ -83,20 +87,9 @@ function paidReturnUrl(loc) {
   return place.origin + path + (path.indexOf('?') === -1 ? '?paid=1' : '&paid=1');
 }
 
-function portalReturnUrl(raw) {
-  const fallback = 'https://pallettai.org/?paid=1';
-  try {
-    const u = new URL(String(raw || ''));
-    const local = (u.hostname === 'localhost' || u.hostname === '127.0.0.1') && u.protocol === 'http:';
-    const site = (u.hostname === 'pallettai.org' || u.hostname === 'www.pallettai.org') && u.protocol === 'https:';
-    if (!local && !site) return fallback;
-    u.searchParams.set('paid', '1');
-    u.hash = '';
-    return u.toString();
-  } catch (_) {
-    return fallback;
-  }
-}
+// portalReturnUrl lived here to allowlist the Stripe portal's return target.
+// Dodo's portal is a static link that sends people back on its own, so there is
+// no return URL to build and the helper went with the provider.
 
-const PlanReceipt = { billingStatusFromEvent, failureCopy, receiptLines, isPaidReturn, paidReturnUrl, portalReturnUrl, formatDate };
+const PlanReceipt = { billingStatusFromEvent, failureCopy, receiptLines, isPaidReturn, paidReturnUrl, formatDate };
 if (typeof module !== 'undefined' && module.exports) module.exports = PlanReceipt;

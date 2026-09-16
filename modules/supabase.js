@@ -440,27 +440,36 @@ const SUPABASE = (() => {
       }
     },
 
-    async openBillingPortal(returnUrl, options) {
+    // Asks the registry to create a Dodo checkout session. The account the plan
+    // lands on is resolved server-side from this request's own token, so nothing
+    // here needs to carry (or can tamper with) an account id.
+    async startCheckout(planId, returnUrl, options) {
       const s = loadSes();
-      if (!api.isConfigured() || !s) return { ok: false, msg: 'Sign in to manage billing.' };
+      if (!api.isConfigured() || !s) return { ok: false, msg: 'Sign in to upgrade.' };
       try {
-        const res = await _request(base() + '/functions/v1/billing-portal', {
+        const res = await _request(base() + '/functions/v1/dodo-checkout', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             apikey: anon(),
             Authorization: 'Bearer ' + s.accessToken
           },
-          body: JSON.stringify({ returnUrl: String(returnUrl || '') })
+          body: JSON.stringify({ plan: String(planId || ''), returnUrl: String(returnUrl || '') })
         }, options, TIMEOUTS.write);
         const j = await res.json().catch(() => ({}));
-        if (j && j.error === 'no-customer') {
-          return { ok: false, msg: 'No Stripe subscription on this account — use Upgrade to pay, or a license key.' };
+        // "not switched on yet" and "broken" are different answers and the
+        // customer deserves the true one: the first is fixed with a license key,
+        // the second by trying again.
+        if (j && j.error === 'not-configured') {
+          return { ok: false, msg: 'Card checkout is not switched on yet — paste a license key, or try again later.' };
+        }
+        if (j && j.error === 'bad-plan') {
+          return { ok: false, msg: 'That plan cannot be billed — choose Pro or Pro+.' };
         }
         if (!res.ok || !j || j.ok !== true || !j.url) {
-          return { ok: false, msg: 'Billing portal is unavailable right now.' };
+          return { ok: false, msg: 'Checkout is unavailable right now — please try again.' };
         }
-        return { ok: true, url: j.url };
+        return { ok: true, url: j.url, plan: j.plan || String(planId || '') };
       } catch (e) { return _err(e); }
     }
   };

@@ -423,6 +423,10 @@ body.titlebar-inset .project-chip{-webkit-app-region:no-drag}
 
 /* ---------- Pricing modal ---------- */
 .modal-card.wide{max-width:880px}
+/* Why this screen opened. Sits above the cards so the first thing read is the
+   reason, not the price — a paywall with no stated cause reads as a trap. */
+.price-reason{margin:0 0 18px;padding:12px 15px;border-radius:12px;font-size:.83rem;line-height:1.55;color:var(--text);
+  background:linear-gradient(92deg,rgba(124,192,248,.13),rgba(159,212,255,.04));border:1px solid rgba(169,216,255,.28)}
 .pricing-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:12px;margin-bottom:20px}
 .price-card{background:var(--surface2);border:1px solid var(--border);border-radius:18px;padding:22px 20px 20px;display:flex;flex-direction:column;gap:8px;position:relative;transition:transform .2s,border-color .2s,box-shadow .2s}
 .price-card:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--text) 20%,var(--border))}

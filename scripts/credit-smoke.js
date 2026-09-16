@@ -3,7 +3,7 @@
 // Drives the REAL modules/supabase.js credit methods + the local
 // plans.js ledger against the local mock registry (port 54321),
 // including every cheat attempt:
-//   * spending past the 3+bonus ceiling            → insufficient
+//   * spending past the free+bonus ceiling         → insufficient
 //   * replaying the same idempotency ref           → already-spent
 //   * refunding twice / refunding an unknown ref   → blocked
 //   * refund-vs-spend accounting on the ledger
@@ -25,6 +25,12 @@ global.localStorage = {
 
 const SUPABASE = require('../modules/supabase.js');
 const PLANS = require('../data/plans.js');
+
+// The free allowance is read from the product rather than written down here, so
+// changing the number cannot leave this suite quietly asserting the old one —
+// which is exactly what happened when it went from 3 to 7. The mock registry
+// derives the same figure from its own copy, and schema.sql holds the third.
+const FREE = PLANS.getPlan('free').limits.aiCredits;
 const URL = 'http://127.0.0.1:54321';
 const KEY = 'test-anon-key';
 
@@ -57,32 +63,40 @@ const N = () => 'u' + Math.random().toString(36).slice(2, 8) + '@credit.local';
   let r = await SUPABASE.signUp(email, 'password123');
   check('signup alice ok', r.ok);
   let st = await SUPABASE.getCreditState();
-  check('fresh state: free, 3 base, 0 used, 0 bonus, 3 left', st.ok && !st.unlimited && st.baseCredits === 3 && st.used === 0 && st.bonusCredits === 0 && st.left === 3, st);
+  check('fresh state: free, ' + FREE + ' base, 0 used, 0 bonus, ' + FREE + ' left',
+    st.ok && !st.unlimited && st.baseCredits === FREE && st.used === 0 && st.bonusCredits === 0 && st.left === FREE, st);
 
-  r = await SUPABASE.spendCredit('a1');
-  check('spend a1 → spent, used 1, left 2', r.ok && r.outcome === 'spent' && r.used === 1 && r.left === 2 && r.bonusCredits === 0, r);
+  // Spend to the ceiling one at a time, checking the running total at each step,
+  // so the boundary is observed rather than assumed from the allowance.
+  let last = null;
+  for (let i = 1; i <= FREE; i++) {
+    last = await SUPABASE.spendCredit('a' + i);
+    if (!(last.ok && last.outcome === 'spent' && last.used === i && last.left === FREE - i)) break;
+  }
+  check('spend to the ceiling → used ' + FREE + ', left 0',
+    last.ok && last.outcome === 'spent' && last.used === FREE && last.left === 0 && last.bonusCredits === 0, last);
+  r = await SUPABASE.spendCredit('a-over');
+  check('spend past the ceiling → insufficient, used stays ' + FREE,
+    r.ok && r.outcome === 'insufficient' && r.used === FREE && r.left === 0, r);
   r = await SUPABASE.spendCredit('a2');
-  check('spend a2 → used 2', r.ok && r.outcome === 'spent' && r.used === 2);
-  r = await SUPABASE.spendCredit('a3');
-  check('spend a3 → used 3, left 0', r.ok && r.outcome === 'spent' && r.used === 3 && r.left === 0);
-  r = await SUPABASE.spendCredit('a4');
-  check('4th spend → insufficient, used stays 3', r.ok && r.outcome === 'insufficient' && r.used === 3 && r.left === 0, r);
-  r = await SUPABASE.spendCredit('a2');
-  check('replay ref a2 → already-spent (idempotent, no double debit)', r.ok && r.outcome === 'already-spent' && r.used === 3, r);
+  check('replay a spent ref → already-spent (idempotent, no double debit)',
+    r.ok && r.outcome === 'already-spent' && r.used === FREE, r);
   const rows = await spendRows();
-  check('audit: exactly 3 unrefunded rows', rows.length === 3 && rows.every((x) => !x.refunded_at));
+  check('audit: exactly ' + FREE + ' unrefunded rows', rows.length === FREE && rows.every((x) => !x.refunded_at));
 
   console.log('\n== alice: refunds ==');
   r = await SUPABASE.refundCredit('a2');
-  check('refund a2 → refunded, used 2, left 1', r.ok && r.outcome === 'refunded' && r.used === 2 && r.left === 1, r);
+  check('refund a2 → refunded, used ' + (FREE - 1) + ', left 1',
+    r.ok && r.outcome === 'refunded' && r.used === FREE - 1 && r.left === 1, r);
   r = await SUPABASE.refundCredit('a2');
-  check('double refund a2 → already-refunded', r.ok && r.outcome === 'already-refunded' && r.used === 2);
+  check('double refund a2 → already-refunded', r.ok && r.outcome === 'already-refunded' && r.used === FREE - 1);
   r = await SUPABASE.refundCredit('nope-123');
-  check('refund unknown ref → not-found', r.ok && r.outcome === 'not-found' && r.used === 2);
+  check('refund unknown ref → not-found', r.ok && r.outcome === 'not-found' && r.used === FREE - 1);
   r = await SUPABASE.refundCredit('a1');
-  check('refund a1 → used 1', r.ok && r.outcome === 'refunded' && r.used === 1);
+  check('refund a1 → used ' + (FREE - 2), r.ok && r.outcome === 'refunded' && r.used === FREE - 2);
   const rows2 = await spendRows();
-  check('audit: refunded rows kept but marked', rows2.filter((x) => x.refunded_at).length === 2 && rows2.filter((x) => !x.refunded_at).length === 1);
+  check('audit: refunded rows kept but marked',
+    rows2.filter((x) => x.refunded_at).length === 2 && rows2.filter((x) => !x.refunded_at).length === FREE - 2);
 
   // ============ dave — wipe-restore: the server is truth ============
   console.log('\n== dave: wipe + restore ==');
@@ -92,12 +106,12 @@ const N = () => 'u' + Math.random().toString(36).slice(2, 8) + '@credit.local';
   await SUPABASE.spendCredit('d1');
   await SUPABASE.spendCredit('d2');
   st = await SUPABASE.getCreditState();
-  check('dave spent 2 server-side', st.used === 2 && st.left === 1);
+  check('dave spent 2 server-side', st.used === 2 && st.left === FREE - 2);
   // a wiped client believes it has 0 used — one sync pull must restore truth
   PLANS.store.setServerCredits({ used: 0, bonusCredits: 0 }); // naive local reset
   PLANS.store.setServerCredits(st);                            // authoritative pull
   const after = PLANS.store.creditsLeft();
-  check('wipe then sync → used restored to 2, left 1', after.used === 2 && after.left === 1, after);
+  check('wipe then sync → used restored to 2, left ' + (FREE - 2), after.used === 2 && after.left === FREE - 2, after);
 
   // ============ bob — Pro trial = unlimited & unmetered ============
   console.log('\n== bob: earned Pro trial ==');
@@ -124,24 +138,32 @@ const N = () => 'u' + Math.random().toString(36).slice(2, 8) + '@credit.local';
   const claim = await SUPABASE.claimDailyReward('edit');
   check('day-1 streak claim grants +2 bonus', claim.ok && claim.outcome === 'claimed' && claim.bonusCredits === 2, claim);
   st = await SUPABASE.getCreditState();
-  check('ceiling now 3+2=5: used 0 → left 5', st.ok && st.bonusCredits === 2 && st.left === 5, st);
-  const carolRows = await Promise.all([1, 2, 3, 4, 5].map((i) => SUPABASE.spendCredit('c' + i)));
-  check('all 5 spends succeed at the raised ceiling', carolRows.every((x) => x.ok && x.outcome === 'spent'));
-  r = await SUPABASE.spendCredit('c6');
-  check('6th spend → insufficient', r.ok && r.outcome === 'insufficient' && r.used === 5);
+  check('ceiling now ' + FREE + '+2=' + (FREE + 2) + ': used 0 → left ' + (FREE + 2),
+    st.ok && st.bonusCredits === 2 && st.left === FREE + 2, st);
+  const refs = [];
+  for (let i = 1; i <= FREE + 2; i++) refs.push(SUPABASE.spendCredit('c' + i));
+  const carolRows = await Promise.all(refs);
+  check('all ' + (FREE + 2) + ' spends succeed at the raised ceiling',
+    carolRows.every((x) => x.ok && x.outcome === 'spent'), carolRows.map((x) => x.outcome));
+  r = await SUPABASE.spendCredit('c-over');
+  check('the next spend → insufficient', r.ok && r.outcome === 'insufficient' && r.used === FREE + 2);
 
   // ============ erin — concurrent spends near the limit ============
   console.log('\n== erin: racing spends (advisory-lock semantics) ==');
   email = N();
   r = await SUPABASE.signUp(email, 'password123');
   check('signup erin ok', r.ok);
-  await SUPABASE.spendCredit('e0');
-  const race = await Promise.all(['e1', 'e2', 'e3'].map((ref) => SUPABASE.spendCredit(ref)));
+  // Walk the balance down to exactly two left before racing, so the race is
+  // always decided at the boundary rather than wherever the ceiling happens to be.
+  for (let i = 0; i <= FREE - 3; i++) await SUPABASE.spendCredit('e' + i);
+  st = await SUPABASE.getCreditState();
+  check('two left before the race', st.left === 2, st);
+  const race = await Promise.all(['r1', 'r2', 'r3'].map((ref) => SUPABASE.spendCredit(ref)));
   const spent = race.filter((x) => x.ok && x.outcome === 'spent').length;
   const denied = race.filter((x) => x.ok && x.outcome === 'insufficient').length;
   check('3 racing spends with 2 left → exactly 2 spent, 1 denied', spent === 2 && denied === 1, race.map((x) => x.outcome));
   st = await SUPABASE.getCreditState();
-  check('final used 3, left 0 — no double-grant', st.used === 3 && st.left === 0, st);
+  check('final used ' + FREE + ', left 0 — no double-grant', st.used === FREE && st.left === 0, st);
 
   // ============ frank — multi-account isolation ============
   console.log('\n== frank: isolation ==');
@@ -149,7 +171,7 @@ const N = () => 'u' + Math.random().toString(36).slice(2, 8) + '@credit.local';
   r = await SUPABASE.signUp(email, 'password123');
   check('signup frank ok', r.ok);
   st = await SUPABASE.getCreditState();
-  check('fresh account unaffected by everyone else', st.used === 0 && st.left === 3 && st.bonusCredits === 0);
+  check('fresh account unaffected by everyone else', st.used === 0 && st.left === FREE && st.bonusCredits === 0);
 
   // ============ plans.js ledger behaviours ============
   console.log('\n== local ledger ==');

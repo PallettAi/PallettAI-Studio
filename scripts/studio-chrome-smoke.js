@@ -20,7 +20,8 @@ console.log('== Launch leftovers ==');
 assert(!/btnSimRef/.test(app), 'Simulate a friend redeeming is gone');
 assert(!/✦ Upgrade/.test(app), 'sparkle Upgrade label is gone');
 assert(!/Paid billing still needs a payments provider/.test(readme), 'README no longer says billing is unwired');
-assert(/Stripe/.test(readme) && /Payment Link/.test(readme), 'README names Stripe Payment Links');
+assert(/Dodo/.test(readme), 'README names the provider that actually bills');
+assert(!/Stripe/.test(readme) || /(replaced|switched|instead of) Stripe/.test(readme), 'README does not still advertise Stripe checkout');
 
 console.log('\n== Billing failure + receipt ==');
 assert(/billing_status/.test(app), 'Settings/sync reads billing_status');
@@ -36,7 +37,7 @@ assert(/Change password|New password/.test(app), 'signed-in card can change pass
 
 console.log('\n== Paid return ==');
 assert(/paidReturnUrl|isPaidReturn|\?paid=1/.test(app), 'Studio handles a paid=1 return');
-assert(/Waiting for Stripe|waiting for payment|Unlocking/.test(app), 'checkout shows a waiting-for-payment state');
+assert(/Waiting for Dodo|waiting for payment|Unlocking/.test(app), 'checkout shows a waiting-for-payment state');
 
 console.log('\n== Export note ==');
 assert(/sites are files|plain HTML/.test(app) && /not tenants|you own it/.test(app), 'export says the site is files the client owns');

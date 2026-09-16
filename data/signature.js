@@ -17,8 +17,17 @@
 //   4. CHEAP. A few KB of markup, drawn once. The old blobs used filter:blur(110px)
 //      on 540px elements with infinite animations, which rasterises a large
 //      offscreen buffer every frame.
-//   5. STATIC BY DEFAULT. Nothing animates, so `prefers-reduced-motion` needs no
-//      special case here. Any optional drift added later must respect it.
+//   5. MOTION IS OPT-IN BY THE VISITOR. The static engines animate nothing. The
+//      animated ones (Tidal Drift, Aurora Veil, Orbit Rings, Grid Sweep) declare
+//      their keyframes inside `@media (prefers-reduced-motion:no-preference)`, so
+//      a visitor who has asked for less motion receives the same piece, still.
+//      They also only ever move `transform`, `opacity` and `stroke-dashoffset`,
+//      and never rely on `transform-origin`, whose SVG default differs by browser.
+//      See the animated engines for the full reasoning.
+//
+//      Artwork is emitted identically whether or not a Pro suite is installed —
+//      it is design, not an animation extra — so the animated engines must stay
+//      self-sufficient rather than depending on the export's motion settings.
 //
 // Legibility is deliberately NOT part of the artwork: baking a scrim into every
 // piece washes it out in the places no text touches. `scrim()` is a separate
@@ -249,13 +258,256 @@ const Signature = (() => {
     return { defs: '', body: body };
   }
 
+  // ============================================================
+  // Animated engines
+  // ------------------------------------------------------------
+  // Rule 5 at the top of this file said "static by default … any optional drift
+  // added later must respect prefers-reduced-motion". These are that drift, and
+  // three rules are what make them safe to put on a client's live site:
+  //
+  //   * ONLY transform, opacity and stroke-dashoffset move. No filter, no blur,
+  //     no width, no layout. The old `.orb-*` blobs animated filter:blur(110px)
+  //     on 540px elements, which re-rasterises a large offscreen buffer every
+  //     frame; nothing here does.
+  //   * NOTHING depends on transform-origin. CSS transform-origin on an SVG
+  //     element is a genuinely browser-dependent default, so every piece moves
+  //     with translate() and both "rotations" are stroke-dashoffset, which has no
+  //     origin to get wrong. Geometry that needs to sit somewhere is placed with a
+  //     static transform attribute on a parent <g>, never by moving an origin.
+  //   * THE MOTION LIVES INSIDE @media (prefers-reduced-motion:no-preference),
+  //     applied once in build() so no engine has to remember it. The exported
+  //     stylesheet switches keyframes off too, but this markup is inlined into
+  //     third-party pages and has to be correct on its own rather than trusting a
+  //     rule that lives somewhere else in the document.
+  //
+  // Durations are deliberately long — this should read as weather, not as a
+  // loading spinner. A piece costs a few hundred bytes of CSS (the keyframes are
+  // highly repetitive, so they gzip to almost nothing) and no extra requests.
+  // ============================================================
+
+  // ---- Tidal Drift ---- not the dial, but the current running through it.
+  function drift(seed, p, uid, intensity) {
+    const rng = makeRng(seed + '|drift');
+    const gid = uid + 'ag', lid = uid + 'al', rid = uid + 'ar';
+    const cx = (0.18 + rng() * 0.64) * W;
+    const cy = (0.22 + rng() * 0.56) * H;
+    const glowR = 430 + rng() * 250;
+    const pre = presence(p);
+
+    const defs =
+      '<linearGradient id="' + gid + '" x1="0" y1="0" x2="1" y2="1">' +
+        '<stop offset="0%" stop-color="' + p.primary + '"/>' +
+        '<stop offset="100%" stop-color="' + p.accent + '"/>' +
+      '</linearGradient>' +
+      '<linearGradient id="' + lid + '" x1="0" y1="0" x2="1" y2="0">' +
+        '<stop offset="0%" stop-color="' + p.primary + '" stop-opacity="0"/>' +
+        '<stop offset="50%" stop-color="' + p.primary + '" stop-opacity="0.9"/>' +
+        '<stop offset="100%" stop-color="' + p.accent + '" stop-opacity="0"/>' +
+      '</linearGradient>' +
+      '<radialGradient id="' + rid + '" gradientUnits="userSpaceOnUse" cx="' + cx.toFixed(0) +
+        '" cy="' + cy.toFixed(0) + '" r="' + glowR.toFixed(0) + '">' +
+        '<stop offset="0%" stop-color="' + p.primary + '" stop-opacity="' + (0.4 * pre).toFixed(3) + '"/>' +
+        '<stop offset="55%" stop-color="' + p.accent + '" stop-opacity="' + (0.13 * pre).toFixed(3) + '"/>' +
+        '<stop offset="100%" stop-color="' + p.accent + '" stop-opacity="0"/>' +
+      '</radialGradient>';
+
+    let body = '<circle cx="' + cx.toFixed(0) + '" cy="' + cy.toFixed(0) + '" r="' + (glowR * 1.7).toFixed(0) +
+               '" fill="url(#' + rid + ')"/>';
+
+    const rings = 5 + Math.floor(rng() * 5);
+    for (let i = 0; i < rings; i++) {
+      const r = 70 + i * (52 + rng() * 30);
+      body += '<circle cx="' + cx.toFixed(0) + '" cy="' + cy.toFixed(0) + '" r="' + r.toFixed(0) +
+              '" fill="none" stroke="url(#' + gid + ')" stroke-opacity="' +
+              (Math.max(0.1, 0.5 - i * 0.055) * pre).toFixed(3) + '" stroke-width="1.6"/>';
+    }
+
+    // The waves overrun the viewBox by 40 units each side, so the drift can never
+    // drag an end into shot — and the background rect stays still, so no gap can
+    // open behind them however far they travel.
+    const wave = (y0, freq, ampW, phase, width) => {
+      const pts = [];
+      for (let x = -40; x <= W + 40; x += 24) {
+        const t = x / W;
+        const env = Math.sin(Math.PI * Math.min(1, Math.max(0, t)));
+        const y = y0 + Math.sin(t * freq * Math.PI * 2 + phase) * ampW * (0.34 + 0.66 * env);
+        pts.push(x.toFixed(0) + ',' + y.toFixed(1));
+      }
+      return '<polyline points="' + pts.join(' ') + '" fill="none" stroke="url(#' + lid +
+             ')" stroke-width="' + width.toFixed(1) + '" stroke-linecap="round"/>';
+    };
+
+    const rows = 3 + Math.floor(rng() * 2);
+    let waves = '';
+    for (let i = 0; i < rows; i++) {
+      waves += wave(cy + (i - (rows - 1) / 2) * (76 + rng() * 44), 2.2 + rng() * 1.7,
+                    44 + rng() * 56, rng() * 6.28, 2 + rng() * 2.4);
+    }
+    // Two nested groups so the sideways drift and the bob compose without either
+    // animation having to know the other exists (one `animation` cannot drive
+    // `transform` twice on the same element).
+    body += '<g class="' + uid + '-y"><g class="' + uid + '-x">' + waves + '</g></g>';
+
+    const css =
+      '@keyframes ' + uid + 'sx{from{transform:translateX(-42px)}to{transform:translateX(42px)}}' +
+      '@keyframes ' + uid + 'sy{from{transform:translateY(-20px)}to{transform:translateY(20px)}}' +
+      '.' + uid + '-x{animation:' + uid + 'sx 52s ease-in-out infinite alternate}' +
+      '.' + uid + '-y{animation:' + uid + 'sy 34s ease-in-out infinite alternate}';
+
+    return { defs: defs, body: body, css: css };
+  }
+
+  // ---- Aurora Veil ---- soft light, no blur filter doing the softening.
+  function aurora(seed, p, uid, intensity) {
+    const rng = makeRng(seed + '|aurora');
+    const pre = presence(p);
+    const blobs = 4;
+    let defs = '', body = '';
+
+    for (let i = 0; i < blobs; i++) {
+      const gid = uid + 'b' + i;
+      const cx = (0.12 + rng() * 0.76) * W;
+      const cy = (0.08 + rng() * 0.84) * H;
+      const rx = 260 + rng() * 340;
+      const ry = rx * (0.5 + rng() * 0.45);
+      // The end blobs land exactly on the palette's own primary and accent, so the
+      // brand's real colours are IN the piece rather than merely approached — the
+      // same reasoning as the halftone ramp. The middle blobs are blends, which is
+      // what makes the veil look like light rather than like four flat discs.
+      const tint = i === 0 ? p.primary : (i === blobs - 1 ? p.accent : mix(p.primary, p.accent, rng()));
+      // Default objectBoundingBox units, so the gradient tracks the ellipse itself
+      // and its geometry does not have to be repeated here.
+      defs += '<radialGradient id="' + gid + '">' +
+                '<stop offset="0%" stop-color="' + tint + '" stop-opacity="' + (0.34 * pre).toFixed(3) + '"/>' +
+                '<stop offset="60%" stop-color="' + tint + '" stop-opacity="' + (0.12 * pre).toFixed(3) + '"/>' +
+                '<stop offset="100%" stop-color="' + tint + '" stop-opacity="0"/>' +
+              '</radialGradient>';
+      body += '<ellipse class="' + uid + '-b' + (i % 3) + '" cx="' + cx.toFixed(0) + '" cy="' + cy.toFixed(0) +
+              '" rx="' + rx.toFixed(0) + '" ry="' + ry.toFixed(0) + '" fill="url(#' + gid + ')"/>';
+    }
+
+    const css =
+      '@keyframes ' + uid + 'ax{from{transform:translate(-58px,20px)}to{transform:translate(64px,-24px)}}' +
+      '@keyframes ' + uid + 'ay{from{transform:translate(52px,-26px)}to{transform:translate(-46px,28px)}}' +
+      '@keyframes ' + uid + 'ap{0%,100%{opacity:.55}50%{opacity:1}}' +
+      '.' + uid + '-b0{animation:' + uid + 'ax 57s ease-in-out infinite alternate}' +
+      '.' + uid + '-b1{animation:' + uid + 'ay 43s ease-in-out infinite alternate}' +
+      '.' + uid + '-b2{animation:' + uid + 'ap 23s ease-in-out infinite}';
+
+    return { defs: defs, body: body, css: css };
+  }
+
+  // ---- Orbit Rings ---- the dial, turning.
+  function orbit(seed, p, uid, intensity) {
+    const rng = makeRng(seed + '|orbit');
+    const pre = presence(p);
+    const cx = W * (0.4 + rng() * 0.2);
+    const cy = H * 0.5;
+    const gid = uid + 'og', rid = uid + 'or';
+    const glowR = 380 + rng() * 220;
+
+    const defs =
+      '<linearGradient id="' + gid + '" x1="0" y1="0" x2="1" y2="1">' +
+        '<stop offset="0%" stop-color="' + p.primary + '"/>' +
+        '<stop offset="100%" stop-color="' + p.accent + '"/>' +
+      '</linearGradient>' +
+      '<radialGradient id="' + rid + '" gradientUnits="userSpaceOnUse" cx="' + cx.toFixed(0) +
+        '" cy="' + cy.toFixed(0) + '" r="' + glowR.toFixed(0) + '">' +
+        '<stop offset="0%" stop-color="' + p.primary + '" stop-opacity="' + (0.46 * pre).toFixed(3) + '"/>' +
+        '<stop offset="100%" stop-color="' + p.accent + '" stop-opacity="0"/>' +
+      '</radialGradient>';
+
+    let body = '<circle cx="' + cx.toFixed(0) + '" cy="' + cy.toFixed(0) + '" r="' + glowR.toFixed(0) +
+               '" fill="url(#' + rid + ')"/>';
+
+    const rings = 6 + Math.floor(rng() * 4);
+    for (let i = 0; i < rings; i++) {
+      const r = 90 + i * 58;
+      // Every ring shares ONE dash period (6 + 16 = 22) so a single keyframe can
+      // travel an exact whole number of periods (22 x 100) and every ring loops
+      // seamlessly. Per-ring dash arrays would need per-ring keyframes to avoid a
+      // visible jump at the loop point, which is most of the CSS budget for this
+      // engine. Variation comes from width and opacity instead.
+      body += '<circle class="' + uid + '-r' + (i % 2) + '" cx="' + cx.toFixed(0) + '" cy="' + cy.toFixed(0) +
+              '" r="' + r.toFixed(0) + '" fill="none" stroke="url(#' + gid + ')" stroke-width="' +
+              (i === 0 ? 3.4 : 1.8) + '" stroke-opacity="' + Math.max(0.12, 0.75 - i * 0.06).toFixed(3) +
+              '" stroke-dasharray="6 16"/>';
+    }
+    body += '<circle cx="' + (cx + 90 + (rings - 1) * 58).toFixed(0) + '" cy="' + cy.toFixed(0) +
+            '" r="7" fill="' + p.accent + '" fill-opacity="0.9"/>';
+
+    const css =
+      '@keyframes ' + uid + 'ro{to{stroke-dashoffset:-2200}}' +
+      '.' + uid + '-r0{animation:' + uid + 'ro 68s linear infinite}' +
+      '.' + uid + '-r1{animation:' + uid + 'ro 97s linear infinite reverse}';
+
+    return { defs: defs, body: body, css: css };
+  }
+
+  // ---- Grid Sweep ---- a light passing over a technical grid.
+  function grid(seed, p, uid, intensity) {
+    const rng = makeRng(seed + '|grid');
+    const pre = presence(p);
+    const cols = 16, rows = 9;
+    const gid = uid + 'gs';
+
+    const defs = '<linearGradient id="' + gid + '" x1="0" y1="0" x2="1" y2="0">' +
+        '<stop offset="0%" stop-color="' + p.primary + '" stop-opacity="0"/>' +
+        '<stop offset="50%" stop-color="' + p.accent + '" stop-opacity="' + (0.75 * pre).toFixed(2) + '"/>' +
+        '<stop offset="100%" stop-color="' + p.primary + '" stop-opacity="0"/>' +
+      '</linearGradient>';
+
+    let lines = '';
+    for (let c = 1; c < cols; c++) {
+      const x = (c * W / cols).toFixed(0);
+      lines += '<line x1="' + x + '" y1="0" x2="' + x + '" y2="' + H + '"/>';
+    }
+    for (let r = 1; r < rows; r++) {
+      const y = (r * H / rows).toFixed(0);
+      lines += '<line x1="0" y1="' + y + '" x2="' + W + '" y2="' + y + '"/>';
+    }
+
+    // 0.13 read as an empty section rather than as artwork on a dark palette, so
+    // the grid is lifted enough to be seen without competing with the copy — the
+    // scrim, not the artwork, is what keeps text legible, so this can afford to
+    // be legible itself.
+    let body = '<g stroke="' + p.primary + '" stroke-opacity="' + (0.2 * pre).toFixed(3) +
+               '" stroke-width="1">' + lines + '</g>';
+
+    // The sweep is one wide gradient bar starting off the left edge, so the whole
+    // effect is a single translate on a single element.
+    body += '<g class="' + uid + '-s"><rect x="-300" y="0" width="300" height="' + H +
+            '" fill="url(#' + gid + ')" fill-opacity="0.44"/></g>';
+
+    let dots = '';
+    const nodeCount = 4 + Math.floor(rng() * 4);
+    for (let i = 0; i < nodeCount; i++) {
+      const c = 1 + Math.floor(rng() * (cols - 2));
+      const r = 1 + Math.floor(rng() * (rows - 2));
+      dots += '<circle cx="' + (c * W / cols).toFixed(0) + '" cy="' + (r * H / rows).toFixed(0) + '" r="5"/>';
+    }
+    body += '<g class="' + uid + '-n" fill="' + p.accent + '" fill-opacity="0.85">' + dots + '</g>';
+
+    const css =
+      '@keyframes ' + uid + 'sw{from{transform:translateX(0)}to{transform:translateX(1900px)}}' +
+      '@keyframes ' + uid + 'np{0%,100%{opacity:.3}50%{opacity:1}}' +
+      '.' + uid + '-s{animation:' + uid + 'sw 12s linear infinite}' +
+      '.' + uid + '-n{animation:' + uid + 'np 5.5s ease-in-out infinite}';
+
+    return { defs: defs, body: body, css: css };
+  }
+
   const ENGINES = [
     { id: 'signal',   name: 'Signal Field',  note: 'The house motif' },
     { id: 'halftone', name: 'Halftone Ramp', note: 'Print-shop dots' },
+    { id: 'drift',    name: 'Tidal Drift',   note: 'Animated — slow current' },
+    { id: 'aurora',   name: 'Aurora Veil',   note: 'Animated — drifting light' },
+    { id: 'orbit',    name: 'Orbit Rings',   note: 'Animated — turning dial' },
+    { id: 'grid',     name: 'Grid Sweep',    note: 'Animated — passing light' },
     { id: 'none',     name: 'No artwork',    note: 'Plain background' }
   ];
 
-  const RENDERERS = { signal: signal, halftone: halftone };
+  const RENDERERS = { signal: signal, halftone: halftone, drift: drift, aurora: aurora, orbit: orbit, grid: grid };
 
   function engineOf(id) {
     for (let i = 0; i < ENGINES.length; i++) if (ENGINES[i].id === id) return ENGINES[i];
@@ -281,14 +533,23 @@ const Signature = (() => {
     const uid = 'sg' + fnv1a(seed).slice(0, 6);
 
     if (engine === 'none' || !RENDERERS[engine]) {
-      return { svg: '', hash: fnv1a('none'), seed: seed, engine: 'none' };
+      return { svg: '', hash: fnv1a('none'), seed: seed, engine: 'none', animated: false };
     }
 
     let intensity = typeof opts.intensity === 'number' ? opts.intensity : 1;
     intensity = Math.max(0, Math.min(1, intensity));
 
     const out = RENDERERS[engine](seed, p, uid, intensity);
+
+    // ONE place decides that artwork only moves when the visitor has not asked for
+    // less motion. The engines never see the preference and cannot forget it.
+    const animate = opts.animate !== false;
+    const style = (animate && out.css)
+      ? '<style>@media (prefers-reduced-motion:no-preference){' + out.css + '}</style>'
+      : '';
+
     const inner =
+      style +
       '<defs>' + out.defs.replace(/<defs>|<\/defs>/g, '') + '</defs>' +
       '<rect width="' + W + '" height="' + H + '" fill="' + p.bg + '"/>' +
       (intensity === 1 ? out.body : '<g opacity="' + intensity.toFixed(2) + '">' + out.body + '</g>');
@@ -297,7 +558,7 @@ const Signature = (() => {
       '<svg class="sig-art" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg"' +
       ' preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">' + inner + '</svg>';
 
-    return { svg: svg, hash: fnv1a(svg), seed: seed, engine: engine };
+    return { svg: svg, hash: fnv1a(svg), seed: seed, engine: engine, animated: !!(animate && out.css) };
   }
 
   // ============================================================
@@ -345,14 +606,15 @@ const Signature = (() => {
 
   function background(opts) {
     const art = build(opts);
-    if (!art.svg) return { html: '', hash: art.hash, seed: art.seed, engine: art.engine };
+    if (!art.svg) return { html: '', hash: art.hash, seed: art.seed, engine: art.engine, animated: false };
     const dir = opts && opts.direction ? opts.direction : 'both';
     return {
       html: '<div class="sig-bg">' + art.svg + '<div class="sig-bg-scrim">' +
             scrim(opts.palette, { direction: dir }) + '</div></div>',
       hash: art.hash,
       seed: art.seed,
-      engine: art.engine
+      engine: art.engine,
+      animated: !!art.animated
     };
   }
 

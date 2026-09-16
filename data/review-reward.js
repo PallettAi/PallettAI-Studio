@@ -17,7 +17,7 @@ function normalizeClaim(input) {
 
 function isPaidEntitlement(profile, nowMs) {
   const p = profile || {};
-  if (p.entitlement_source !== 'stripe' && p.entitlement_source !== 'license') return false;
+  if (p.entitlement_source !== 'dodo' && p.entitlement_source !== 'license') return false;
   if (!PAID[p.plan]) return false;
   if (!p.plan_expires_at) return true;
   return Date.parse(p.plan_expires_at) > (nowMs || Date.now());

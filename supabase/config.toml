@@ -1,12 +1,17 @@
-# Only the webhook function is configured here. JWT is off because Stripe
-# calls this URL; apply_stripe_entitlement stays service_role-only.
+# JWT is off only for the webhook, because Dodo calls that URL rather than a
+# signed-in user; its Standard Webhooks signature is the authentication and
+# apply_dodo_entitlement stays service_role-only.
+#
+# dodo-checkout is the opposite case: verify_jwt = true is what makes the
+# account binding trustworthy, since the function reads the account from the
+# caller's verified token instead of from the request body.
 project_id = "fjahxichioccknszuxhb"
 
-[functions.stripe-webhook]
+[functions.dodo-webhook]
 verify_jwt = false
 
-[functions.translate]
+[functions.dodo-checkout]
 verify_jwt = true
 
-[functions.billing-portal]
+[functions.translate]
 verify_jwt = true
