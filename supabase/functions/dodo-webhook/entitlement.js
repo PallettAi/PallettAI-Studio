@@ -220,6 +220,25 @@ function applyEntitlement(db, payload) {
   if (!profile) return { outcome: 'no-account' };
 
   if (payload.paid) {
+    // A license key outranks a subscription. The same rule lives in the paid
+    // branch of apply_dodo_entitlement in schema.sql — the two are kept in step
+    // deliberately, because a webhook that agrees with the database on
+    // revocation and disagrees on renewal is worse than one that is simply wrong.
+    //
+    // Billing is still recorded, so the portal and the receipts keep working:
+    // a license changes who owns the entitlement, not whether Dodo knows about
+    // the card. The tier may only move upward, and plan_expires_at is left
+    // untouched — a lifetime key that borrowed a subscription's period end would
+    // gain an expiry it was never issued with, and the next cancellation would
+    // then read as revoking something permanent.
+    if (profile.entitlement_source === 'license') {
+      if (payload.plan === 'proplus') profile.plan = 'proplus';
+      if (payload.customerId) profile.dodo_customer_id = payload.customerId;
+      if (payload.subscriptionId) profile.dodo_subscription_id = payload.subscriptionId;
+      stampBilling(profile, payload, true);
+      return { outcome: 'kept-license', plan: profile.plan, accountId: profile.id };
+    }
+
     // A grant with no readable plan is refused rather than defaulting to Pro:
     // an unmapped product id must fail loudly, not hand out the flagship tier.
     const plan = PAID_PLANS[payload.plan] ? payload.plan

@@ -203,6 +203,44 @@ console.log('\n== Apply: grants land on the signed-in account ==');
   assert(r.outcome === 'granted' && db.profiles.get(ACCOUNT).plan === 'pro', 'an existing paid profile keeps its own plan when the product is unmapped');
 }
 
+console.log('\n== Apply: a license outranks a subscription, on renewals too ==');
+{
+  // The failure this guards. A lifetime key activated on an account that also
+  // has a live subscription used to survive a cancellation but not a renewal:
+  // the paid branch relabelled the entitlement 'dodo' and stamped the
+  // subscription's period end onto it, so a permanent key quietly became an
+  // expiring subscription one.
+  const db = dbWith({ plan: 'proplus', entitlement_source: 'license' });
+  const r = applyEntitlement(db, mapDodoEvent(subEvent('subscription.renewed')));
+  const p = db.profiles.get(ACCOUNT);
+  assert(r.outcome === 'kept-license', 'a renewal on a licensed account is kept, not granted');
+  assert(p.plan === 'proplus', 'the license keeps its Pro+ tier');
+  assert(p.entitlement_source === 'license', 'the source stays license, so a later cancellation cannot revoke it');
+  assert(p.plan_expires_at == null, 'no subscription period end is stamped onto a lifetime key');
+}
+{
+  // Billing is still recorded: a license changes who owns the entitlement, not
+  // whether Dodo knows about the card.
+  const db = dbWith({ plan: 'proplus', entitlement_source: 'license' });
+  applyEntitlement(db, mapDodoEvent(subEvent('subscription.renewed', { customer: { customer_id: 'cus_9', email: 'x@y.test' } })));
+  const p = db.profiles.get(ACCOUNT);
+  assert(p.dodo_customer_id === 'cus_9', 'the customer id is still stored, so Manage billing keeps working');
+  assert(!!p.billing_status, 'and billing_status is still stamped');
+}
+{
+  // A better subscription still lifts a licence. Refusing that would make the
+  // licence punish the payer for buying more than they already had.
+  const db = dbWith({ plan: 'pro', entitlement_source: 'license' });
+  applyEntitlement(db, mapDodoEvent(subEvent('subscription.renewed', { metadata: { account_id: ACCOUNT, plan: 'proplus' } })));
+  assert(db.profiles.get(ACCOUNT).plan === 'proplus', 'a Pro+ subscription lifts a Pro license');
+}
+{
+  // The other direction never happens: a Pro subscription cannot pull Pro+ down.
+  const db = dbWith({ plan: 'proplus', entitlement_source: 'license' });
+  applyEntitlement(db, mapDodoEvent(subEvent('subscription.renewed', { metadata: { account_id: ACCOUNT, plan: 'pro' } })));
+  assert(db.profiles.get(ACCOUNT).plan === 'proplus', 'a Pro subscription never downgrades a Pro+ license');
+}
+
 console.log('\n== Apply: revokes, and the two it must never revoke ==');
 {
   const db = dbWith({ plan: 'pro', entitlement_source: 'dodo', dodo_subscription_id: 'sub_1', dodo_customer_id: 'cus_1' });
@@ -312,6 +350,26 @@ console.log('\n== The app is actually cut over ==');
   assert(!/apply_stripe_entitlement/.test(schema.replace(/drop function if exists[^;]*;/g, '')), 'no live Stripe RPC remains in the schema');
   assert(/drop function if exists public\.apply_stripe_entitlement/.test(schema), 'and the old one is explicitly dropped rather than left executable');
   assert(/apply_dodo_entitlement/.test(schema), 'the Dodo RPC is defined');
+
+  // The registry decision lives in two places on purpose: the SQL function that
+  // actually runs, and the JS mirror this file exercises. Keeping them in step
+  // by hand is the exact thing that let a lifetime licence lose to a renewal —
+  // the mirror was fixed and the database was not, or vice versa. So pin the
+  // SHAPE of the SQL rather than trusting the pair to agree; the outcome text
+  // alone would pass even if the branch sat in the wrong place.
+  const fnStart = schema.indexOf('create or replace function public.apply_dodo_entitlement');
+  assert(fnStart > -1, 'the SQL function body is found in schema.sql');
+  const fnBody = schema.slice(fnStart, schema.indexOf('end $$;', fnStart));
+
+  const paidStart = fnBody.indexOf('if p_paid then');
+  const licStart = fnBody.indexOf("if v_prof.entitlement_source = 'license' then", paidStart);
+  assert(paidStart > -1 && licStart > paidStart, 'the paid branch checks for a licence, and does it before resolving any plan');
+
+  const licEnd = fnBody.indexOf('end if;', licStart);
+  const licBranch = fnBody.slice(licStart, licEnd);
+  assert(/entitlement_source = 'license'/.test(licBranch), 'and it keeps the source as license, so a later cancellation cannot revoke it');
+  assert(licBranch.indexOf('plan_expires_at') === -1, 'and never writes plan_expires_at, so a lifetime key gains no expiry it was not issued with');
+  assert(fnBody.indexOf('plan_expires_at = coalesce(p_expires_at, plan_expires_at)') > licEnd, 'the subscription period end is only stamped on the non-licence path');
   assert(!PLANS.isDodoCheckoutUrl(PLANS.customerPortalUrl()), 'the portal link is not mistaken for a checkout link');
 }
 

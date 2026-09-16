@@ -933,6 +933,34 @@ begin
   end if;
 
   if p_paid then
+    -- A licence key outranks a subscription, on renewals as much as on
+    -- cancellations. This branch used to relabel the entitlement 'dodo' and
+    -- stamp the subscription's period end onto it, so a lifetime key activated
+    -- on an account with a live subscription quietly became an expiring one —
+    -- and the next cancellation then read as revoking something permanent.
+    -- Billing is still recorded so the portal and receipts keep working; the
+    -- tier may only move upward, so a Pro+ subscription still lifts a Pro key;
+    -- and plan_expires_at is deliberately not written here.
+    if v_prof.entitlement_source = 'license' then
+      v_plan := v_prof.plan;
+      if lower(trim(coalesce(p_plan, ''))) = 'proplus' then
+        v_plan := 'proplus';
+      end if;
+
+      update public.profiles set
+        plan = v_plan,
+        dodo_customer_id = coalesce(nullif(p_customer_id, ''), dodo_customer_id),
+        dodo_subscription_id = coalesce(nullif(p_subscription_id, ''), dodo_subscription_id),
+        entitlement_source = 'license',
+        billing_status = 'ok',
+        billing_status_at = now(),
+        last_dodo_event_type = coalesce(p_event_type, '')
+      where id = v_prof.id;
+
+      update public.dodo_events set outcome = 'kept-license' where id = v_event;
+      return jsonb_build_object('outcome', 'kept-license', 'plan', v_plan, 'accountId', v_prof.id);
+    end if;
+
     v_plan := lower(trim(coalesce(p_plan, '')));
     if v_plan not in ('pro', 'proplus') then
       v_plan := case when v_prof.plan in ('pro', 'proplus') then v_prof.plan else '' end;
