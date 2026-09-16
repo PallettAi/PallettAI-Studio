@@ -1627,6 +1627,49 @@ const App = (() => {
     }
   }
 
+  /*
+    A licence key is not a purchase, so it does not belong at the foot of a sales
+    pitch. The field has existed in the plan grid since the beginning, but only as
+    the last row of a scrollable modal — and once an account is on a paid plan the
+    Upgrade button that opens that modal is hidden, so the one person most likely
+    to hold a key is the one person with no visible way in. A paying customer has
+    every reason to have a key (an upgrade, a gift, a partner code) and none to
+    read three plan cards to find a text box, so this screen is its own door.
+
+    It calls the same activateLicense() the plan grid calls; nothing about
+    verification changes here.
+  */
+  function openRedeemKey() {
+    const signedIn = SUPABASE.isConfigured() && SUPABASE.signedIn();
+    const body = `
+      <p class="sub">Enter the key we issued you. It is verified on the registry and binds to this account, so Studio and the browser editor agree on what you are entitled to.</p>
+      <div class="lic-row">
+        <input id="licKey" placeholder="PAL-PROPLUS-XXXX-XXXX" spellcheck="false" autocomplete="off">
+        <button class="btn primary small" id="licActivate">Activate key</button>
+      </div>
+      <div class="lic-row">
+        <input id="refCodeInput" placeholder="REF-XXXXXX — got a referral code?" spellcheck="false" autocomplete="off">
+        <button class="btn ghost small" id="btnRedeemRef">Redeem Pro days</button>
+      </div>
+      <p class="lic-hint">${signedIn
+        ? '☁ Signed in — this key will bind to this account.'
+        : 'Sign in first: keys are verified on the registry, so there has to be an account to bind them to.'}</p>`;
+    openModal('Redeem a licence key', body);
+    const key = $('#licKey');
+    const act = $('#licActivate');
+    const ref = $('#refCodeInput');
+    const refBtn = $('#btnRedeemRef');
+    if (key && act) {
+      act.onclick = () => activateLicense(key.value);
+      key.onkeydown = (e) => { if (e.key === 'Enter') activateLicense(key.value); };
+      key.focus();
+    }
+    if (ref && refBtn) {
+      refBtn.onclick = () => applyReferralCode(ref.value);
+      ref.onkeydown = (e) => { if (e.key === 'Enter') applyReferralCode(ref.value); };
+    }
+  }
+
   // Redeem a referral code. Always verified against the cloud registry.
   // A signed code proves itself: PallettAI signed the reward with a private key
   // this build checks against a public one, on this machine, with no network.
@@ -7353,6 +7396,8 @@ const App = (() => {
           <span id="setCreditsTxt" class="set-desc"></span>
           <div class="credits-bar" title="AI Studio credits used"><span id="creditsBar" style="width:0%"></span></div>
         </div>
+        <div class="set-row"><div><label>Redeem a licence key</label><div class="set-desc">Got a PAL- key from us — a gift, an upgrade or a partner code? Enter it here.</div></div>
+          <button class="btn ghost small" id="btnRedeemKey">Enter key</button></div>
       </div>
 
       <div class="settings-card">
@@ -7555,6 +7600,7 @@ const App = (() => {
     set('#setCreditsTxt', (el) => { el.textContent = cred.limit === Infinity ? 'AI Studio: unlimited generations' : 'AI Studio: ' + cred.used + ' of ' + cred.limit + ' credits used'; });
     set('#creditsBar', (el) => { el.style.width = (cred.limit === Infinity ? 100 : Math.min(100, Math.round((cred.used / cred.limit) * 100))) + '%'; });
     set('#btnManagePlan', (el) => { el.onclick = openPricing; });
+    set('#btnRedeemKey', (el) => { el.onclick = openRedeemKey; });
     set('#btnBillingPortal', (el) => { el.onclick = openCustomerPortalFlow; });
     on('#setTheme', 'change', (e) => { settings.theme = e.target.value; saveSettings(); });
     on('#setSysAccent', 'change', (e) => { settings.useSystemAccent = e.target.checked; saveSettings(); });

@@ -329,6 +329,19 @@ console.log('\n== The app is actually cut over ==');
   assert(!/stripe_customer_id|stripe_subscription_id|last_stripe_event_type/.test(app), 'the app reads no Stripe columns');
   assert(/PLANS\.isDodoCheckoutUrl\(/.test(app), 'the URL from the registry is still allowlisted before it becomes a link');
   assert(/customerPortalUrl\(/.test(app), 'Manage billing opens the Dodo portal');
+
+  // The licence field existed ONLY as the last row of the pricing modal, and the
+  // Upgrade button that opens that modal is hidden once an account is on a paid
+  // plan — so the one person most likely to hold a key was the one person with no
+  // visible way in. Settings must keep its own door to it.
+  assert(/id="btnRedeemKey"/.test(app), 'Settings offers a “Redeem a licence key” entry point');
+  assert(/'#btnRedeemKey'[\s\S]{0,80}openRedeemKey/.test(app), 'and the button opens the redeem screen');
+  {
+    const redeem = (app.match(/function openRedeemKey\(\)[\s\S]*?\n  \}/) || [''])[0];
+    assert(redeem.length > 0, 'the redeem screen is defined');
+    assert(/id="licKey"/.test(redeem), 'it renders its own key field');
+    assert(/activateLicense\(key\.value\)/.test(redeem), 'and calls the same activateLicense the plan grid calls, so verification is unchanged');
+  }
   assert(!/openBillingPortal/.test(client), 'the old portal call is gone from the client');
   assert(/dodo-checkout/.test(client), 'the client calls the dodo-checkout function');
 
