@@ -109,6 +109,17 @@ const SMOKES = [
   ['scripts/ai-brief-smoke.js', 'AI brief smoke'],
   ['scripts/ai-niche-smoke.js', 'AI niche smoke'],
   ['scripts/ai-followup-smoke.js', 'AI follow-up smoke'],
+  // Scope and constraints: how much of the page a sentence covers, and what it
+  // says must stay. Both failures are silent — a dropped target and an ignored
+  // "but keep the words" each end with a confident report and the wrong site.
+  ['scripts/ai-scope-smoke.js', 'AI scope & constraints smoke'],
+  // Targeted revert: putting one named change back without taking the changes
+  // after it. Mostly a test of what must SURVIVE the revert.
+  ['scripts/revert-smoke.js', 'Copilot targeted-revert smoke'],
+  // The planner and the executor are separate files with no shared type, so an
+  // op added on one side and forgotten on the other is invisible until a client
+  // hits it.
+  ['scripts/copilot-ops-smoke.js', 'Copilot op wiring smoke'],
   ['scripts/copy-edit-smoke.js', 'Copy-edit intent smoke'],
   ['scripts/intent-polarity-smoke.js', 'Intent polarity smoke'],
   ['scripts/ai-translate-smoke.js', 'AI translate smoke'],

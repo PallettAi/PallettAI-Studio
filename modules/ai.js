@@ -1132,6 +1132,16 @@ const AI = (() => {
     try { if (typeof require === 'function') return require('../data/ai-followup.js'); } catch (e) { /* classic script */ }
     return null;
   }
+  function scopeLib() {
+    if (typeof AiScope !== 'undefined') return AiScope;
+    try { if (typeof require === 'function') return require('../data/ai-scope.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
+  function revertLib() {
+    if (typeof Revert !== 'undefined') return Revert;
+    try { if (typeof require === 'function') return require('../data/revert.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
   function fingerprintLib() {
     if (typeof AiFingerprint !== 'undefined') return AiFingerprint;
     try { if (typeof require === 'function') return require('../data/ai-fingerprint.js'); } catch (e) { /* classic script */ }
@@ -4586,6 +4596,29 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
   }
 
   /*
+    Which sections a copy rewrite can actually change.
+
+    Scope expansion turns "every section" into one act per section, and that is
+    an improvement only while every act lands. Not all of them do: the rewrite
+    writes `text`, and a map, an embed, a countdown, a weather block or a video
+    keeps its data in `extra` and never renders `text` — so those acts would take
+    a credit and change nothing a client can see, while the report says the
+    whole page was done. Paying for invisible work is worse than not offering
+    it, because it spends their credits and their trust at once.
+
+    The two lists are the kinds whose renderer reads `s.text`, plus the item
+    kinds the copy bank refreshes. They were read off the renderers rather than
+    guessed, and `scripts/ai-scope-smoke.js` pins them against a site built from
+    every section kind so a new kind cannot be added and silently scoped out.
+  */
+  const COPY_ITEM_TYPES = ['features', 'stats', 'pricing', 'testimonials', 'faq', 'blog', 'shop', 'gallery', 'logos'];
+  const COPY_PROSE_TYPES = ['hero', 'about', 'contact', 'cta', 'booking', 'collection'];
+  function carriesCopy(sec) {
+    const type = String((sec && sec.type) || '');
+    return COPY_ITEM_TYPES.indexOf(type) !== -1 || COPY_PROSE_TYPES.indexOf(type) !== -1;
+  }
+
+  /*
     A section pointed at by position, shaped like a named mention so the section
     commands can consume it without needing to know the difference. Null when the
     position is past the end of the page, which the callers treat as a refusal.
@@ -4622,6 +4655,68 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
     if (prev.reason === 'none') return 'Nothing to repeat yet — make a change first, then say “same for the FAQ”.';
     if (prev.reason === 'site-wide') return 'That last change applied to the whole site, so there is no one section to repeat it on.';
     return 'That last change is not one I can safely repeat on another section.';
+  }
+
+  /*
+    "Make every section punchier."
+
+    The follow-up branch runs before the section commands, because a mode word —
+    punchier, shorter, less salesy — normally needs a target from context. An
+    explicit scope is the exception: the client has just named the set, and
+    answering "Nothing to tweak yet — edit a section first" tells someone who
+    named eight sections that they named none. That is the same failure as
+    dropping the second half of a sentence, one step earlier in the chain.
+
+    Scope is expanded here, at plan time, into one rewrite per section. The
+    executor already runs a list of acts in order, so nothing downstream needs
+    to know a scope existed — and a sentence with one target still falls through
+    to the branch this one is called from, unchanged.
+  */
+  function scopedFollowUp(site, raw, mode, mentions) {
+    const lib = scopeLib();
+    if (!lib) return null;
+    const res = lib.resolve(site, raw, { mentions: mentions || [], lastOf: lastSecOfType, cap: 4, filter: carriesCopy });
+    if (!res || !res.targets || res.targets.length < 2) return null;
+    return {
+      acts: res.targets.map(function (tg) {
+        return { op: 'rewriteSection', type: tg.type, idx: tg.idx, mode: mode, prompt: raw, credit: true, label: 'Rewrote the ' + tg.type + ' section' };
+      }),
+      total: res.total,
+      capped: res.capped
+    };
+  }
+
+  /*
+    Constraints, in one place because two paths can now produce a wide plan.
+
+    This returns a refusal when every act conflicts with what the client asked to
+    keep: they have asked for two opposite things, and the honest answer is to
+    say so and change nothing rather than quietly pick one. When only some
+    conflict, `acts` is narrowed in place to the compatible half and the note
+    names what was left out — without that note they find it missing later and
+    assume the copilot ignored them.
+  */
+  function vetoByConstraints(acts, raw, notes) {
+    const lib = scopeLib();
+    const con = lib ? lib.constraints(raw) : null;
+    if (!con || !con.keeps.length || !acts.length) return null;
+    const kept = [];
+    const blocked = [];
+    acts.forEach(function (a) { (lib.blockedBy(a, con.keeps) ? blocked : kept).push(a); });
+    if (!blocked.length) return null;
+    const names = {
+      copy: 'the copy', colour: 'the colours', font: 'the fonts',
+      layout: 'the layout', images: 'the images', logo: 'the logo', motion: 'the animation'
+    };
+    const what = names[con.keeps[0]] || 'that part of the design';
+    const said = lib.quoted(con.clauses);
+    if (!kept.length) {
+      return { acts: [], reply: 'That asks for two opposite things: I would have to change ' + what + ' to do it, and you also asked me to ' + said + '. Tell me which one matters more and I will do that.' };
+    }
+    acts.length = 0;
+    kept.forEach(function (a) { acts.push(a); });
+    notes.push('I have left ' + blocked.length + ' of those out, because you asked me to ' + said + '.');
+    return null;
   }
 
   // color words -> palette id (palettes are the DB palette list incl. pack + custom)
@@ -4932,13 +5027,18 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
     '📰 Give it an editorial look'
   ];
 
-  const chatHelp = 'Ask me to review your site and I will read every page it renders, list what is wrong in order of what costs you most, and attach the fix to each one — “apply every fix you can” does all of those in a single undoable step. I can restyle the whole site (“make it glassmorphism” or “luxury gold”), retune design (“rounder corners”, “more spacing”), apply catalog layouts (“make the features bento”, “terminal hero”, “masonry testimonials”), tweak copy (“make the hero punchier”), change colors, fonts, buttons and nav, and add or remove sections — “add a pricing section”, “add a map of Paris”, “weather in London”, “add an online booking block”, “delete the FAQ”, “swap the order”… I can even change your site name, phone, email or CTA, or build a full brand kit with one command. You can point at a section by where it sits instead of what it is — “make the second section punchier”, “delete the last one” — and once you have changed something, “same for the FAQ” carries that instruction to a different section. Every change is undoable (' + KBD + 'Z), and AI copy rewrites use one credit.';
+  const chatHelp = 'Ask me to review your site and I will read every page it renders, list what is wrong in order of what costs you most, and attach the fix to each one — “apply every fix you can” does all of those in a single undoable step. I can restyle the whole site (“make it glassmorphism” or “luxury gold”), retune design (“rounder corners”, “more spacing”), apply catalog layouts (“make the features bento”, “terminal hero”, “masonry testimonials”), tweak copy (“make the hero punchier”), change colors, fonts, buttons and nav, and add or remove sections — “add a pricing section”, “add a map of Paris”, “weather in London”, “add an online booking block”, “delete the FAQ”, “swap the order”… I can even change your site name, phone, email or CTA, or build a full brand kit with one command. You can point at a section by where it sits instead of what it is — “make the second section punchier”, “delete the last one” — and once you have changed something, “same for the FAQ” carries that instruction to a different section. Say \u201cevery section\u201d or \u201cthe rest\u201d and one instruction covers all of them. Every change is undoable (' + KBD + 'Z) \u2014 and if you only want one of them back, name it: \u201cput the colours back\u201d, \u201cundo the font change\u201d, \u201cput the hero back\u201d. AI copy rewrites use one credit.';
 
   function chatPlanOne(site, msg, ctx) {
     const raw = String(msg || '').trim();
     if (!raw) return { acts: [], reply: 'Say what you\'d like to change — for example “make it glassmorphism” or “rounder corners”.' };
     const n = norm(raw);
     const acts = [];
+    /* Things the copilot owes the client that are not acts — a scoped sentence
+       it could only take so far, or a change it deliberately left out because
+       of a constraint they set. A skipped act that says nothing reads as a
+       silent failure, which is the one outcome worth avoiding here. */
+    const notes = [];
     const P = polarity(raw);
     const designOk = P.designOk;
     const isAsking = (/^(hi|hey|hello|yo)\b/.test(n.trim()) && raw.length < 30) ||
@@ -4958,6 +5058,18 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
         the same way a remembered one does; only a target-less "make it
         shorter" still needs context.
       */
+      /*
+        A scope outranks context, so it is tried first: "make every section
+        punchier" needs no earlier edit to make sense of, and reading it as a
+        context-dependent follow-up is what produced "nothing to tweak yet".
+      */
+      const scoped = scopedFollowUp(site, raw, followId, mentionedSections(raw));
+      if (scoped) {
+        if (scoped.capped) notes.push('That named ' + scoped.total + ' sections and each rewrite costs a credit, so I have done the first ' + scoped.acts.length + '. Say \u201cthe rest\u201d for the others.');
+        const refused = vetoByConstraints(scoped.acts, raw, notes);
+        if (refused) return refused;
+        return notes.length ? { acts: scoped.acts, notes: notes } : { acts: scoped.acts };
+      }
       const target = resolveTarget(site, raw, ctx);
       if (target.fail) return { acts: [], reply: followMiss(target, site) };
       return { acts: [{ op: 'rewriteSection', type: target.type, idx: target.idx, mode: followId, prompt: raw, credit: true, label: 'Rewrote the ' + target.type + ' section' }] };
@@ -5119,7 +5231,27 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
       acts.push({ op: 'pack', pack: id, label: 'Applied the ' + pk.name + ' look (' + pk.tagline + ')' });
       return { acts };
     }
-    if (/\b(undo|revert that|take that back)\b/.test(n)) {
+    /*
+      "Put the colours back."
+
+      ⌘Z walks the history one step at a time, and it is the only thing this app
+      offered — but the sentence a client types names the change, not its
+      position. Reading "put the colours back" as the generic undo is the worst
+      of the three possible answers: it changes something they did not name.
+
+      So a revert that names its target is planned as its own op, and the
+      generic undo below keeps the bare "undo that" it always had. Which steps
+      the target exists in is the executor's question, not the planner's — the
+      planner cannot see the history, and pretending it can would mean refusing
+      reverts that were perfectly available.
+    */
+    const revLib = revertLib();
+    const revIntent = revLib ? revLib.intent(raw, { types: mentionedSections(raw).map((mm) => mm.type) }) : null;
+    if (revIntent && revIntent.targeted) {
+      acts.push({ op: 'revert', what: revIntent.what, targetTypes: revIntent.types, prompt: raw, label: revIntent.label });
+      return { acts };
+    }
+    if (/\b(undo|revert that|take that back|roll back|go back)\b/.test(n)) {
       acts.push({ op: 'undo', label: 'Undid the last change' });
       return { acts };
     }
@@ -5319,8 +5451,35 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
     const sectionTarget = secMentions.length ? secMentions[0] : null;
     // "copy" is a rewrite verb only when it is not the thing being cloned
     const copyVerb = copyOfSection ? /\b(rewrite|text|write|say)\b/ : /\b(rewrite|copy|text|write|say)\b/;
+    /*
+      A sentence can name more than one place. "Make the pricing and faq
+      sections consistent" is one instruction with two targets, and the chain
+      below resolves a single one — so the faq was read and then dropped, and
+      the client, having asked, believed it was handled. Scope turns the
+      sentence into one act per target, which the executor already knows how to
+      run in order.
+
+      The cap is four because each of these rewrites costs a credit, and a
+      client who says "all the copy" and expects one credit must not quietly
+      spend eight. When the cap bites, the note says so rather than letting the
+      report imply the job was done.
+    */
+    const wideCopy = (function () {
+      const lib = scopeLib();
+      if (!lib || !(rewriteAll || (secMentions.length && (tone || copyVerb.test(n))))) return null;
+      const res = lib.resolve(site, raw, { mentions: secMentions, lastOf: lastSecOfType, allowList: true, cap: 4 });
+      return (res && res.targets && res.targets.length > 1) ? res : null;
+    })();
     if ((rewriteAll || (secMentions.length && (tone || copyVerb.test(n))))) {
-      if (sectionTarget && ['features', 'stats', 'pricing', 'testimonials', 'faq', 'blog', 'shop', 'gallery', 'logos'].includes(sectionTarget.type)) {
+      if (wideCopy) {
+        wideCopy.targets.forEach(function (tg) {
+          const listy = ['features', 'stats', 'pricing', 'testimonials', 'faq', 'blog', 'shop', 'gallery', 'logos'].indexOf(tg.type) !== -1;
+          acts.push(listy
+            ? { op: 'rewriteItems', type: tg.type, idx: tg.idx, credit: true, label: 'Refreshed the ' + tg.type + ' content with AI' }
+            : { op: 'rewrite', idx: tg.idx, prompt: raw, credit: true, label: 'Rewrote the ' + tg.type + ' section copy' });
+        });
+        if (wideCopy.capped) notes.push('That named ' + wideCopy.total + ' sections and each copy rewrite costs a credit, so I have done the first ' + wideCopy.targets.length + '. Say \u201cthe rest\u201d for the others.');
+      } else if (sectionTarget && ['features', 'stats', 'pricing', 'testimonials', 'faq', 'blog', 'shop', 'gallery', 'logos'].includes(sectionTarget.type)) {
         const idx = lastSecOfType(site, sectionTarget.type);
         if (idx === -1 && /\b(add|create|new)\b/.test(n)) acts.push({ op: 'addSection', type: sectionTarget.type, label: 'Added a ' + (DB.sectionTypes[sectionTarget.type] || {}).name + ' section' });
         else if (idx >= 0) acts.push({ op: 'rewriteItems', type: sectionTarget.type, idx, credit: true, label: 'Refreshed the ' + sectionTarget.type + ' content with AI' });
@@ -5365,7 +5524,21 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
         anyone made.
       */
       const posM = (!t && !bookingIntent) ? positionalMention(site, raw) : null;
-      if (/\b(remove|delete|drop|take out|get rid of)\b/.test(n) && (t || posM) && !acts.some((a) => a.op === 'removeSection')) {
+      /*
+        "Delete all the faq sections" means every faq, not the last one. Only
+        when no position was named, because "delete the second one" is a
+        position and positions are singular by their nature.
+      */
+      const remLib = scopeLib();
+      const remWide = (remLib && !posM && /\b(remove|delete|drop|take out|get rid of)\b/.test(n))
+        ? remLib.resolve(site, raw, { mentions: mentions, lastOf: lastSecOfType, cap: 8 })
+        : null;
+      if (remWide && remWide.targets && remWide.targets.length > 1) {
+        remWide.targets.forEach(function (tg) {
+          acts.push({ op: 'removeSection', type: tg.type, idx: tg.idx, label: 'Removed the ' + tg.type + ' section' });
+        });
+        if (remWide.capped) notes.push('That named ' + remWide.total + ' sections and I have removed the first ' + remWide.targets.length + '. Say \u201cthe rest\u201d for the others.');
+      } else if (/\b(remove|delete|drop|take out|get rid of)\b/.test(n) && (t || posM) && !acts.some((a) => a.op === 'removeSection')) {
         const target = t || posM;
         const act = { op: 'removeSection', type: target.type, label: 'Removed the ' + target.word + ' section' };
         // Carried as an exact index so the executor removes the section that was
@@ -5385,12 +5558,28 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
       acts.push({ op: 'moveSection', a: t, rel: /\b(above|before|up|top)\b/.test(n) ? 'top' : 'bottom', label: 'Moved the ' + t + ' section' });
     }
 
+    /*
+      Constraints last, because they are the one instruction that can veto
+      everything above them. "Make it more premium but keep the words" is an
+      instruction with a limit on it: the rewrite fires, the limit is dropped,
+      and their copy is rewritten after they asked for it to be left alone.
+
+      Two cases, and they are genuinely different. If every act conflicts, the
+      client has asked for two opposite things and the honest answer is to say
+      so and change nothing rather than quietly pick one. If only some
+      conflict, doing the compatible half is what they want — but the note has
+      to name what was left out, or they will find it missing later and assume
+      the copilot ignored them.
+    */
+    const refused = vetoByConstraints(acts, raw, notes);
+    if (refused) return refused;
+
     // ---- greeting-free fallback ----
     if (!acts.length && haveActs === 0) {
       // nothing understood — but offer the closest helpers
       acts.push({ op: 'help', label: '' });
     }
-    return { acts };
+    return notes.length ? { acts, notes } : { acts };
   }
 
   /* ---------------- Compound intent --------------

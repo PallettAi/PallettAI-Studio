@@ -646,15 +646,74 @@ const App = (() => {
   const undoStack = [];
   const redoStack = [];
   let histLast = 0;
-  function histCapture() {
+  // The unconditional half. Throttling exists to keep a slider drag from filling
+  // the stack with near-identical snapshots, but a targeted revert must always
+  // leave one behind or the revert itself would be the one change ⌘Z cannot
+  // reach — and being unable to undo an undo is worse than any duplicate.
+  function histCaptureNow() {
     const c = current();
-    if (!c) return;
-    const now = Date.now();
-    if (now - histLast < 1500) return;
-    histLast = now;
+    if (!c) return false;
     undoStack.push(JSON.stringify(c));
     if (undoStack.length > 60) undoStack.shift();
     redoStack.length = 0;
+    histLast = Date.now();
+    return true;
+  }
+  function histCapture() {
+    if (!current()) return;
+    if (Date.now() - histLast < 1500) return;
+    histCaptureNow();
+  }
+
+  /*
+    The history as whole projects, oldest first, with the live one last.
+    undoStack holds the state BEFORE each edit, so a transition between adjacent
+    entries is one undo point — which is exactly the granularity ⌘Z offers, and
+    therefore the granularity a targeted revert should land on.
+  */
+  function histStates(c) {
+    const out = [];
+    /*
+      Filtered by project id, because the stack is session-wide: open another
+      project and it still holds the previous one's snapshots. Comparing across
+      them would read a change that happened on a different site and put its
+      value back into this one — the palette of a project the client is not even
+      looking at. `histUndo` refuses the same way, for the same reason.
+    */
+    for (const snap of undoStack) {
+      let parsed = null;
+      try { parsed = JSON.parse(snap); } catch (e) { continue; }
+      if (!parsed) continue;
+      if (c && parsed.id !== c.id) continue;
+      out.push(parsed);
+    }
+    if (c) out.push(c);
+    return out;
+  }
+
+  /*
+    Put back the most recent change to one named path, and nothing else.
+
+    Deliberately not histUndo in a loop: undoing back through the history would
+    take the changes after it too, and those are the ones the client wants to
+    keep. Restoring the path is the whole feature — a later change to a
+    different path is never read, and a later change to the SAME path is picked
+    up for free because the search starts from the end.
+  */
+  function histRevert(act) {
+    const c = current();
+    if (!c) return { skipped: true, reason: 'no project is open' };
+    const Lib = (typeof Revert !== 'undefined') ? Revert : null;
+    if (!Lib) return { skipped: true, reason: 'the revert engine is not loaded' };
+    const res = Lib.plan(histStates(c), { what: act.what || '', types: act.targetTypes || [] });
+    if (!res.ok) return { skipped: true, reason: res.reason || 'there is nothing to put back' };
+    histCaptureNow();
+    const write = Lib.applyRestores(c, res.restores);
+    if (!write.applied) return { skipped: true, reason: 'that change is not one I can put back' };
+    saveProjects();
+    renderDesigner();
+    renderEditor();
+    return { full: true, said: res.said };
   }
   function histUndo() {
     const c = current();
@@ -8047,6 +8106,13 @@ const App = (() => {
       catch that" in place of the answer the copilot had actually written.
     */
     if (!acts.length && plan && plan.reply) return chatAdd('bot', esc(plan.reply));
+    /*
+      Say what the plan left out before it runs, not after. A scoped sentence
+      the copilot could only take part-way, or a change dropped because of a
+      constraint the client set, is still a deliberate omission — and an
+      omission nobody mentions reads as the copilot having ignored them.
+    */
+    if (plan && plan.notes && plan.notes.length) plan.notes.forEach((t) => chatAdd('bot warn', esc(t)));
     const ask = acts.find((a) => a.op === 'ask');
     if (ask) return chatAsk(ask.question, ask.options);
     if (acts.some((a) => a.op === 'review')) return chatShowReview();
@@ -8505,7 +8571,11 @@ const App = (() => {
           out.summary.push(act.label + ' — ' + meta.reason);
           continue;
         }
-        out.summary.push(act.label);
+        // `said` lets an act describe what it actually found once it ran — a
+        // revert knows which step it landed on only after reading the history,
+        // and "I put the colours back from two steps ago" is the difference
+        // between a client trusting it and wondering what else moved.
+        out.summary.push(meta.said || act.label);
         out.changed = true;
         if (meta.full || act.credit || act.op === 'suite' || act.op === 'unsuite' || act.op === 'logo') out.full = true;
       } catch (e) {
@@ -8613,6 +8683,7 @@ const App = (() => {
       // Catalogue ids are checked at the write: an id that does not exist would
       // render as an unstyled fallback and then be reported as a palette the
       // product could not score.
+      case 'revert': return histRevert(act);
       case 'palette': {
         const id = chatChoice('palette', act.palette);
         if (!id) return { skipped: true, reason: 'that is not a palette this build ships' };

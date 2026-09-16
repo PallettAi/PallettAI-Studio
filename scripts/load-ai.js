@@ -16,6 +16,8 @@ function loadAI() {
   sandbox.AiBrief = require(path.join(ROOT, 'data', 'ai-brief.js'));
   sandbox.AiNichesExtra = require(path.join(ROOT, 'data', 'ai-niches-extra.js'));
   sandbox.AiFollowup = require(path.join(ROOT, 'data', 'ai-followup.js'));
+  sandbox.AiScope = require(path.join(ROOT, 'data', 'ai-scope.js'));
+  sandbox.Revert = require(path.join(ROOT, 'data', 'revert.js'));
   sandbox.AiTranslate = require(path.join(ROOT, 'data', 'ai-translate.js'));
   sandbox.AiFingerprint = require(path.join(ROOT, 'data', 'ai-fingerprint.js'));
   sandbox.AiPhotos = require(path.join(ROOT, 'data', 'ai-photos.js'));
