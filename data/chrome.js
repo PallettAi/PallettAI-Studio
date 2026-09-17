@@ -46,6 +46,18 @@ const CHROME_VIEWS = [
     group: 'make',
     chip: ['#9fd4ff', '#34d399', '#7cc0f8', '#8fcaf9']
   },
+  // Site Care is about sites that are already DELIVERED, which is a different job
+  // from building one: nothing here is broken, it has just stopped being true.
+  // It earns a rail entry because the creator with ten client sites is the one
+  // who needs it, and they are the least likely to go looking inside a report.
+  {
+    id: 'care',
+    label: 'Site Care',
+    blurb: 'Check what has stopped being true across every site you have shipped.',
+    icon: 'pulse',
+    group: 'work',
+    chip: ['#7cc0f8', '#34d399', '#9fd4ff', '#08203c']
+  },
   {
     id: 'database',
     label: 'Database',

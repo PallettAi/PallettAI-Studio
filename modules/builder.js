@@ -152,6 +152,17 @@ body.photo-grade{
   //   https://api.web3forms.com/submit    → full URL is fine too (generic)
   //   REF-style bare access key           → Web3Forms (https://api.web3forms.com/submit)
   //   empty                               → demo mode (no real delivery)
+  // A JSON blob destined for an inline <script>. JSON.stringify does NOT escape
+  // "<", so any field containing "</script>" would close the element early and
+  // the remainder would be parsed as markup — which makes every free-text field on
+  // a project a way into its own page. The concierge knowledge pack is exactly
+  // that kind of field, so this matters more than it did before. "\u003c" is
+  // valid JSON, JSON.parse reads it as "<", and the HTML tokenizer cannot see a
+  // tag in it.
+  function cfgJson(cfg) {
+    return JSON.stringify(cfg).replace(/</g, '\\u003c');
+  }
+
   function deliveryFor(site) {
     const raw = String((site && site.formEndpoint) || '').trim();
     if (!raw) return { mode: 'demo', endpoint: '', key: '' };
@@ -582,7 +593,7 @@ body.photo-grade{
       { title: 'Sam Oduya', text: 'The results speak for themselves. Highly recommended.', extra: 'Director, Fieldwork' }
     ];
     const who = (it, j) => {
-      if (it && it.image) return `<img src="${esc(it.image)}" alt="">`;
+      if (it && it.image) return `<img src="${esc(it.image)}" alt="" style="aspect-ratio:1/1">`;
       if (isAiDraft(p)) {
         const t = String((it && it.title) || '?').trim();
         const parts = t.split(/\s+/);
@@ -1029,7 +1040,7 @@ body.photo-grade{
       const img = (it.image || '').trim() || picsum(seedBase + '-' + (title || 'item') + '-' + j, 800, 600);
       return `
       <article class="coll-item" data-cat="${esc(cat || 'all')}" data-name="${esc(title.toLowerCase())}" data-search="${esc((title + ' ' + (it.text || '') + ' ' + (it.tag || '') + ' ' + cat).toLowerCase())}">
-        <div class="coll-media">${gradeWrap(p, `<img src="${esc(img)}" alt="${esc(title || 'Collection item')}">`)}<span class="coll-cat">${esc(cat || '•')}</span>${it.tag ? `<span class="coll-tag">${esc(it.tag)}</span>` : ''}</div>
+        <div class="coll-media">${gradeWrap(p, `<img src="${esc(img)}" alt="${esc(title || 'Collection item')}" style="aspect-ratio:4/3">`)}<span class="coll-cat">${esc(cat || '•')}</span>${it.tag ? `<span class="coll-tag">${esc(it.tag)}</span>` : ''}</div>
         <div class="coll-body"><h3>${esc(title || 'Untitled')}</h3><p>${esc(it.text || '')}</p></div>
       </article>`;
     };
@@ -1116,7 +1127,7 @@ body.photo-grade{
     const cta = s.navCta ? `<a class="btn solid small nav-cta" href="${esc(safeHref(s.ctaLink, contactRef(p)))}">${esc(s.navCta)}</a>` : '';
     const cls = (s.navSticky === false ? ' static' : '') + (s.navStyle === 'transparent' ? ' transparent' : '');
     const mark = s.logo
-      ? `<span class="brand-mark"><img src="${esc(s.logo)}" alt=""></span>`
+      ? `<span class="brand-mark"><img src="${esc(s.logo)}" alt="" style="aspect-ratio:1/1"></span>`
       : `<span class="brand-mark">◆</span>`;
     return `
     <nav class="nav${cls}">
@@ -1199,7 +1210,7 @@ body.photo-grade{
     const socials = (Array.isArray(p.site.socials) && p.site.socials.length
       ? p.site.socials.map((so) => `<a class="social" href="${esc(safeHref(so.url, '#'))}" target="_blank" rel="noopener" aria-label="Social">${esc(so.icon || '•')}</a>`).join('')
       : ['𝕏', 'in', 'ig', '▶'].map((s2) => `<a class="social" href="#" aria-label="Social">${s2}</a>`).join(''));
-    const mark = p.site.logo ? `<img src="${esc(p.site.logo)}" alt="">` : '◆ ';
+    const mark = p.site.logo ? `<img src="${esc(p.site.logo)}" alt="" style="aspect-ratio:1/1">` : '◆ ';
     return `
     <footer class="footer">
       <div class="container foot-grid">
@@ -1458,7 +1469,7 @@ body.theme-dark .hero-tag{color:#e8eaf2}
 .coll-marquee .coll-item{width:300px}
 @keyframes coll-scroll{to{transform:translateX(-50%)}}
 /* nav */
-.nav{position:fixed;top:0;left:0;right:0;z-index:50;background:color-mix(in srgb,var(--bg) 72%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid color-mix(in srgb,var(--text) 8%,transparent)}
+.nav{position:fixed;top:var(--pai-sched-h,0);left:0;right:0;z-index:50;background:color-mix(in srgb,var(--bg) 72%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid color-mix(in srgb,var(--text) 8%,transparent)}
 .nav-inner{display:flex;align-items:center;gap:24px;height:68px}
 .brand{font-weight:800;font-size:1.15rem;letter-spacing:-.01em;display:inline-flex;align-items:center;gap:8px}
 .brand-mark{color:var(--primary-text);display:inline-flex}
@@ -1807,7 +1818,7 @@ ${settings.proExport === true ? '' : `
 .toast.ok{border-color:var(--accent)}
 .backtop{position:fixed;right:22px;bottom:22px;width:44px;height:44px;border-radius:12px;background:var(--grad);color:#fff;border:none;cursor:pointer;opacity:0;pointer-events:none;transition:.3s;font-size:1.1rem;z-index:80}
 .backtop.show{opacity:1;pointer-events:auto}
-.progress{position:fixed;top:0;left:0;height:3px;background:var(--grad);z-index:60;width:0}
+.progress{position:fixed;top:var(--pai-sched-h,0);left:0;height:3px;background:var(--grad);z-index:60;width:0}
 /* --- layout catalog v2 variants --- */
 /* hero: aurora — the Signature artwork supplies the backdrop, so this variant
    is now purely a taller, roomier hero rather than its own colour treatment. */
@@ -1911,7 +1922,7 @@ ${settings.proExport === true ? '' : `
 .fx-rate small{color:var(--muted)}
 /* responsive */
 @media(max-width:860px){
-  .nav-links{position:fixed;top:68px;left:0;right:0;background:var(--bg);flex-direction:column;padding:20px 24px;gap:16px;display:none;border-bottom:1px solid color-mix(in srgb,var(--text) 8%,transparent)}
+  .nav-links{position:fixed;top:calc(var(--pai-sched-h,0px) + 68px);left:0;right:0;background:var(--bg);flex-direction:column;padding:20px 24px;gap:16px;display:none;border-bottom:1px solid color-mix(in srgb,var(--text) 8%,transparent)}
   .nav-links.open{display:flex}
   .burger{display:flex}
   .section{padding:70px 0}
@@ -2191,6 +2202,19 @@ ${motionCSS(p)}
       panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
       const first = panel.querySelector('input[name="name"]');
       if (first) first.focus();
+    }));
+
+    // Concierge — a question the widget could not answer becomes a real enquiry,
+    // through the same delivery path as the contact form rather than a second
+    // implementation of it. The question is carried in a hidden field, so whoever
+    // reads the inbox sees what the visitor actually asked.
+    $$('.cn-form').forEach((f) => f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!f.checkValidity()) { f.reportValidity(); return; }
+      if (FD.mode === 'demo') { f.reset(); toast('Thanks — we\'ll come back to you by email. ✨', true); return; }
+      const r = await deliver(f);
+      if (r.ok) { f.reset(); toast('Sent — we\'ll reply by email. ✨', true); }
+      else toast(r.err || 'Could not send right now.', false);
     }));
 
     // Reviews Suite & Events RSVP — same delivery pipeline as contact/newsletter
@@ -2544,12 +2568,18 @@ ${motionCSS(p)}
     // one, a shared link unfurls as a bare title and looks unfinished. The
     // card only exists once the export ships (see OgCard), and a crawler needs
     // an absolute URL, so this needs the site URL to be set.
+    //
+    // The reference is the PNG, because X, WhatsApp and LinkedIn ignore an SVG
+    // share image. The matching .svg is written alongside it as the source of
+    // the artwork. The export owns the promise that the PNG exists: if it
+    // cannot rasterise, it rewrites this reference back to the .svg in every
+    // page it writes, so the head never points at a file that is not there.
     const ogSlug = (() => {
       const og = optionalModule('OgCard');
       const raw = (page && (page.slug || page.name)) || 'index';
       return og && og.slugify ? og.slugify(raw) : String(raw).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
     })();
-    const cardUrl = (liveUrl && settings.exportMeta !== false) ? liveUrl + '/og/' + (ogSlug || 'index') + '.svg' : '';
+    const cardUrl = (liveUrl && settings.exportMeta !== false) ? liveUrl + '/og/' + (ogSlug || 'index') + '.png' : '';
     const shareImage = String(p.site.ogImage || '').trim() || cardUrl;
     const ogImg = shareImage
       ? `<meta property="og:image" content="${esc(shareImage)}">\n    <meta name="twitter:card" content="summary_large_image">\n    <meta name="twitter:image" content="${esc(shareImage)}">`
@@ -2599,6 +2629,11 @@ ${motionCSS(p)}
       darkSite: pal2.dark === true,
       cookieBanner: settings.cookieBanner === true,
       forms: deliveryFor(p.site),
+      // The concierge pack is the whole knowledge base, resolved at build time:
+      // structured fields become entries, and anything unusable is dropped here
+      // rather than shipped for the page to sort out. null when it is off, which
+      // is also what tells the emitted script to do nothing at all.
+      concierge: (typeof Concierge !== 'undefined' && Concierge.packFor) ? Concierge.packFor(p.site) : null,
       chat: p.site.chatWidget || null,
       widgetRefresh: settings.widgetRefreshSec || 0 // seconds between live-widget refetches (0 = never)
     };
@@ -2639,6 +2674,25 @@ ${motionCSS(p)}
     Referrer-Policy: strict-origin-when-cross-origin
     -->`;
 
+    // Self-scheduling content. The strip is rendered here, but whether an entry
+    // shows is decided in the visitor's browser — the file was built once and may
+    // be opened next year. Entries already expired at build time are dropped, and
+    // the gate script runs immediately after the markup so the bar is either
+    // there for the first paint or never appears at all (see data/schedule.js for
+    // why a no-JS visitor sees nothing rather than a stale offer).
+    const scheduleStrip = (typeof Schedule !== 'undefined' && Schedule.stripHtml)
+      ? Schedule.stripHtml(p.site) : '';
+    const scheduleGate = scheduleStrip
+      ? '<script>' + Schedule.gateScript() + '<\/script>'
+      : '';
+    const scheduleCss = scheduleStrip ? `<style>${Schedule.css()}</style>` : '';
+    const conciergeHtml = cfg.concierge && typeof Concierge !== 'undefined'
+      ? Concierge.launcherHtml(cfg.concierge) : '';
+    // The badge sits in the same corner as the widget, so the widget is lifted
+    // clear of it exactly when the badge is actually being emitted.
+    const conciergeCss = conciergeHtml ? `<style>${Concierge.css(settings.proExport !== true)}</style>` : '';
+    const conciergeScript = conciergeHtml ? `<script>${Concierge.scriptText()}<\/script>` : '';
+
     const lang = String((p.site && p.site.lang) || 'en').toLowerCase().replace(/[^a-z-]/g, '') || 'en';
     // Build stamp: a hash of the project's reviewable content. Every exported
     // page carries it, so a client comment can be tied to the exact revision it
@@ -2663,16 +2717,22 @@ ${analytics}
 <style>${siteCSS(p, settings)}</style>
 ${styleCss}
 ${customCss}
+${scheduleCss}
+${conciergeCss}
 ${cspStarter}
 </head>
 <body id="top"${bodyClass ? ' class="' + bodyClass + '"' : ''}>
+${scheduleStrip}
+${scheduleGate}
 ${buildNav(p)}
 <main>
 ${body}
 </main>
 ${buildFooter(p, settings)}
-<script>window.__CFG__=${JSON.stringify(cfg)};(${siteScript.toString()})();</script>
+${conciergeHtml}
+<script>window.__CFG__=${cfgJson(cfg)};(${siteScript.toString()})();</script>
 <script>(${siteIntegrations.toString()})();</script>
+${conciergeScript}
 ${customJs}
 </body>
 </html>`;

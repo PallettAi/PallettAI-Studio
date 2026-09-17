@@ -36,7 +36,11 @@ function main() {
 
   function saveState() {
     if (!win || win.isDestroyed()) return;
-    const s = { isMaximized: win.isMaximized() };
+    // Start from what is already on disk. This file also carries 'theme' (see
+    // registerThemeIpc), and rebuilding the object from scratch here would drop
+    // it the first time the user moved the window.
+    const s = loadState();
+    s.isMaximized = win.isMaximized();
     if (!win.isMaximized() && !win.isFullScreen()) {
       s.bounds = win.getBounds();
     } else {
@@ -62,7 +66,9 @@ function main() {
       minWidth: 1100,
       minHeight: 700,
       title: 'PallettAI Studio',
-      backgroundColor: '#0f1020',
+      // Matches the studio's own --bg, and follows the saved theme so a light-mode
+      // user never sees a flash of navy on launch. See shellUsesLight().
+      backgroundColor: shellUsesLight() ? '#f2f7fc' : '#04122b',
       show: false,
       // macOS: hiddenInset titlebar lets the studio topbar flow under the
       // traffic lights for a native feel. Windows/Linux keep the standard bar.
@@ -318,6 +324,24 @@ function main() {
     } catch (_) { /* accent colour is a nicety, never a crash */ }
     return '';
   }
+  // The renderer owns the theme setting; main owns the splash that runs before
+  // it, so the two can only agree by the renderer telling main what it chose.
+  // Validated like every other channel — same-sender check, plus the narrow set
+  // of values the settings select can actually produce.
+  function registerThemeIpc() {
+    ipcMain.on('theme-changed', (event, theme) => {
+      if (!win || event.sender !== win.webContents) return;
+      const next = String(theme || '');
+      if (next !== 'dark' && next !== 'light' && next !== 'system') return;
+      try {
+        const s = loadState();
+        if (s.theme === next) return;   // already stored: no write, no churn
+        s.theme = next;
+        fs.writeFileSync(stateFile(), JSON.stringify(s));
+      } catch (_) { /* a splash in the wrong palette is not worth a crash */ }
+    });
+  }
+
   function registerAccentIpc() {
     ipcMain.handle('get-accent', (event) => {
       if (!win || event.sender !== win.webContents) return '';
@@ -365,9 +389,25 @@ function main() {
   const STARTUP_CHECK_TIMEOUT_MS = 20000;
   const STARTUP_DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 
+  // Which palette native chrome should wear — the splash screen and the window
+  // background the user sees before the renderer paints. The studio's theme is a
+  // RENDERER setting (localStorage), which main cannot read, and both of those
+  // exist before (or instead of) a renderer, so there is nobody to ask. The
+  // renderer therefore mirrors the choice into window-state.json (see
+  // registerThemeIpc) and main reads it back on the NEXT launch. Until a user
+  // ever changes it the value is absent, and 'system' — the default — is
+  // resolved here.
+  function shellUsesLight() {
+    const saved = loadState().theme;
+    if (saved === 'light') return true;
+    if (saved === 'dark') return false;
+    try { return !nativeTheme.shouldUseDarkColors; } catch (_) { return false; }
+  }
+
   function createStartupWindow() {
     if (startupWindow && !startupWindow.isDestroyed()) return;
     startupWindowReady = false;
+    const lightSplash = shellUsesLight();
     startupWindow = new BrowserWindow({
       width: 460,
       height: 300,
@@ -376,7 +416,7 @@ function main() {
       movable: true,
       center: true,
       title: 'PallettAI Studio',
-      backgroundColor: '#0f1020',
+      backgroundColor: lightSplash ? '#f2f7fc' : '#04122b',
       frame: false,
       alwaysOnTop: true,
       closable: false,
@@ -395,9 +435,17 @@ function main() {
       startupWindowReady = true;
       setStartupStatus(startupStatus.message, startupStatus.detail, startupStatus.progress);
     });
-    const splash = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="color-scheme" content="dark"><style>
-      :root{color-scheme:dark}*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}body{display:grid;place-items:center;background:radial-gradient(circle at 20% 0%,rgba(139,92,246,.24),transparent 48%),#0f1020;color:#f5f2ff;font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.card{text-align:center;width:100%;padding:34px 38px}.mark{width:48px;height:48px;margin:0 auto 18px;border:1px solid rgba(194,150,255,.5);border-radius:16px;display:grid;place-items:center;color:#d8b9ff;font-size:22px;box-shadow:0 0 34px rgba(139,92,246,.28)}h1{font-size:19px;letter-spacing:-.03em;margin:0 0 10px}#status{font-weight:600;color:#f5f2ff}#detail{min-height:38px;margin:8px auto 18px;max-width:330px;color:#a7a1b7;font-size:12px;line-height:1.5}.track{height:4px;border-radius:99px;background:rgba(255,255,255,.1);overflow:hidden}.fill{height:100%;width:34%;border-radius:inherit;background:linear-gradient(90deg,#9b6cff,#e1c5ff);animation:pulse 1.5s ease-in-out infinite}.track.has-progress .fill{animation:none}@keyframes pulse{0%,100%{opacity:.45;transform:translateX(-55%)}50%{opacity:1;transform:translateX(190%)}}
-    </style></head><body><main class="card" aria-live="polite"><div class="mark">◆</div><h1>PallettAI Studio</h1><div id="status">Preparing Studio…</div><div id="detail">Getting everything ready.</div><div class="track" id="track"><div class="fill" id="fill"></div></div></main><script>window.__setStatus=function(message,detail,progress){document.getElementById('status').textContent=message||'';document.getElementById('detail').textContent=detail||'';var track=document.getElementById('track');var fill=document.getElementById('fill');if(typeof progress==='number'){track.classList.add('has-progress');fill.style.width=Math.max(0,Math.min(100,progress))+'%';fill.style.transform='none';}else{track.classList.remove('has-progress');fill.style.width='34%';fill.style.transform='';}};</script></body></html>`;
+    // The startup gate is the first thing a user sees, so it wears the same
+    // navy and ice blue as the studio. The colours are COPIED from styles.css
+    // (:root and body.light) rather than imported — this document is a data:
+    // URL that loads before the renderer exists, so it cannot read the app's
+    // stylesheet, and it has to paint instantly without waiting on a webfont,
+    // hence the system font stack but the app's own palette. If the palette
+    // moves in styles.css, move it here too; brand-splash-smoke pins the two
+    // halves against each other so a drift fails the gate instead of shipping.
+    const splash = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="color-scheme" content="${lightSplash ? 'light' : 'dark'}"><style>
+      :root{color-scheme:dark;--bg:#04122b;--text:#eaf5ff;--muted:#9fb8d6;--line:rgba(159,212,255,.16);--blue:#7cc0f8;--blue2:#a9d8ff;--glow:rgba(124,192,248,.3);--wash:rgba(124,192,248,.13)}body.light{color-scheme:light;--bg:#f2f7fc;--text:#08172c;--muted:#5b7089;--line:rgba(10,40,80,.14);--blue:#2f7fd0;--blue2:#4f9be0;--glow:rgba(47,127,208,.2);--wash:rgba(47,127,208,.07)}*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}body{position:relative;display:grid;place-items:center;background:var(--bg);color:var(--text);font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}.aura{position:fixed;inset:-45%;pointer-events:none;background:radial-gradient(38% 32% at 24% 6%,var(--glow),transparent 62%),radial-gradient(32% 26% at 80% 94%,var(--glow),transparent 58%);animation:aura 20s cubic-bezier(.22,.8,.24,1) infinite alternate}@keyframes aura{from{transform:translate3d(-2.5%,-1.5%,0) scale(1)}to{transform:translate3d(3%,2%,0) scale(1.08)}}.card{position:relative;text-align:center;width:100%;padding:30px 40px}.tile{width:56px;height:56px;margin:0 auto 15px;border:1px solid var(--line);border-radius:17px;display:grid;place-items:center;background:linear-gradient(160deg,var(--wash),transparent 70%);box-shadow:0 0 38px var(--glow),inset 0 1px 0 rgba(234,245,255,.09)}.tile svg{width:29px;height:29px;display:block}.tile stop{stop-color:#eaf5ff}.tile stop:nth-child(2){stop-color:#a9d8ff}.tile stop:nth-child(3){stop-color:#7cc0f8}body.light .tile{box-shadow:0 10px 30px rgba(20,50,90,.1),inset 0 1px 0 #fff}body.light .tile stop{stop-color:#1d5fa8}body.light .tile stop:nth-child(2){stop-color:#2f7fd0}body.light .tile stop:nth-child(3){stop-color:#4f9be0}h1{display:flex;align-items:baseline;justify-content:center;font-size:19px;font-weight:800;letter-spacing:-.045em;margin:0}.bw-pallett{background:linear-gradient(150deg,#ffffff 20%,#c9e7ff 60%,#7cc0f8 100%);-webkit-background-clip:text;background-clip:text;color:transparent}.bw-ai{background:linear-gradient(92deg,#a9d8ff 0%,#dceeff 55%,#ffffff 100%);-webkit-background-clip:text;background-clip:text;color:transparent}body.light .bw-pallett{background:none;color:var(--text)}body.light .bw-ai{background:linear-gradient(92deg,#1d5fa8 0%,#2f7fd0 55%,#4f9be0 100%);-webkit-background-clip:text;background-clip:text;color:transparent}.brand-sub{font-size:.57rem;letter-spacing:.34em;text-transform:uppercase;font-weight:700;color:var(--muted);margin:5px 0 17px}#status{font-weight:600;font-size:13px}#detail{min-height:34px;margin:6px auto 16px;max-width:330px;color:var(--muted);font-size:12px;line-height:1.5}.track{height:3px;border-radius:99px;background:var(--line);overflow:hidden}.fill{height:100%;width:34%;border-radius:inherit;background:linear-gradient(90deg,var(--blue),var(--blue2));animation:pulse 1.5s ease-in-out infinite}.track.has-progress .fill{animation:none}@keyframes pulse{0%,100%{opacity:.45;transform:translateX(-55%)}50%{opacity:1;transform:translateX(190%)}}@media (prefers-reduced-motion:reduce){.aura{animation:none}.fill{animation:none}}
+    </style></head><body class="${lightSplash ? 'light' : ''}"><div class="aura" aria-hidden="true"></div><main class="card" aria-live="polite"><div class="tile" aria-hidden="true"><svg viewBox="0 0 48 48" fill="none"><defs><linearGradient id="splashMark" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eaf5ff"/><stop offset=".45" stop-color="#a9d8ff"/><stop offset="1" stop-color="#7cc0f8"/></linearGradient></defs><g stroke="url(#splashMark)" stroke-width="6" stroke-linecap="round"><path d="M14 39V10"/><path d="M14 10h6.2a7.3 7.3 0 0 1 0 14.6H14"/><path d="M27.5 39.8 38 9"/></g></svg></div><h1><span class="bw-pallett">Pallett</span><span class="bw-ai">Ai</span></h1><div class="brand-sub">Studio</div><div id="status">Preparing Studio…</div><div id="detail">Getting everything ready.</div><div class="track" id="track"><div class="fill" id="fill"></div></div></main><script>window.__setStatus=function(message,detail,progress){document.getElementById('status').textContent=message||'';document.getElementById('detail').textContent=detail||'';var track=document.getElementById('track');var fill=document.getElementById('fill');if(typeof progress==='number'){track.classList.add('has-progress');fill.style.width=Math.max(0,Math.min(100,progress))+'%';fill.style.transform='none';}else{track.classList.remove('has-progress');fill.style.width='34%';fill.style.transform='';}};</script></body></html>`;
     startupWindow.loadURL('data:text/html;charset=UTF-8,' + encodeURIComponent(splash));
   }
 
@@ -696,6 +744,7 @@ function main() {
     buildMenu();
     registerSecretIpc();
     registerAccentIpc();
+    registerThemeIpc();
     app.on('activate', () => {
       if (startupUpdateRunning) {
         if (startupWindow && !startupWindow.isDestroyed()) startupWindow.focus();

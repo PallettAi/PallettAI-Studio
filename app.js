@@ -170,6 +170,10 @@ const App = (() => {
     const systemLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
     const light = settings.theme === 'light' || (settings.theme === 'system' && systemLight);
     document.body.classList.toggle('light', light);
+    // Mirror the choice to the desktop shell, which owns the startup splash and
+    // can only show the right palette on the NEXT launch if it is told now. No-op
+    // in browser mode, where the preload bridge is absent.
+    try { if (window.pallettai && window.pallettai.setTheme) window.pallettai.setTheme(settings.theme || 'system'); } catch (e) {}
     // bespoke session: accent colour, UI density, reduced motion.
     // "Use system accent" wins over the picked colour when available.
     let accent = settings.accent || DB.defaultSettings.accent;
@@ -1919,7 +1923,7 @@ const App = (() => {
     $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
     $$('.view').forEach((v) => v.classList.remove('active'));
     $('#view-' + name).classList.add('active');
-    const titles = { dashboard: 'Dashboard', templates: 'Templates', designer: 'Designer', ai: 'AI Studio', suites: 'Upgrade Suites', database: 'Database', settings: 'Settings', qr: 'QR Codes' };
+    const titles = { dashboard: 'Dashboard', templates: 'Templates', designer: 'Designer', ai: 'AI Studio', suites: 'Upgrade Suites', database: 'Database', settings: 'Settings', qr: 'QR Codes', care: 'Site Care' };
     $('#viewTitle').textContent = chromeTitle(name) || titles[name] || name;
     if (name === 'dashboard') renderDashboard();
     if (name === 'templates') renderTemplates();
@@ -1929,6 +1933,7 @@ const App = (() => {
     if (name === 'database') renderDatabase();
     if (name === 'settings') renderSettings();
     if (name === 'qr') renderQr();
+    if (name === 'care') renderCare();
     $('#projectChip').hidden = !(name === 'designer' || name === 'suites' || name === 'database') || !current();
     if (current() && ['designer', 'suites', 'database'].includes(name)) {
       $('#projectChip').textContent = current().name;
@@ -2898,6 +2903,10 @@ const App = (() => {
     const pal = DB.getPalette(c.site.palette);
     const s = c.site;
     const customF = c.site.customFonts || [];
+    // The concierge pack and the scheduled messages are edited as text in this
+    // panel and assembled by their own modules at export time, so the Designer
+    // never has to know how a question is matched or how a window is timed.
+    const cn = (s.concierge && typeof s.concierge === 'object') ? s.concierge : {};
     const pgList = Builder.pages(c);
     const multiPg = pgList.length > 1;
     const pgNow = pgList.find((pg) => pg.id === c.site.activePageId) || pgList[0] || { name: 'Home' };
@@ -3008,6 +3017,25 @@ const App = (() => {
         <div class="field"><label>Form delivery endpoint (optional)</label>
           <input id="dFormEp" placeholder="your@email.com  ·  https://formspree.io/f/…  ·  a Web3Forms access key" value="${esc(s.formEndpoint || '')}" spellcheck="false">
           <div class="set-desc">Contact & newsletter forms on the exported site POST directly to this third-party service — nothing touches PallettAI servers. Empty = demo forms that only fake success. Use <b>your@email.com</b> for FormSubmit (zero setup, free, no monthly cap — first submission activates the address by email), a Formspree URL, or a Web3Forms access key.</div></div>
+
+        <h3 class="view-h">Concierge — answers on the site itself</h3>
+        <div class="set-row"><div><label>Concierge widget</label><div class="set-desc">A small “Ask us” panel that answers visitor questions from the knowledge below. It runs inside the page — no server, no API key, and nothing is sent anywhere until the visitor presses send. Anything it cannot answer becomes an enquiry through your form endpoint above.</div></div><label class="switch"><input type="checkbox" id="dCnOn" ${cn.on ? 'checked' : ''}><span class="slider"></span></label></div>
+        <div class="field"><label>First line the visitor sees</label><input id="dCnGreeting" value="${esc(cn.greeting || '')}" placeholder="${esc('Ask us anything \u2014 we usually reply the same day.')}"></div>
+        <div class="field"><label>Opening hours</label><input id="dCnHours" value="${esc(cn.hours || '')}" placeholder="Mon–Fri 9–5, Sat 9–1"></div>
+        <div class="field"><label>Prices</label><input id="dCnPrices" value="${esc(cn.prices || '')}" placeholder="Fades from £18, beard trims £9"></div>
+        <div class="field"><label>Services</label><input id="dCnServices" value="${esc(cn.services || '')}" placeholder="Cuts, fades, beard trims, kids' cuts"></div>
+        <div class="field"><label>Area covered</label><input id="dCnArea" value="${esc(cn.area || '')}" placeholder="Bristol and Bath, 10 miles"></div>
+        <div class="field"><label>Booking link</label><input id="dCnBooking" value="${esc(cn.booking || '')}" placeholder="https://calendly.com/yourname" spellcheck="false"></div>
+        <div class="field"><label>Your own questions — one per line: question :: answer</label>
+          <textarea id="dCnEntries" rows="5" style="font-size:.75rem;font-family:monospace" placeholder="Do you have parking? :: Free parking behind the shop.&#10;Do you take walk-ins? :: Yes, before 11am.">${esc((cn.entries || []).map((e) => (e.q || '') + ' :: ' + (e.a || '')).join('\n'))}</textarea>
+          <div class="set-desc">Answering is done offline in the visitor's browser. It refuses to guess: a question it cannot place is offered to you as an enquiry instead. Naming the subject of an answer in the answer itself (a service, a brand, a product) is the easiest way to make it findable.</div></div>
+        <div class="field"><label>Reply when it does not know</label><input id="dCnUnknown" value="${esc(cn.unknown || '')}" placeholder="${esc('I don\u2019t want to guess — send it over and a human will answer.')}"></div>
+
+        <h3 class="view-h">Scheduled messages — content that expires itself</h3>
+        <div class="field"><label>One per line: message | from | to | link</label>
+          <textarea id="dSchItems" rows="4" style="font-size:.75rem;font-family:monospace" placeholder="Offer ends 20 Dec | 2026-12-01 | 2026-12-20 | https://example.com/offer&#10;Christmas hours from 18 Dec | 2026-12-18 | 2027-01-02">${esc((c.site.schedules || []).map(schLine).join('\n'))}</textarea>
+          <div class="set-desc">A dated strip above the navigation that switches itself on and off in the visitor's browser. <b>from</b> and <b>to</b> are YYYY-MM-DD and both ends are included; leave either blank for “has always applied” or “never lapses”. A message already finished when you export is left out of the file entirely, so last year's offer cannot come back.</div>
+          <div class="sch-status" id="dSchStatus">${schStatusHtml(c)}</div></div>
       </div>
     </div>
 
@@ -3113,6 +3141,58 @@ const App = (() => {
     };
     bindT('dNavCta', 'navCta'); bindT('dFavicon', 'favicon'); bindT('dMeta', 'metaDescription'); bindT('dOg', 'ogImage'); bindT('dFormEp', 'formEndpoint');
     bindT('dUrl', 'url'); bindT('dArea', 'area');
+
+    // ---- Concierge widget. Every field writes straight onto c.site.concierge,
+    // which is what the export reads; nothing here decides how it answers.
+    const cnObj = () => {
+      if (!c.site.concierge || typeof c.site.concierge !== 'object') c.site.concierge = {};
+      return c.site.concierge;
+    };
+    const dCnOn = $('#dCnOn');
+    if (dCnOn) dCnOn.onchange = () => { histCapture(); cnObj().on = dCnOn.checked; touch(c); };
+    const bindCn = (id, key) => {
+      const el = $('#' + id);
+      if (el) el.oninput = () => { histCapture(); cnObj()[key] = el.value; touch(c); };
+    };
+    bindCn('dCnGreeting', 'greeting');
+    bindCn('dCnHours', 'hours');
+    bindCn('dCnPrices', 'prices');
+    bindCn('dCnServices', 'services');
+    bindCn('dCnArea', 'area');
+    bindCn('dCnBooking', 'booking');
+    bindCn('dCnUnknown', 'unknown');
+    // One entry per line, `question :: answer`. A line without the separator is
+    // skipped rather than saved as a half-entry, because half an entry answers
+    // nothing and would just sit in the pack looking like it works.
+    const cnEntries = $('#dCnEntries');
+    if (cnEntries) cnEntries.oninput = () => {
+      histCapture();
+      cnObj().entries = cnEntries.value.split('\n').map((line) => {
+        const at = line.indexOf('::');
+        if (at < 0) return null;
+        const q = line.slice(0, at).trim();
+        const a = line.slice(at + 2).trim();
+        return (q && a) ? { q, a } : null;
+      }).filter(Boolean);
+      touch(c);
+    };
+
+    // ---- Scheduled messages. Same shape: text in, module out. The status list
+    // refreshes on every keystroke so a mistyped date is visible while it is being
+    // typed rather than after publish.
+    const schItems = $('#dSchItems');
+    const paintSch = () => { const box = $('#dSchStatus'); if (box) box.innerHTML = schStatusHtml(c); };
+    if (schItems) schItems.oninput = () => {
+      histCapture();
+      c.site.schedules = schItems.value.split('\n').map((line, i) => {
+        const parts = line.split('|').map((part) => part.trim());
+        if (!parts[0]) return null;
+        return { id: 'sch' + i, text: parts[0], from: parts[1] || '', to: parts[2] || '', link: parts[3] || '' };
+      }).filter(Boolean);
+      touch(c);
+      paintSch();
+    };
+    paintSch();
     const dSchema = $('#dSchema');
     if (dSchema) dSchema.onchange = () => { histCapture(); c.site.schemaType = dSchema.value; touch(c); };
     const dCss = $('#dCss');
@@ -4006,6 +4086,45 @@ const App = (() => {
     return out;
   }
 
+  // ---- share-card rasteriser ------------------------------------------------
+  // The card artwork is SVG because that is deterministic and testable — the
+  // same project always draws the same card. It is not what unfurls: X,
+  // WhatsApp and LinkedIn do not render an SVG share image, so a card
+  // referenced as .svg is a card nobody ever sees. Rasterising needs a canvas,
+  // which only the shell has, so this lives here and not in the module that
+  // draws the artwork.
+  //
+  // Returns null — never throws — when there is no canvas or the artwork will
+  // not decode. Null means "this export cannot promise a raster", and the
+  // caller falls the whole site back to the SVG. A missing share image is a
+  // bug; a share image URL that 404s is a worse one.
+  async function svgToPng(svgString, w, h) {
+    try {
+      if (typeof document === 'undefined' || !document.createElement) return null;
+      const src = (typeof OgCard !== 'undefined' && OgCard.dataUrl)
+        ? OgCard.dataUrl(svgString)
+        : 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString);
+      const img = await new Promise((resolve, reject) => {
+        const im = new Image();
+        im.onload = () => resolve(im);
+        im.onerror = () => reject(new Error('card did not decode'));
+        im.src = src;
+      });
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      const cx = cv.getContext('2d');
+      if (!cx) return null;
+      cx.drawImage(img, 0, 0, w, h);
+      const url = cv.toDataURL('image/png');
+      const comma = url.indexOf(',');
+      if (comma < 0) return null;
+      const bin = atob(url.slice(comma + 1));
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out.byteLength ? out : null;
+    } catch (e) { return null; }
+  }
+
   // Everything that travels with an exported site beyond its pages: social
   // cards, the design system, a 404 and the host policy files, the delivery
   // report, and the manifest that makes the whole thing verifiable.
@@ -4016,11 +4135,18 @@ const App = (() => {
     const files = exportFileList(c);
     const settings = exportSettings();
 
+    // Share cards: the SVG that was drawn, plus the PNG the pages actually
+    // reference. `attach` owns the decision of whether that reference is
+    // honest, and hands back the rewrite to run if it is not. `needed` decides
+    // whether there is a reference at all — a card is only worth its weight
+    // when the pages carry one.
+    let cards = null;
     try {
-      if (typeof OgCard !== 'undefined') {
-        OgCard.files(c, sitePageFiles(c)).forEach((f) => files.push({ name: f.name, content: f.content }));
+      if (typeof OgCard !== 'undefined' && OgCard.attach && OgCard.needed(c, settings)) {
+        cards = await OgCard.attach(files, OgCard.files(c, sitePageFiles(c)),
+          (svg) => svgToPng(svg, OgCard.W, OgCard.H));
       }
-    } catch (e) { /* optional */ }
+    } catch (e) { cards = null; }
     try {
       if (typeof Tokens !== 'undefined') Tokens.files(c).forEach((f) => files.push({ name: f.name, content: f.content }));
     } catch (e) { /* optional */ }
@@ -4030,6 +4156,11 @@ const App = (() => {
           .forEach((f) => files.push({ name: f.name, content: f.content }));
       }
     } catch (e) { /* optional */ }
+
+    // Run last, on everything that ships — the 404 page renders its own <head>
+    // and is written after the cards were attempted. This is still before the
+    // manifest, so the hashes describe the files as they actually ship.
+    if (cards && cards.fallback) cards.fallback(files);
 
     const audits = await deliveryAudits(c, files);
 
@@ -9314,6 +9445,193 @@ const App = (() => {
     }
     if (dl) dl.disabled = false;
     if (cpy) cpy.disabled = false;
+  }
+
+  // ---------------- Designer: scheduled-message status ----------------
+  // One scheduled message as a textarea line. The textarea IS the editor, so what
+  // it shows has to parse back to what it holds. Trailing blank columns are
+  // trimmed — a row with no link is written without one — but an interior blank
+  // is a real value, because the panel's own help text says to "leave either
+  // blank". Collapsing ` |  | ` to ` | ` shifted every later column one place
+  // left, which turned "starts now, ends 20 Dec" into "starts 20 Dec, never
+  // ends": a banner that outlives its own offer, silently, on the next render.
+  function schLine(s) {
+    const row = [s.text || '', s.from || '', s.to || '', s.link || ''];
+    while (row.length > 1 && row[row.length - 1] === '') row.pop();
+    return row.join(' | ');
+  }
+
+  // A date range is the one field in the studio whose mistake is invisible until
+  // the wrong day arrives, so the panel prints what each line will actually do.
+  const SCHEDULE_PHASE = {
+    active: 'showing now',
+    upcoming: 'starts later',
+    expired: 'finished — left out of the export',
+    invalid: 'check the dates — this one will not be exported'
+  };
+
+  function schStatusHtml(c) {
+    if (typeof Schedule === 'undefined' || !Schedule.statusOf) return '';
+    let rows = [];
+    try { rows = Schedule.statusOf((c && c.site) || {}, new Date()); } catch (e) { return ''; }
+    if (!rows.length) return '<span class="set-desc">Nothing scheduled — every visitor sees the same page.</span>';
+    return rows.map((r) => {
+      const span = (r.phase === 'invalid') ? ''
+        : ' · ' + (r.from ? localDate(r.from) : 'always') + ' \u2192 ' + (r.to ? localDate(r.to) : 'no end');
+      return '<div class="sch-row sch-' + esc(r.phase) + '"><b>' + esc(r.text) + '</b><span>'
+        + esc((SCHEDULE_PHASE[r.phase] || r.phase) + span) + '</span></div>';
+    }).join('');
+  }
+
+  // ---------------- Site Care ----------------
+  // Delivered sites go stale, and it is always quiet: a date that went by, a
+  // price that moved, one of our own sample phone numbers still sitting in a
+  // client's footer. Nothing throws and nothing looks broken, so nobody finds
+  // out until a customer does.
+  //
+  // The audit engine already existed — but the only way in was the third section
+  // of the Site health modal, one project at a time, and only if you thought to
+  // open it. So this view is deliberately two halves: the sweep, which answers
+  // "which of my client sites do I need to call?", and the report, which answers
+  // "what exactly is wrong with it?". The sweep is the half that could not exist
+  // inside a per-project modal.
+  let careSel = '';
+
+  function careReport(p) {
+    try { return (typeof SiteCare !== 'undefined' && SiteCare.audit) ? SiteCare.audit(p) : null; }
+    catch (e) { return null; }
+  }
+
+  // No letter-to-colour rule lives here: qualityColor() already owns it, and a
+  // second copy is how the same grade ends up two different greens in two
+  // screens. The grade tiles take it as a custom property; the alert pills below
+  // are semantic instead (stale / to check / current) and read from the counts.
+  function careAlert(r) {
+    return r.counts.error ? 'bad' : r.counts.warn ? 'warn' : 'ok';
+  }  // Shared by Site Care (its review date) and the schedule editor. A bare
+  // yyyy-mm-dd parsed by Date() is UTC midnight, which lands on the PREVIOUS day
+  // west of Greenwich — so it is built from parts, as SiteCare itself does.
+  //
+  // It also takes a millisecond stamp, which is what a project carries: the
+  // Site Care sweep prints a site's last edit. `new Date('1737000000000')` is
+  // not a date String() parsing understands, and toLocaleDateString() on an
+  // Invalid Date does not throw — it returns the words "Invalid Date", which
+  // is exactly what the sweep rows read for every project. So numbers are
+  // routed to the epoch branch, and anything still unparseable returns ''. A
+  // blank after "updated" is honest; "Invalid Date" looks like a bug because
+  // it is one.
+  function localDate(value) {
+    const s = String(value == null ? '' : value);
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    let d;
+    if (m) d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    else if (/^\d{9,}$/.test(s)) d = new Date(Number(s));
+    else d = new Date(s);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString();
+  }
+
+  // "· updated 17/09/2026" — or nothing at all, rather than "updated ".
+  function updatedStamp(p) {
+    const d = localDate(p && p.updatedAt);
+    return d ? ' \u00b7 updated ' + d : '';
+  }
+
+  function renderCare() {
+    const root = $('#careRoot');
+    if (!root) return;
+
+    const rows = projects.map((p) => ({ p, r: careReport(p) })).filter((x) => x.r);
+    // Worst first. The only thing a creator needs from a sweep of ten sites is
+    // the top of it, so the order is the feature.
+    rows.sort((a, b) => (a.r.score - b.r.score) || String(a.p.name).localeCompare(String(b.p.name)));
+
+    if (!careSel || !rows.some((x) => x.p.id === careSel)) {
+      careSel = (current() && current().id) || (rows[0] && rows[0].p.id) || '';
+    }
+    const sel = rows.find((x) => x.p.id === careSel) || null;
+
+    if (!rows.length) {
+      root.innerHTML = careIntro() + '<div class="empty-state">No projects yet — Site Care checks sites you have already built.</div>';
+      return;
+    }
+
+    const flagged = rows.filter((x) => x.r.counts.error > 0).length;
+    const sum = flagged
+      ? flagged + ' of ' + rows.length + ' site' + (rows.length === 1 ? '' : 's') + ' ' + (flagged === 1 ? 'needs' : 'need') + ' attention'
+      : 'All ' + rows.length + ' site' + (rows.length === 1 ? '' : 's') + ' look current';
+
+    const sweep = rows.map((x) => {
+      const r = x.r;
+      const tone = qualityColor(r.letter);
+      const flag = r.counts.error ? r.counts.error + ' stale' : (r.counts.warn ? r.counts.warn + ' to check' : 'nothing flagged');
+      return `
+      <button class="care-row${x.p.id === careSel ? ' active' : ''}" data-care="${esc(x.p.id)}">
+        <span class="care-grade" style="--tone:${esc(tone)}">${esc(r.letter)}</span>
+        <span class="care-name"><b>${esc(x.p.name)}</b><small>${esc(flag)} · ${r.sections} section${r.sections === 1 ? '' : 's'} · ${r.pages} page${r.pages === 1 ? '' : 's'}${esc(updatedStamp(x.p))}</small></span>
+        <span class="care-flag ${careAlert(r)}">${r.counts.error ? 'Act now' : r.counts.warn ? 'Watch' : 'Current'}</span>
+      </button>`;
+    }).join('');
+
+    let report = '<div class="empty-state">Pick a site above for its full report.</div>';
+    if (sel) {
+      const r = sel.r;
+      const tone = qualityColor(r.letter);
+      const group = (level, title) => {
+        const list = r.findings.filter((f) => f.level === level);
+        if (!list.length) return '';
+        return `<h4 class="care-group">${esc(title)} · ${list.length}</h4><div class="care-list">${list.map((f) => {
+          const at = f.where || {};
+          const place = at.pageName || at.page || '';
+          const spot = place + (at.sectionType ? ' · ' + at.sectionType + ' (section ' + at.sectionNo + ')' : '');
+          return `<div class="diag-row diag-${esc(level)}"><div>${esc(f.msg)}${f.fix ? `<br><small style="color:var(--muted)">Fix: ${esc(f.fix)}</small>` : ''}${spot ? `<small class="care-where">${esc(spot)}</small>` : ''}</div></div>`;
+        }).join('')}</div>`;
+      };
+      report = `
+        <div class="care-head">
+          <div class="care-dial" style="--tone:${esc(tone)}"><b>${esc(r.letter)}</b><small>${r.score}/100</small></div>
+          <div class="care-copy">
+            <h3>${esc(sel.p.name)}</h3>
+            <p>${esc(r.summary)}</p>
+            <div class="care-badges">
+              <span class="care-flag ${careAlert(r)}">${r.counts.error} stale</span>
+              <span class="care-flag warn">${r.counts.warn} to check</span>
+              <span class="care-flag">${r.counts.info} note${r.counts.info === 1 ? '' : 's'}</span>
+              <span class="care-flag">Review by ${esc(localDate(r.reviewBy))}</span>
+            </div>
+          </div>
+          <div class="care-actions">
+            <button class="btn secondary small" id="careOpen">Open in Designer</button>
+            <button class="btn ghost small" id="careRescan" title="Audit every project again">Re-scan</button>
+          </div>
+        </div>
+        ${group('error', 'No longer true')}
+        ${group('warn', 'Worth checking')}
+        ${group('info', 'Notes')}
+        ${r.findings.length ? '' : '<div class="empty-state">Nothing flagged — this site is current.</div>'}`;
+    }
+
+    root.innerHTML = careIntro()
+      + `<div class="care-sum"><b>${esc(sum)}</b><span>Every project in your workspace, worst first.</span></div>`
+      + `<h3 class="view-h">Every site</h3><div class="care-list">${sweep}</div>`
+      + `<h3 class="view-h">Report</h3>${report}`;
+
+    $$('[data-care]').forEach((b) => b.onclick = () => { careSel = b.dataset.care; renderCare(); });
+    const openBtn = $('#careOpen');
+    if (openBtn) openBtn.onclick = () => { currentId = careSel; switchView('designer'); };
+    const rescan = $('#careRescan');
+    if (rescan) rescan.onclick = () => {
+      renderCare();
+      const worst = (rows[0] && rows[0].r) || null;
+      toast(worst && worst.findings.length ? 'Re-scanned — ' + worst.findings.length + ' finding' + (worst.findings.length === 1 ? '' : 's') + ' on your worst site' : 'Re-scanned — everything looks current', true);
+    };
+  }
+
+  function careIntro() {
+    return `<div class="tpl-intro">
+      <h2>Site Care</h2>
+      <p>Delivered sites go stale. A date goes by, a price changes, one of our own sample phone numbers survives into production — nothing is broken, it has just stopped being true. This reads every project in your workspace and tells you which ones need a call.</p>
+    </div>`;
   }
 
   function renderQr() {

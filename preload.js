@@ -17,6 +17,10 @@ contextBridge.exposeInMainWorld('pallettai', {
     ipcRenderer.on('menu', listener);
     return () => ipcRenderer.removeListener('menu', listener);
   },
+  // Electron-only: mirror the studio's theme choice into the shell so the next
+  // launch's startup splash can open in the same palette. Fire-and-forget — the
+  // value only matters after this window is gone, and main re-validates it.
+  setTheme: (theme) => ipcRenderer.send('theme-changed', theme),
   secretsGet: (key) => ipcRenderer.invoke('secrets-get', key),
   secretsSet: (key, value) => ipcRenderer.invoke('secrets-set', key, value),
   // OS accent colour (Electron only): hex without '#' (e.g. '22d3ee'), '' when

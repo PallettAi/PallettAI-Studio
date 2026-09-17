@@ -146,6 +146,48 @@ const Images = (() => {
   };
   const hasAttr = (tag, name) => new RegExp('\\s' + name + '(?=[\\s=/>])', 'i').test(tag);
 
+  // ---- the box, when the file size is not knowable --------------------------
+  // `width`/`height` do two jobs. The obvious one is intrinsic size — the real
+  // pixel dimensions of the file, used when `intrinsic` is known. The less
+  // obvious one, and the one that actually prevents layout shift, is declaring
+  // the RATIO of the box so the browser can reserve it before a byte arrives.
+  //
+  // A CSS aspect-ratio already reserves that box, which is why the builder
+  // leaned on it — but the ratio then lives only in a stylesheet, so anything
+  // reading the markup, and any browser that has not yet parsed that rule,
+  // still sees an image with no size. Stating the same ratio the stylesheet
+  // already states costs two attributes and makes the markup self-describing.
+  //
+  // The ratios below are read off the stylesheet the builder emits, not
+  // invented: half is the 4:3 about/hero box, third is the square gallery and
+  // item box, and the two icon roles are fixed squares in CSS.
+  const RATIO = { hero: [4, 3], half: [4, 3], third: [1, 1], avatar: [1, 1], icon: [1, 1] };
+  const BASE = { hero: 1200, half: 1200, third: 800, avatar: 96, icon: 56 };
+
+  // An inline aspect-ratio is the renderer stating the box itself, so it beats
+  // the class table — it is the closest thing in the markup to a measurement.
+  function ratioOf(tag, kind) {
+    const style = attr(tag, 'style') || '';
+    const m = style.match(/aspect-ratio\s*:\s*(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/i);
+    if (m) return [parseFloat(m[1]), parseFloat(m[2])];
+    return RATIO[kind] || null;
+  }
+
+  function boxSize(tag, kind) {
+    // The builder injects markup from inside its own inline JavaScript too, so
+    // a tag the regex finds may be a fragment of source rather than an element
+    // — `src="' + escHtml(avatar) + '"`. Measuring the layout role of a string
+    // that is not markup would put numbers into a script; refuse instead.
+    const src = String(attr(tag, 'src') || '');
+    if (/[<>+$'"\\]/.test(src)) return null;
+    const r = ratioOf(tag, kind);
+    if (!r || !(r[0] > 0) || !(r[1] > 0)) return null;
+    const base = BASE[kind] || 1200;
+    // Keep `w` round: these numbers are read by humans in devtools and by
+    // crawlers, and 1200x900 is legible where 1199.7x899.8 is not.
+    return { w: Math.round(base), h: Math.round(base * r[1] / r[0]) };
+  }
+
   // Every page carries its own inline JavaScript, and that source contains
   // strings that LOOK like markup — `<img src="' + escHtml(avatar) + '" alt="">`
   // is source, not an image. Auditing it produced a phantom unsized, alt-less
@@ -170,8 +212,13 @@ const Images = (() => {
     const insert = (s) => { out = out.replace(/^<img\b/i, '<img ' + s); };
 
     // intrinsic size — this is what reserves the layout box and removes CLS.
-    if (info.intrinsic && !hasAttr(out, 'width') && !hasAttr(out, 'height')) {
-      insert('width="' + info.intrinsic.w + '" height="' + info.intrinsic.h + '"');
+    // The real pixel dimensions when the source declares them, otherwise the
+    // ratio of the box the stylesheet already gives this image role. Both are
+    // true statements about the space the image will occupy; the second one is
+    // simply written down in markup as well as CSS.
+    if (!hasAttr(out, 'width') && !hasAttr(out, 'height')) {
+      const size = info.intrinsic || boxSize(tag, kind);
+      if (size) insert('width="' + size.w + '" height="' + size.h + '"');
     }
 
     const cands = variants(src);
@@ -284,7 +331,7 @@ const Images = (() => {
   return {
     LADDER, SIZES, BUDGET, KB,
     describe, variants, sizesFor, decorate, hostFor, markupOnly,
-    audit, auditPage, attr, hasAttr
+    audit, auditPage, attr, hasAttr, boxSize, ratioOf
   };
 })();
 

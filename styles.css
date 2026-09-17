@@ -1617,3 +1617,51 @@ textarea:focus-visible,
 .diff-kind.add{background:color-mix(in srgb,#10b981 22%,transparent);color:#10b981}
 .diff-kind.rem{background:color-mix(in srgb,#f43f5e 20%,transparent);color:#f43f5e}
 .diff-kind.edit{background:color-mix(in srgb,var(--accent) 20%,transparent);color:var(--accent)}
+
+/* ============ Site Care ============
+   Two halves on one page: a sweep of every project, then the report for the one
+   you picked. The grade tile is the only place colour carries meaning — ok,
+   watch, bad — so it stays the loudest thing on the screen and everything else
+   is a row. */
+.care-sum{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px 16px;margin:4px 0 6px}
+.care-sum b{font-size:.98rem}
+.care-sum span{color:var(--muted);font-size:.76rem}
+.care-list{display:flex;flex-direction:column;gap:8px}
+.care-row{display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:center;text-align:left;padding:11px 13px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-tray);color:var(--text);cursor:pointer;font:inherit;transition:.15s}
+.care-row:hover{border-color:var(--accent);transform:translateY(-1px)}
+.care-row.active{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,var(--surface))}
+.care-grade{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;font-weight:800;font-size:.95rem;background:var(--surface2);border:1px solid var(--border)}
+.care-name b{display:block;font-size:.9rem}
+.care-name small{display:block;color:var(--muted);font-size:.72rem;margin-top:3px;line-height:1.4}
+.care-flag{font-size:.68rem;font-weight:800;letter-spacing:.04em;padding:3px 9px;border-radius:99px;white-space:nowrap;background:var(--surface2);color:var(--muted)}
+/* The alert pills are semantic (stale / to check / current) and use the same
+   three colours as a grade, on purpose: a red pill and an F should not disagree.
+   The grade tiles take their colour from --tone instead, so the letter-to-colour
+   rule stays in qualityColor() where it already lived. */
+.care-flag.ok{color:#22c55e;background:color-mix(in srgb,#22c55e 14%,transparent)}
+.care-flag.warn{color:#eab308;background:color-mix(in srgb,#eab308 14%,transparent)}
+.care-flag.bad{color:#ef4444;background:color-mix(in srgb,#ef4444 14%,transparent)}
+.care-grade,.care-dial{color:var(--tone,var(--accent));border-color:color-mix(in srgb,var(--tone,var(--accent)) 45%,transparent)}
+.care-head{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:14px 16px;margin-bottom:4px}
+.care-dial{width:74px;height:74px;flex:none;border-radius:20px;display:flex;flex-direction:column;justify-content:center;align-items:center;background:var(--surface2);border:1px solid var(--border)}
+.care-dial b{font-size:1.5rem;line-height:1;font-weight:800}
+.care-dial small{font-size:.62rem;color:var(--muted);letter-spacing:.06em;margin-top:3px}
+.care-copy{flex:1;min-width:200px}
+.care-copy h3{margin:0 0 5px;font-size:1.05rem;letter-spacing:0;text-transform:none}
+.care-copy p{margin:0;color:var(--muted);font-size:.84rem;line-height:1.6}
+.care-badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.care-actions{display:flex;gap:8px;flex-wrap:wrap;align-self:center}
+.care-group{margin:16px 0 8px;font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.13em;color:var(--muted)}
+.care-where{display:block;color:var(--muted);font-size:.68rem;margin-top:4px;font-weight:600}
+@media (max-width:760px){.care-row{grid-template-columns:44px 1fr}.care-flag{display:none}}
+
+/* ============ Scheduled messages: the panel's own status list ============ */
+.sch-status{display:flex;flex-direction:column;gap:6px;margin-top:9px}
+.sch-row{display:flex;flex-direction:column;gap:2px;background:var(--surface2);border:1px solid var(--border);border-left:3px solid var(--muted);border-radius:10px;padding:8px 11px}
+.sch-row b{font-size:.8rem}
+.sch-row span{font-size:.7rem;color:var(--muted)}
+.sch-active{border-left-color:var(--ok)}
+.sch-upcoming{border-left-color:var(--accent)}
+.sch-expired{border-left-color:var(--muted);opacity:.72}
+.sch-invalid{border-left-color:var(--danger)}
+.sch-invalid span{color:var(--danger)}

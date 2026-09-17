@@ -174,7 +174,23 @@ const SMOKES = [
   // Splitting a sentence into instructions is dangerous, so this suite is
   // weighted towards what must NOT split — and towards proving a compound plan
   // invents nothing the clauses did not already carry.
-  ['scripts/compound-intent-smoke.js', 'Compound intent smoke (what splits, what refuses)']
+  ['scripts/compound-intent-smoke.js', 'Compound intent smoke (what splits, what refuses)'],
+  // The startup splash duplicates the app's palette by hand — it is a data: URL
+  // loaded before the renderer exists, so it cannot import styles.css. Anything
+  // duplicated by hand rots, and this one had: it was still wearing the entire
+  // pre-rebrand violet. The suite checks every colour back against styles.css
+  // rather than snapshotting them, so it fails on a palette change either side.
+  ['scripts/brand-splash-smoke.js', 'Brand & startup-splash smoke (palette drift, theme)'],
+  // A view is wired in four files, and three out of four is a nav item that
+  // opens nothing. This checks the wiring, that every class the new Site Care
+  // screen emits has a style, and that the fields it reads exist on a real
+  // audit report — three silent failures that no engine test can see.
+  ['scripts/sitecare-view-smoke.js', 'Site Care view smoke (wiring, classes, contract)'],
+  // Both of these features live inside the exported file, so their suite runs the
+  // SHIPPED scripts against a stub DOM and compares the emitted matcher with the
+  // studio's verdict by verdict. It also pins the two things a knowledge pack
+  // makes newly dangerous: free text reaching an inline script, and page weight.
+  ['scripts/concierge-schedule-smoke.js', 'Concierge & self-scheduling smoke (export behaviour)']
 ];
 
 function runScript(args, label) {
