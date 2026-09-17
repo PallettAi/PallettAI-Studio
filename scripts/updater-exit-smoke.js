@@ -223,8 +223,13 @@ console.log('\n== The escape hatch ==');
   const listened = (/ipcMain\.on\('([^']+)'/.exec(ipcSrc || '') || [])[1];
   ok('both ends agree on the channel name', !!exposed && exposed === listened, exposed + ' vs ' + listened);
 
+  // Sender validation is now the shared frame check: a WebContents is not a
+  // frame, and anything that came from a subframe must not be able to end the
+  // update gate (or read the studio's secrets — see security-hardening-smoke).
   ok('main checks which window sent it',
-    !!ipcSrc && /event\.sender !== startupWindow\.webContents/.test(ipcSrc));
+    !!ipcSrc && /fromMainFrame\(event, startupWindow\)/.test(ipcSrc));
+  ok('and refuses a message that came from a subframe',
+    /const frame = event\.senderFrame/.test(main) && /frame\.parent == null/.test(main));
   ok('and routes it to the gate',
     !!ipcSrc && /skipStartupUpdate\(\);/.test(ipcSrc));
   ok('the skip tells the waiting gate to stop',

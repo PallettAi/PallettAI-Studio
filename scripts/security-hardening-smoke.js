@@ -164,14 +164,54 @@ console.log('\n== Copilot write surface ==');
 
 console.log('\n== Widget HTML escaping ==');
 {
-  const src = Builder.buildSiteHTML({
+  // Two layers, because the first one alone is what was missing. The previous
+  // version of this section asserted only that an escaper EXISTS in the bundle
+  // — so it passed while the crypto and FX widgets interpolated attributed text
+  // straight into innerHTML, which is script execution on a client's live site.
+  const HOSTILE = '<img src=x onerror=alert(1)>';
+  const build = (section) => Builder.buildSiteHTML({
     id: 'w', name: 'W', suites: ['datawidgets'],
     site: {
       name: 'W', tagline: 't', palette: 'midnight', font: 'inter',
-      sections: [{ type: 'hero', id: 'h', title: 'H' }]
+      sections: [{ type: 'hero', id: 'h', title: 'H' }, section]
     }
   }, { onlineEnabled: false });
-  assert(/function escHtml\(/.test(src) || /function esc\(/.test(src) && src.includes("replace(/</g, '&lt;')"), 'exported integrations include an HTML escaper');
+
+  const cryptoHtml = build({ type: 'crypto', id: 'c', extra: 'bitcoin,' + HOSTILE });
+  const fxHtml = build({ type: 'fx', id: 'f', extra: HOSTILE });
+  const plainHtml = build({ type: 'crypto', id: 'c', extra: 'bitcoin,ethereum' });
+
+  assert(/function escHtml\(/.test(plainHtml) || /function esc\(/.test(plainHtml) && plainHtml.includes("replace(/</g, '&lt;')"), 'exported integrations include an HTML escaper');
+
+  // Layer 1 — it must never reach the page, in any form. Asserting only that the
+  // raw string is absent is not enough: the emitter HTML-escapes every attribute,
+  // so that assertion passes even with the filter removed. The truth is in the
+  // attribute VALUES, so read them back the way the widget will.
+  const attrValues = (html, name) => {
+    const unesc = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+    return [...html.matchAll(new RegExp(name + '="([^"]*)"', 'g'))].map((m) => unesc(m[1]));
+  };
+  const slugOk = (v) => /^[a-z0-9][a-z0-9-]{0,39}$/.test(v);
+  const coinIds = attrValues(cryptoHtml, 'data-id');
+  assert(coinIds.length === 1 && coinIds.every(slugOk), 'only a real slug reaches the page as a coin id (' + JSON.stringify(coinIds) + ')');
+  assert(attrValues(cryptoHtml, 'data-coins').every((v) => v.split(',').every((x) => x === '' || slugOk(x))), 'and the list the widget fetches is slugs too');
+  const bases = attrValues(fxHtml, 'data-base');
+  assert(bases.length === 1 && bases.every((v) => /^[A-Z]{3}$/.test(v)), 'a currency code that reaches the page is three letters (' + JSON.stringify(bases) + ')');
+  assert(!cryptoHtml.includes('<img src=x') && !fxHtml.includes('<img src=x'), 'and no widget field puts markup in the document either');
+  assert(/data-id="bitcoin"/.test(plainHtml) && /data-coins="bitcoin,ethereum"/.test(plainHtml), 'a real coin list still renders');
+  assert(/data-base="GBP"/.test(fxHtml), 'an unusable currency code falls back to GBP');
+
+  // Layer 2 — and if one ever did reach it (an older export, a hand-edited file),
+  // the runtime escapes it at the sink. attr-value escaping does NOT survive the
+  // trip back out through getAttribute(), which is the trap here.
+  assert(!/\+ \(names\[id\] \|\| id\) \+/.test(plainHtml), 'the crypto widget no longer interpolates a raw coin id');
+  assert(/escHtml\(names\[id\] \|\| id\)/.test(plainHtml), 'the crypto widget escapes the coin id it writes');
+  assert(/'<\/span><b>1 ' \+ escHtml\(base\) \+ ' = '/.test(plainHtml), 'the FX widget escapes the base currency it writes');
+  assert(/escHtml\(code\)/.test(plainHtml), 'and the currency codes it writes');
+
+  // The cart persists through localStorage, which throws in an opaque origin —
+  // so it is guarded like every other storage touch in the export.
+  assert(/const save = \(\) => \{ try \{ localStorage\.setItem/.test(plainHtml), 'the cart save cannot throw when storage is unavailable');
 }
 
 (async () => {
@@ -206,6 +246,26 @@ console.log('\n== Widget HTML escaping ==');
     assert(/safeStorage/.test(mainSrc) && /encryptString/.test(mainSrc), 'main.js encrypts secrets with safeStorage');
     assert(/secrets-get/.test(mainSrc) && /secrets-set/.test(mainSrc), 'main.js registers secrets IPC');
     assert(/secretsGet:/.test(preloadSrc) && /secretsSet:/.test(preloadSrc), 'preload exposes secretsGet/secretsSet');
+
+    // A WebContents is not a frame. The Designer renders the exported site in a
+    // same-origin srcdoc iframe, so a widget inside it shares this WebContents
+    // and can see window.pallettai through `parent`; only senderFrame separates
+    // the two. Asserting on `event.sender` alone is what let that path exist.
+    assert(/const fromMainFrame = \(event, target\)/.test(mainSrc), 'main.js has a main-frame sender check');
+    assert(/event\.sender !== target\.webContents/.test(mainSrc) && /const frame = event\.senderFrame/.test(mainSrc), 'and it inspects the actual senderFrame, not just the WebContents');
+    assert(/frame\.parent == null/.test(mainSrc), 'a subframe is refused by its parent, which is what a preview iframe always has');
+    assert(!/event\.sender !== win\.webContents/.test(mainSrc), 'no privileged channel still trusts the WebContents alone');
+    const frameChecks = (mainSrc.match(/fromMainFrame\(event, (win|startupWindow)\)/g) || []).length;
+    assert(frameChecks >= 8, 'every privileged channel goes through it (' + frameChecks + ' sites)');
+
+    // The template preview modal is sandboxed because nothing reads back into
+    // that frame; the Designer preview is NOT, because renderPreview() reads
+    // contentDocument to wire page navigation — so its safety comes from the
+    // frame check above, not from the attribute.
+    const appSrc = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+    assert(/sandbox="allow-scripts allow-forms allow-modals allow-popups"[^>]*srcdoc=/.test(appSrc), 'the template preview iframe is sandboxed');
+    assert(/<iframe id="previewFrame" title="Live site preview"><\/iframe>/.test(appSrc), 'the Designer preview frame stays same-origin for contentDocument');
+    assert(/f\.contentDocument/.test(appSrc), 'and the Designer does read into it, so that trade-off is real');
   }
 
   if (failed) {

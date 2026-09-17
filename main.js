@@ -199,6 +199,30 @@ function main() {
     }
   }
 
+  // Every privileged channel below may only be reached from the MAIN frame of the
+  // window that owns it. Checking `event.sender` alone is NOT enough, and this is
+  // the subtle half: the Designer renders the exported site — including its own
+  // inline scripts and whatever an imported project put in a widget field — in a
+  // same-origin about:srcdoc iframe, so that document shares this WebContents and
+  // can see window.pallettai through `parent`. A frame cannot forge
+  // `event.senderFrame`: Electron fills it from the frame that really sent the
+  // message, so a widget running inside the preview reaches the bridge and is
+  // refused by it. The alternative — sandboxing the preview frame into an opaque
+  // origin — is not open to us, because renderPreview() reads
+  // `f.contentDocument` to wire multi-page and legal-page navigation.
+  // The property that actually matters is "this did not come from a subframe": a
+  // subframe always has a parent and a top-level frame never does. Testing that
+  // first, with an identity check against mainFrame as a second opinion, keeps
+  // this correct across Electron versions rather than depending on how reliably
+  // mainFrame compares by reference. When a build offers no frame at all the
+  // message is accepted, which is the pre-existing behaviour and no worse.
+  const fromMainFrame = (event, target) => {
+    if (!target || target.isDestroyed() || event.sender !== target.webContents) return false;
+    const frame = event.senderFrame;
+    if (!frame) return true;
+    return frame.parent == null || frame === target.webContents.mainFrame;
+  };
+
   const SECRET_KEYS = new Set(['publish.netlifyToken', 'publish.neocitiesKey']);
 
   function secretsStorePath() {
@@ -260,14 +284,14 @@ function main() {
 
   function registerSecretIpc() {
     ipcMain.handle('secrets-get', (event, key) => {
-      if (!win || event.sender !== win.webContents) return '';
+      if (!fromMainFrame(event, win)) return '';
       const name = String(key || '');
       if (!SECRET_KEYS.has(name)) return '';
       const all = readAllSecrets();
       return typeof all[name] === 'string' ? all[name] : '';
     });
     ipcMain.handle('secrets-set', (event, key, value) => {
-      if (!win || event.sender !== win.webContents) return false;
+      if (!fromMainFrame(event, win)) return false;
       const name = String(key || '');
       if (!SECRET_KEYS.has(name)) return false;
       const all = readAllSecrets();
@@ -278,19 +302,20 @@ function main() {
     });
     // SafeStorage-backed session store for the Supabase module. These are sync
     // channels because modules/supabase.js reads/writes the session
-    // synchronously (loadSes/persistSes). Every channel validates event.sender
-    // against the main window so a compromised renderer cannot touch the file.
-    // The key name is also checked so a renderer can only reach the session
+    // synchronously (loadSes/persistSes). Every channel validates the SENDER
+    // FRAME against the main window's main frame (see fromMainFrame), so neither
+    // a compromised renderer nor a widget inside the preview iframe can touch the
+    // file. The key name is also checked so a renderer can only reach the session
     // file, never arbitrary paths.
     ipcMain.on('session-get', (event, key) => {
-      if (!win || event.sender !== win.webContents || String(key || '') !== SES_KEY) {
+      if (!fromMainFrame(event, win) || String(key || '') !== SES_KEY) {
         event.returnValue = null;
         return;
       }
       event.returnValue = readSes();
     });
     ipcMain.on('session-set', (event, key, value) => {
-      if (!win || event.sender !== win.webContents || String(key || '') !== SES_KEY) {
+      if (!fromMainFrame(event, win) || String(key || '') !== SES_KEY) {
         event.returnValue = false;
         return;
       }
@@ -298,7 +323,7 @@ function main() {
       catch (_) { event.returnValue = false; }
     });
     ipcMain.on('session-remove', (event, key) => {
-      if (!win || event.sender !== win.webContents || String(key || '') !== SES_KEY) {
+      if (!fromMainFrame(event, win) || String(key || '') !== SES_KEY) {
         event.returnValue = false;
         return;
       }
@@ -330,7 +355,7 @@ function main() {
   // of values the settings select can actually produce.
   function registerThemeIpc() {
     ipcMain.on('theme-changed', (event, theme) => {
-      if (!win || event.sender !== win.webContents) return;
+      if (!fromMainFrame(event, win)) return;
       const next = String(theme || '');
       if (next !== 'dark' && next !== 'light' && next !== 'system') return;
       try {
@@ -347,15 +372,14 @@ function main() {
   // so a compromised renderer in the main window cannot unlock or lock startup.
   function registerSplashIpc() {
     ipcMain.on('splash-skip', (event) => {
-      if (!startupWindow || startupWindow.isDestroyed()) return;
-      if (event.sender !== startupWindow.webContents) return;
+      if (!fromMainFrame(event, startupWindow)) return;
       skipStartupUpdate();
     });
   }
 
   function registerAccentIpc() {
     ipcMain.handle('get-accent', (event) => {
-      if (!win || event.sender !== win.webContents) return '';
+      if (!fromMainFrame(event, win)) return '';
       return osAccentHex();
     });
     try {
@@ -591,7 +615,11 @@ function main() {
       updater.autoDownload = false;
       updater.autoInstallOnAppQuit = true;
       // Windows: refuse an installer whose Authenticode publisher can't be
-      // verified (macOS relies on the Developer ID signature + notarization).
+      // verified. macOS has no equivalent switch because Squirrel.Mac always
+      // compares the incoming bundle's code signature against the RUNNING app's,
+      // which is also why an unsigned build can never auto-update itself — and
+      // why the shipped certificate matters even though it is self-signed rather
+      // than a Developer ID one.
       // Explicit rather than leaning on the library default.
       updater.verifyUpdateCodeSignature = true;
       updater.on('checking-for-update', () => {

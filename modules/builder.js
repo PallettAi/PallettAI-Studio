@@ -1100,9 +1100,16 @@ body.photo-grade{
 
   function renderCrypto(p, s, i) {
     const coins = (s.extra || '').trim() || 'bitcoin,ethereum,solana';
-    const ids = coins.split(',').map((c) => c.trim()).filter(Boolean);
+    // A CoinGecko id is a slug (`bitcoin`, `avalanche-2`, `usd-coin`) and can be
+    // nothing else. The id is written into an attribute here and read back into
+    // innerHTML by the widget runtime, so a value carrying markup used to
+    // execute on the client's LIVE site — the attribute is escaped, but
+    // getAttribute() returns the raw text again. The runtime escapes it too
+    // (see loadCrypto); refusing anything that cannot be a coin id is the
+    // outer lock, and it also stops the junk reaching a public API.
+    const ids = coins.split(',').map((c) => c.trim()).filter((c) => /^[a-z0-9][a-z0-9-]{0,39}$/.test(c));
     const cells = ids.map((c) => `<div class="crypto-card" data-id="${esc(c)}"><span class="cr-loading">${esc(c)}…</span></div>`).join('');
-    return sectionShell(s, i, `${head(s)}<div class="crypto" data-coins="${esc(coins)}"><div class="crypto-grid">${cells}</div></div>`);
+    return sectionShell(s, i, `${head(s)}<div class="crypto" data-coins="${esc(ids.join(','))}"><div class="crypto-grid">${cells}</div></div>`);
   }
 
   function renderGithub(p, s, i) {
@@ -1114,7 +1121,11 @@ body.photo-grade{
   }
 
   function renderFx(p, s, i) {
-    const base = (s.extra || '').trim() || 'GBP';
+    // Same reasoning as renderCrypto: a currency code is three letters, and the
+    // runtime writes this value into innerHTML. An unrecognised value falls back
+    // to GBP rather than shipping markup to a client's live site.
+    const raw = (s.extra || '').trim().toUpperCase();
+    const base = /^[A-Z]{3}$/.test(raw) ? raw : 'GBP';
     return sectionShell(s, i, `${head(s)}
       <div class="fx" data-base="${esc(base)}"><div class="fx-box">${base
         ? '<span class="weather-loading">Loading exchange rates…</span>'
@@ -2528,7 +2539,11 @@ ${motionCSS(p)}
       const KEY = 'pallettai_cart_' + (CFG.projectName || 'site');
       let items = [];
       try { items = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (err) { items = []; }
-      const save = () => localStorage.setItem(KEY, JSON.stringify(items));
+      // Guarded like every other storage read in the export: the preview renders
+      // inside a sandboxed frame (an opaque origin where touching localStorage
+      // throws), and some browsers deny storage outright. A cart that quietly
+      // stops persisting is better than a button that throws on click.
+      const save = () => { try { localStorage.setItem(KEY, JSON.stringify(items)); } catch (err) {} };
       const render = () => {
         const wrap = $('.cart-items', cart);
         const total = items.reduce((s, it) => s + it.qty * parseFloat(String(it.price).replace(/[^0-9.]/g, '') || 0), 0);
@@ -2632,9 +2647,12 @@ ${motionCSS(p)}
           w.querySelectorAll('.crypto-card').forEach(function (card) {
             var id = card.getAttribute('data-id');
             var c = d[id] || {};
-            if (c.gbp == null) { card.innerHTML = '<b>' + (names[id] || id) + '</b><span class="sub">unavailable</span>'; return; }
+            // escHtml at the sink: `id` arrives from an attribute this page
+            // itself wrote, and attr-value escaping does NOT survive the trip
+            // back through getAttribute() — only escaping here is real.
+            if (c.gbp == null) { card.innerHTML = '<b>' + escHtml(names[id] || id) + '</b><span class="sub">unavailable</span>'; return; }
             var up = (c.gbp_24h_change || 0) >= 0;
-            card.innerHTML = '<div class="cr-name"><b>' + (names[id] || id) + '</b><span class="' + (up ? 'cr-up' : 'cr-down') + '">' + (up ? '▲' : '▼') + ' ' + Math.abs(c.gbp_24h_change || 0).toFixed(1) + '%</span></div><div class="cr-price">£' + Number(c.gbp).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</div>';
+            card.innerHTML = '<div class="cr-name"><b>' + escHtml(names[id] || id) + '</b><span class="' + (up ? 'cr-up' : 'cr-down') + '">' + (up ? '▲' : '▼') + ' ' + Math.abs(c.gbp_24h_change || 0).toFixed(1) + '%</span></div><div class="cr-price">£' + Number(c.gbp).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</div>';
           });
         })
         .catch(function () {
@@ -2671,7 +2689,7 @@ ${motionCSS(p)}
         .then(function (d) {
           var flags = { EUR: '🇪🇺', USD: '🇺🇸', GBP: '🇬🇧', JPY: '🇯🇵', CHF: '🇨🇭', CAD: '🇨🇦', AUD: '🇦🇺' };
           var rates = Object.keys(d.rates || {}).map(function (code) {
-            return '<div class="fx-rate"><span class="fx-flag">' + (flags[code] || '💱') + '</span><b>1 ' + base + ' = ' + Number(d.rates[code]).toFixed(2) + ' ' + code + '</b><small>' + (d.date || '') + '</small></div>';
+            return '<div class="fx-rate"><span class="fx-flag">' + (flags[code] || '💱') + '</span><b>1 ' + escHtml(base) + ' = ' + Number(d.rates[code]).toFixed(2) + ' ' + escHtml(code) + '</b><small>' + escHtml(d.date || '') + '</small></div>';
           }).join('');
           out.innerHTML = '<div class="fx-grid">' + rates + '</div>';
         })

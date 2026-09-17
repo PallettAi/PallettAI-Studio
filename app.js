@@ -2795,7 +2795,11 @@ const App = (() => {
     openModal(`Preview — ${tpl.name}`, `
       <p style="color:var(--muted);margin-bottom:12px">This is a live render of the template with sample content.</p>
       <div style="border:1px solid var(--border);border-radius:14px;overflow:hidden;background:#fff">
-        <iframe srcdoc="${esc(Builder.buildSiteHTML(p, exportSettings()))}" style="width:100%;height:420px;border:none"></iframe>
+        <!-- Sandboxed: nothing here reads back into the frame, so the exported
+             site's own inline scripts can be given an opaque origin. The frame
+             then cannot reach window.pallettai through its parent window, which
+             is the privilege main.js also refuses per-message. -->
+        <iframe sandbox="allow-scripts allow-forms allow-modals allow-popups" srcdoc="${esc(Builder.buildSiteHTML(p, exportSettings()))}" style="width:100%;height:420px;border:none"></iframe>
       </div>
       <div style="display:flex;gap:10px;margin-top:14px">
         <button class="btn primary small" id="modalUseTpl">Create project</button>
@@ -3168,6 +3172,13 @@ const App = (() => {
             <input type="number" id="pwW" value="" min="280" max="2200" step="1" title="Exact preview width (px)" placeholder="px" style="width:58px;padding:4px 6px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.75rem">
           </div>
         </div>
+        <!-- Deliberately NOT sandboxed. renderPreview() reads f.contentDocument to
+             wire multi-page links and the legal-page preview into this frame, and
+             an opaque origin would make contentDocument unreachable — the whole
+             page bar would go dead. The privilege that actually matters is closed
+             in main.js instead, where every IPC channel refuses anything whose
+             senderFrame is not this window's main frame, so a widget running
+             inside the preview cannot read the publish secrets. -->
         <iframe id="previewFrame" title="Live site preview"></iframe>
         <div id="photoDropOverlay" class="photo-drop-overlay" hidden>
           <div class="photo-drop-slots" id="photoDropSlots"></div>

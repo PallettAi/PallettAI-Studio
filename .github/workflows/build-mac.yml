@@ -286,8 +286,11 @@ jobs:
 
           echo "Signed by: $authority"
 
+      # The `if:` here used to read `runner.os != 'macOS' || true`, which is a
+      # tautology — it never gated anything. Removed rather than left in place,
+      # because a condition that always passes reads like a guard that sometimes
+      # doesn't.
       - name: Verify Electron Fuses (macOS)
-        if: runner.os != 'macOS' || true
         shell: bash
         run: |
           set -euo pipefail

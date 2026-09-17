@@ -73,45 +73,42 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
         run: npm run dist:win -- --publish never
 
+      # This step used to be decorative, and that is worth spelling out because it
+      # looked like a passing check on every green build. It looked for
+      # `*-win32-x64.zip` and a "PallettAI Studio.app" bundle INSIDE it — both
+      # macOS shapes — and every failure path was a `::warning::` followed by
+      # `exit 0`. The win target here is NSIS only (no zip is emitted), so it took
+      # the first branch on every run and Windows fuses were never verified at
+      # all. It now inspects the packaged app that electron-builder actually
+      # produces, and a missing artifact is an ERROR rather than a shrug: a guard
+      # that cannot fail is worse than no guard, because it buys false assurance.
       - name: Verify Electron Fuses (Windows)
-        if: runner.os != 'Windows' || true
         shell: bash
         run: |
           set -euo pipefail
           version="$(node -p "require('./package.json').version")"
 
-          # The Windows build produces a .exe installer, but the .app bundle lives
-          # inside the win.zip (electron-builder also emits a zip with the loose .app).
-          # We verify fuses from that .app.
-          app_zip="dist/$(node -p "require('./package.json').name")-${version}-win32-x64.zip"
-          if [ ! -f "$app_zip" ]; then
-            app_zip="dist/$(node -p "require('./package.json').name")-${version}-win32-ia32.zip"
-          fi
-          if [ ! -f "$app_zip" ]; then
-            echo "::warning::No Windows build zip found (skipping fuse verification)"
-            exit 0
+          # NSIS is built from this unpacked app directory, so it always exists
+          # after the build and is the real payload the installer wraps.
+          app_exe="dist/win-unpacked/PallettAI Studio.exe"
+          if [ ! -f "$app_exe" ]; then
+            echo "::error::No packaged app at $app_exe — electron-builder did not produce win-unpacked, so the fuses in the shipped installer are UNVERIFIED."
+            ls -la dist/ || true
+            exit 1
           fi
 
-          app_name="PallettAI Studio.app"
-          tmpdir="$(mktemp -d)"
-          trap 'rm -rf "$tmpdir"' EXIT
+          echo "Verifying fuses in: $app_exe"
 
-          unzip -q -o "$app_zip" -d "$tmpdir"
-          extracted_app="$(find "$tmpdir" -name "$app_name" -type d | head -n 1)"
-          if [ -z "$extracted_app" ]; then
-            echo "::warning::Could not find $app_name inside the built zip (skipping fuse verification)"
-            exit 0
-          fi
-
-          echo "Verifying fuses in: $extracted_app"
-
-          read_out="$(npx --no-install electron-fuses read --app "$extracted_app" 2>&1)" || {
-            echo "::warning::electron-fuses read failed (skipping fuse verification)"
+          read_out="$(npx --no-install electron-fuses read --app "$app_exe" 2>&1)" || {
+            echo "::error::electron-fuses could not read $app_exe — fuses are UNVERIFIED."
             echo "$read_out"
-            exit 0
+            exit 1
           }
           echo "$read_out"
-
+          # NOTE: the expected-fuse table below is the assertion. It mirrors the
+          # macOS step — one electronFuses block in electron-builder.yml feeds
+          # both platforms, so a drift here means the config changed under one of
+          # them.
           declare -A expected=(
             [RunAsNode]="Disabled"
             [EnableCookieEncryption]="Enabled"

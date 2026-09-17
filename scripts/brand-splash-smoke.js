@@ -209,7 +209,10 @@ ok('and so does the indeterminate bar', /prefers-reduced-motion[^}]*\}[\s\S]{0,8
 console.log('\n== 7. The renderer still tells main which theme it is in ==');
 
 ok('main registers the theme channel', /ipcMain\.on\('theme-changed'/.test(mainJs));
-ok('main validates the sender on it', /theme-changed', \(event, theme\) => \{\s*\n\s*if \(!win \|\| event\.sender !== win\.webContents\) return;/.test(mainJs));
+// Sender validation moved to the frame check every privileged channel shares:
+// a WebContents is not a frame, and the Designer previews the exported site in a
+// same-origin iframe that would otherwise share this one.
+ok('main validates the sender on it', /theme-changed', \(event, theme\) => \{\s*\n\s*if \(!fromMainFrame\(event, win\)\) return;/.test(mainJs));
 ok('main accepts only dark/light/system', /next !== 'dark' && next !== 'light' && next !== 'system'/.test(mainJs));
 ok('main persists it', /s\.theme = next;/.test(mainJs));
 ok('registerThemeIpc is actually called', /registerThemeIpc\(\);/.test(mainJs));
