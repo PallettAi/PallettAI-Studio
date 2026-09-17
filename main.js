@@ -466,6 +466,50 @@ function main() {
     startupWindowReady = false;
   }
 
+  // ------------------------------------------------------- leaving for an update
+  // Squirrel.Mac replaces the bundle only once THIS process is gone, and
+  // electron-updater's macOS path never asks it to leave: MacUpdater's
+  // quitAndInstall() hands the job to Electron's own autoUpdater and returns.
+  // Nothing then quits Electron, so ShipIt waits for a process that is never
+  // going to die.
+  //
+  // Measured on a real machine going 0.4.5 → 0.4.6: the app sat in its event
+  // loop for eight minutes with ShipIt idle beside it and the splash reading
+  // "Installing update…". The moment the process was killed by hand, ShipIt
+  // logged "Beginning installation" and had finished six seconds later.
+  //
+  // So the exit is ours to perform, and the splash has to go first: it is the
+  // one window created with closable: false, and a window that will not close
+  // can cancel the quit it is part of. The beat before quitting gives ShipIt
+  // time to have read the state file it was handed — it is invisible, since the
+  // splash is already saying the restart is happening.
+  const UPDATE_QUIT_BEAT_MS = 250;
+  const UPDATE_EXIT_GRACE_MS = 5000;
+
+  function quitForUpdate() {
+    setTimeout(() => {
+      // The last resort is scheduled BEFORE the polite request, so a quit that
+      // throws still leaves the process a way out. If the quit works, this
+      // timer never runs — the process is already gone.
+      setTimeout(() => { try { app.exit(0); } catch (e) { /* already gone */ } }, UPDATE_EXIT_GRACE_MS);
+      closeStartupWindow();
+      try { app.quit(); } catch (e) { /* the exit above still runs */ }
+    }, UPDATE_QUIT_BEAT_MS);
+  }
+
+  // Arm the installer, then leave. Both callers go through here, because a
+  // quitAndInstall without the exit behind it is the deadlock above.
+  function armUpdateAndQuit() {
+    if (!updater) return false;
+    try { updater.quitAndInstall(false, true); } catch (e) {
+      // An installer that refuses to arm must not strand the user either: the
+      // exit still happens, and the next launch is simply the same version.
+      console.error('update install:', e && e.message);
+    }
+    quitForUpdate();
+    return true;
+  }
+
   function withTimeout(promise, timeoutMs, message) {
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -535,7 +579,7 @@ function main() {
           message: 'A new version of PallettAI Studio is ready.',
           detail: 'Restart now to install it, or it will install when you quit.'
         });
-        if (r === 0) updater.quitAndInstall(false, true);
+        if (r === 0) armUpdateAndQuit();
       });
       updater.on('error', (err) => {
         // A missing release, offline connection, or a failed download must not
@@ -574,10 +618,12 @@ function main() {
         'Update download timed out'
       );
       setStartupStatus('Installing update…', 'Studio will restart automatically.', 100);
-      await wait(250);
       startupUpdateRunning = false;
-      updater.quitAndInstall(false, true);
-      return true;
+      // The gate owns this when the installer arms: it must leave the process
+      // alive long enough to hand over, and the helper owns the exit.
+      if (armUpdateAndQuit()) return true;
+      await wait(250);
+      return false;
     } catch (error) {
       console.error('startup update:', error && error.message);
       setStartupStatus('Starting current version', 'No update was installed. You can try again from the app menu.');

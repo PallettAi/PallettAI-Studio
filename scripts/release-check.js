@@ -190,7 +190,14 @@ const SMOKES = [
   // SHIPPED scripts against a stub DOM and compares the emitted matcher with the
   // studio's verdict by verdict. It also pins the two things a knowledge pack
   // makes newly dangerous: free text reaching an inline script, and page weight.
-  ['scripts/concierge-schedule-smoke.js', 'Concierge & self-scheduling smoke (export behaviour)']
+  ['scripts/concierge-schedule-smoke.js', 'Concierge & self-scheduling smoke (export behaviour)'],
+  // macOS installs an update only once the app process is gone, and
+  // electron-updater never asks it to leave — so the exit is ours to perform.
+  // Getting that wrong strands every installed copy behind a splash it cannot
+  // dismiss, which is exactly what shipped in 0.4.5. The suite runs the helper
+  // against a fake electron app, because this failure is about the ORDER of
+  // side effects and reading the source cannot see it.
+  ['scripts/updater-exit-smoke.js', 'Updater exit smoke (the app must leave for an update to install)']
 ];
 
 function runScript(args, label) {
