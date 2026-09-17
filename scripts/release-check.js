@@ -154,6 +154,11 @@ const SMOKES = [
   // failures are shared — a builder that emits a broken tag breaks all of them.
   ['scripts/export-polish-smoke.js', 'Export polish smoke (images, focus, cards, 404)'],
   ['scripts/delivery-proof-smoke.js', 'Delivery proof smoke (copy, links, tokens, manifest)'],
+  // A CC-BY photo shipped without its credit is a licence breach, and the block
+  // has two ways to fail: not rendered when it must be, and rendered from a
+  // creator's name without escaping it. This suite was written and then left out
+  // of this list, so it never ran — a guard that is not wired in is not a guard.
+  ['scripts/image-credits-smoke.js', 'Image credits smoke (licence attribution, escaping)'],
   // Site care judges content, not construction, so its suite is mostly about
   // what it REFUSES to flag — a maintenance report that cries wolf is ignored.
   ['scripts/sitecare-smoke.js', 'Site care smoke (stale, placeholder, demo content)'],

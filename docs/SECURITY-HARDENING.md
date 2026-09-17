@@ -5,8 +5,11 @@ the Cloudflare grader Worker, and CI. This file records **what changed**, **what
 was deliberately left alone** (and why), and **what still has to be done in a
 dashboard** — where no commit can reach.
 
-Read alongside `docs/superpowers/specs/2026-09-07-security-checklist.md`, which
-is the running pre-release checklist.
+The pre-release checklist this work was audited against lived in the agent planning
+notes under `docs/superpowers/` and has been retired with them. What survives is
+enforced rather than written down: every check that can be automated is a suite in
+`scripts/` run by `npm run release:check`, and the rest is listed below as work that
+has to happen in a dashboard.
 
 ---
 
