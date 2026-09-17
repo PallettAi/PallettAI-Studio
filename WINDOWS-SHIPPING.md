@@ -76,6 +76,63 @@ Expect `Status: Valid` and the publisher name you signed with.
 
 ---
 
+## 3b. Shipping an unsigned build (the posture until a certificate exists)
+
+There is no Windows code-signing certificate yet, and the tagged workflow **refuses to
+publish an unsigned installer** — so a `v*` tag builds nothing for Windows. That is how
+0.4.6 and 0.4.7 came to carry macOS assets only. Until a `.pfx` exists, build locally and
+attach the assets by hand.
+
+The Windows build lives in a **git worktree** of this repo (`pallettai-win-build`), so it
+shares the object store and there is nothing to push from it:
+
+```bash
+cd ../pallettai-win-build
+git fetch origin && git pull --ff-only origin main   # detached HEAD is expected
+npm run dist:win -- --publish never                  # --publish never: local build must not publish
+```
+
+Verify the manifest against the bytes before uploading. `latest.yml` carries the sha512
+and size that every Windows install checks, so a mismatch means each update downloads in
+full and then fails verification:
+
+```bash
+node -e 'const fs=require("fs"),c=require("crypto");const v=require("./package.json").version;const b=fs.readFileSync(`dist/PallettAI-Studio-${v}-setup.exe`);const y=fs.readFileSync("dist/latest.yml","utf8");console.log(c.createHash("sha512").update(b).digest("base64")===y.match(/sha512:\s*(\S+)/)[1]?"manifest matches":"MISMATCH")'
+```
+
+Attach **three** files, because each is a separate door:
+
+```bash
+cp "dist/PallettAI-Studio-$(node -p "require('./package.json').version")-setup.exe" dist/PallettAI-Studio-setup.exe
+gh release upload v<version> --repo PallettAi/pallettai-website \
+  dist/PallettAI-Studio-<version>-setup.exe dist/latest.yml dist/PallettAI-Studio-setup.exe
+```
+
+Two rules that are easy to miss and expensive to get wrong:
+
+- **`latest.yml` must ride every release, not just the Windows ones.** electron-updater
+  reads the manifest from the **newest** release — so a release without it hands every
+  Windows install a 404 and no way forward, even though an older release still has one.
+- **The stable alias must be re-attached every release too.**
+  `releases/latest/download/PallettAI-Studio-setup.exe` — the link on `downloads.html` —
+  resolves against the newest release, not the one that happened to carry it.
+
+The build is unsigned, which is a deliberate, documented posture rather than an oversight:
+the installer's PE certificate table is empty, so SmartScreen asks once at install and the
+download page says so in the Windows install notes. An unsigned build also cannot start
+requiring a signature, so 0.4.5 → 0.4.7 updates are unaffected.
+
+Useful checks on the output before shipping:
+
+```bash
+# the package really contains this version, not a stale build
+node -e 'const a=require("@electron/asar");console.log(JSON.parse(a.extractFile("dist/win-unpacked/resources/app.asar","package.json").toString()).version)'
+# fuses were actually flipped (expect 0 1 0 0 1 1 0: no run-as-node, asar-only, integrity on)
+node -e 'require("@electron/fuses").getCurrentFuseWire("dist/win-unpacked/PallettAI Studio.exe").then(w=>console.log(w))'
+```
+
+---
+
 ## 4. Ship through GitHub Releases
 
 The repo includes `.github/workflows/build-windows.yml`. A version tag builds
