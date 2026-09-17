@@ -58,11 +58,15 @@ if (!splashSrc) {
   process.exit(1);
 }
 
-// Render the template exactly as the shell does. The only interpolations are the
-// theme ones, so a two-value stub is a faithful reproduction.
+// Render the template exactly as the shell does. Two interpolations now — the
+// theme, and the escape hatch's delay — and both are read out of main.js rather
+// than stubbed, so a renamed or deleted constant fails here rather than throwing
+// inside the splash at launch.
+const escapeMs = (mainJs.match(/const STARTUP_ESCAPE_AFTER_MS = (\d+);/) || [])[1];
+ok('the skip delay is declared in main.js', !!escapeMs, 'STARTUP_ESCAPE_AFTER_MS');
 const render = (lightSplash) => {
   // eslint-disable-next-line no-new-func
-  return new Function('lightSplash', 'return `' + splashSrc[1] + '`;')(lightSplash);
+  return new Function('lightSplash', 'STARTUP_ESCAPE_AFTER_MS', 'return `' + splashSrc[1] + '`;')(lightSplash, Number(escapeMs));
 };
 
 const dark = render(false);
@@ -71,6 +75,8 @@ const light = render(true);
 ok('dark render is a complete document', dark.startsWith('<!doctype html>') && dark.trim().endsWith('</html>'));
 ok('light render is a complete document', light.startsWith('<!doctype html>') && light.trim().endsWith('</html>'));
 ok('no unsubstituted ${...} survived', !/\$\{/.test(dark) && !/\$\{/.test(light));
+ok('the escape hatch renders with a real delay, not a placeholder',
+  /skip\.hidden=false;\},(\d{4,})\)/.test(dark) && !/\$\{/.test(dark), 'the skip button never appears');
 
 // ---------------------------------------------------------------- 2. themes
 console.log('\n== 2. Both themes render their own palette ==');

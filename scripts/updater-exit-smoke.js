@@ -20,6 +20,12 @@
 //      which would reinstate the deadlock with the exit call in place.
 //   3. THERE IS A LAST RESORT. A quit that stalls, or a handler that throws,
 //      must not leave an app that cannot be updated.
+//   4. AND THE SPLASH CAN ALWAYS BE DISMISSED. Owning the exit fixes updates we
+//      start, but not someone already stuck on a version that does not: the
+//      gate runs before the workspace exists, and the splash is a frameless,
+//      closable:false, always-on-top window, so a hang there is a lockout.
+//      The way out is four wires — markup, preload, channel, sender-checked
+//      handler — and none of them fails loudly if cut.
 //
 // The helper itself is RUN here against a fake electron `app`, because reading
 // its source proves only that the words are present, and this bug is about the
@@ -171,6 +177,60 @@ console.log('\n== The arming helper ==');
   const make = new Function('updater', 'quitForUpdate', 'console', armSrc + '\nreturn armUpdateAndQuit;');
   const arm = make(null, () => { throw new Error('should not be called'); }, { error: () => {} });
   ok('with no updater at all nothing happens', arm() === false);
+}
+
+// ---- 4. the escape hatch --------------------------------------------------
+// Wires, end to end: markup -> preload -> channel -> sender-checked handler ->
+// the gate's skip. Each assertion names the other end, so renaming one side of
+// a pair cannot leave a button that does nothing.
+console.log('\n== The escape hatch ==');
+{
+  const splashSrc = bodyOf('createStartupWindow');
+  const skipSrc = bodyOf('skipStartupUpdate');
+  const ipcSrc = bodyOf('registerSplashIpc');
+  const preload = fs.readFileSync(path.join(ROOT, 'splash-preload.js'), 'utf8');
+  const builder = fs.readFileSync(path.join(ROOT, 'electron-builder.yml'), 'utf8');
+  const literal = (() => {
+    const i = main.indexOf('const splash = `');
+    const j = main.indexOf('`;', i + 20);
+    return i < 0 || j < 0 ? '' : main.slice(i, j + 2);
+  })();
+
+  ok('the splash window loads its own preload',
+    !!splashSrc && /preload:\s*path\.join\(__dirname,\s*'splash-preload\.js'\)/.test(splashSrc));
+  // A preload missing from `files` fails silently: the splash simply has no
+  // bridge, and the button stops working in the packaged app only.
+  ok('and that file is packaged, or the button dies only once built',
+    /^\s*-\s*splash-preload\.js\s*$/m.test(builder), 'not listed in electron-builder.yml');
+
+  ok('the splash markup carries the button', !!literal && /id="skip"/.test(literal));
+
+  ok('the button is hidden until the wait is over',
+    !!literal && /id="skip"[^>]*hidden/.test(literal) && /skip\.hidden=false/.test(literal));
+  ok('the wait is a real duration, interpolated rather than literal',
+    /skip\.hidden=false;\},\$\{STARTUP_ESCAPE_AFTER_MS\}\)/.test(literal)
+    && /const STARTUP_ESCAPE_AFTER_MS = \d{3,};/.test(main));
+  ok('the markup calls the API the preload exposes by name',
+    !!literal && /window\.paiSplash&&window\.paiSplash\.skip/.test(literal)
+    && /exposeInMainWorld\('paiSplash'/.test(preload));
+  ok('the preload exposes nothing else',
+    (preload.match(/exposeInMainWorld\(/g) || []).length === 1
+    && (preload.match(/ipcRenderer\.(send|invoke|on|handle)\(/g) || []).length === 1);
+
+  // The channel string is written twice, in two files. This is the pair that a
+  // rename breaks silently.
+  const exposed = (/ipcRenderer\.send\('([^']+)'\)/.exec(preload) || [])[1];
+  const listened = (/ipcMain\.on\('([^']+)'/.exec(ipcSrc || '') || [])[1];
+  ok('both ends agree on the channel name', !!exposed && exposed === listened, exposed + ' vs ' + listened);
+
+  ok('main checks which window sent it',
+    !!ipcSrc && /event\.sender !== startupWindow\.webContents/.test(ipcSrc));
+  ok('and routes it to the gate',
+    !!ipcSrc && /skipStartupUpdate\(\);/.test(ipcSrc));
+  ok('the skip tells the waiting gate to stop',
+    !!skipSrc && /if \(startupSkipSignal\) startupSkipSignal\(\);/.test(skipSrc));
+  ok('and is ignored once the installer is armed',
+    !!skipSrc && /if \(!startupUpdateRunning \|\| startupSkipped\) return false;/.test(skipSrc));
 }
 
 console.log('\n' + (failed === 0 ? 'UPDATER EXIT SMOKE PASSED' : 'UPDATER EXIT SMOKE FAILED: ' + failed));

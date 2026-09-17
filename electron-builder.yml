@@ -16,6 +16,10 @@ files:
   - styles.css
   - main.js
   - preload.js
+  # The splash's own preload. It carries one message — the skip button on the
+  # startup gate — and a preload that is missing from this list fails silently
+  # rather than loudly, so updater-exit-smoke asserts it is here.
+  - splash-preload.js
   - data/**
   - modules/**
   - vendor/**

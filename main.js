@@ -342,6 +342,17 @@ function main() {
     });
   }
 
+  // The splash's one message. Sender-checked like every other channel here: the
+  // only window that may end the update gate is the splash that is showing it,
+  // so a compromised renderer in the main window cannot unlock or lock startup.
+  function registerSplashIpc() {
+    ipcMain.on('splash-skip', (event) => {
+      if (!startupWindow || startupWindow.isDestroyed()) return;
+      if (event.sender !== startupWindow.webContents) return;
+      skipStartupUpdate();
+    });
+  }
+
   function registerAccentIpc() {
     ipcMain.handle('get-accent', (event) => {
       if (!win || event.sender !== win.webContents) return '';
@@ -389,6 +400,36 @@ function main() {
   const STARTUP_CHECK_TIMEOUT_MS = 20000;
   const STARTUP_DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 
+  // ---- the escape hatch -----------------------------------------------------
+  // The gate runs before the workspace exists, so anything that stalls it holds
+  // the user out of their own app: a check that never returns, a download on a
+  // bad connection, or — as 0.4.5 shipped — an update that installs only once
+  // the app exits while nothing ever quits it. The window is deliberately not
+  // closable, so the way out is a button, and it is offered only after a wait
+  // longer than a normal launch, so it never invites skipping an update that
+  // was about to finish.
+  const STARTUP_ESCAPE_AFTER_MS = 4000;
+  let startupSkipped = false;
+  let startupSkipSignal = null;
+
+  function skipStartupUpdate() {
+    // Ignored once the installer is armed: at that point the app is leaving,
+    // and a late click cannot un-arm an install that is already handed over.
+    if (!startupUpdateRunning || startupSkipped) return false;
+    startupSkipped = true;
+    setStartupStatus('Starting current version', 'The update will be offered again next time you open Studio.');
+    if (startupSkipSignal) startupSkipSignal();
+    return true;
+  }
+
+  // Race a step of the gate against the skip. The late-failure case matters:
+  // work we have stopped waiting on can still reject, and an unhandled
+  // rejection would crash the app the skip was meant to rescue.
+  function raceStartupSkip(work) {
+    work.catch(() => {});
+    return Promise.race([work, new Promise((resolve) => { startupSkipSignal = resolve; })]);
+  }
+
   // Which palette native chrome should wear — the splash screen and the window
   // background the user sees before the renderer paints. The studio's theme is a
   // RENDERER setting (localStorage), which main cannot read, and both of those
@@ -424,7 +465,10 @@ function main() {
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: true
+        sandbox: true,
+        // Carries exactly one message: the skip button. Without it the escape
+        // hatch is a button that does nothing.
+        preload: path.join(__dirname, 'splash-preload.js')
       }
     });
     startupWindow.on('closed', () => {
@@ -444,8 +488,8 @@ function main() {
     // moves in styles.css, move it here too; brand-splash-smoke pins the two
     // halves against each other so a drift fails the gate instead of shipping.
     const splash = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="color-scheme" content="${lightSplash ? 'light' : 'dark'}"><style>
-      :root{color-scheme:dark;--bg:#04122b;--text:#eaf5ff;--muted:#9fb8d6;--line:rgba(159,212,255,.16);--blue:#7cc0f8;--blue2:#a9d8ff;--glow:rgba(124,192,248,.3);--wash:rgba(124,192,248,.13)}body.light{color-scheme:light;--bg:#f2f7fc;--text:#08172c;--muted:#5b7089;--line:rgba(10,40,80,.14);--blue:#2f7fd0;--blue2:#4f9be0;--glow:rgba(47,127,208,.2);--wash:rgba(47,127,208,.07)}*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}body{position:relative;display:grid;place-items:center;background:var(--bg);color:var(--text);font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}.aura{position:fixed;inset:-45%;pointer-events:none;background:radial-gradient(38% 32% at 24% 6%,var(--glow),transparent 62%),radial-gradient(32% 26% at 80% 94%,var(--glow),transparent 58%);animation:aura 20s cubic-bezier(.22,.8,.24,1) infinite alternate}@keyframes aura{from{transform:translate3d(-2.5%,-1.5%,0) scale(1)}to{transform:translate3d(3%,2%,0) scale(1.08)}}.card{position:relative;text-align:center;width:100%;padding:30px 40px}.tile{width:56px;height:56px;margin:0 auto 15px;border:1px solid var(--line);border-radius:17px;display:grid;place-items:center;background:linear-gradient(160deg,var(--wash),transparent 70%);box-shadow:0 0 38px var(--glow),inset 0 1px 0 rgba(234,245,255,.09)}.tile svg{width:29px;height:29px;display:block}.tile stop{stop-color:#eaf5ff}.tile stop:nth-child(2){stop-color:#a9d8ff}.tile stop:nth-child(3){stop-color:#7cc0f8}body.light .tile{box-shadow:0 10px 30px rgba(20,50,90,.1),inset 0 1px 0 #fff}body.light .tile stop{stop-color:#1d5fa8}body.light .tile stop:nth-child(2){stop-color:#2f7fd0}body.light .tile stop:nth-child(3){stop-color:#4f9be0}h1{display:flex;align-items:baseline;justify-content:center;font-size:19px;font-weight:800;letter-spacing:-.045em;margin:0}.bw-pallett{background:linear-gradient(150deg,#ffffff 20%,#c9e7ff 60%,#7cc0f8 100%);-webkit-background-clip:text;background-clip:text;color:transparent}.bw-ai{background:linear-gradient(92deg,#a9d8ff 0%,#dceeff 55%,#ffffff 100%);-webkit-background-clip:text;background-clip:text;color:transparent}body.light .bw-pallett{background:none;color:var(--text)}body.light .bw-ai{background:linear-gradient(92deg,#1d5fa8 0%,#2f7fd0 55%,#4f9be0 100%);-webkit-background-clip:text;background-clip:text;color:transparent}.brand-sub{font-size:.57rem;letter-spacing:.34em;text-transform:uppercase;font-weight:700;color:var(--muted);margin:5px 0 17px}#status{font-weight:600;font-size:13px}#detail{min-height:34px;margin:6px auto 16px;max-width:330px;color:var(--muted);font-size:12px;line-height:1.5}.track{height:3px;border-radius:99px;background:var(--line);overflow:hidden}.fill{height:100%;width:34%;border-radius:inherit;background:linear-gradient(90deg,var(--blue),var(--blue2));animation:pulse 1.5s ease-in-out infinite}.track.has-progress .fill{animation:none}@keyframes pulse{0%,100%{opacity:.45;transform:translateX(-55%)}50%{opacity:1;transform:translateX(190%)}}@media (prefers-reduced-motion:reduce){.aura{animation:none}.fill{animation:none}}
-    </style></head><body class="${lightSplash ? 'light' : ''}"><div class="aura" aria-hidden="true"></div><main class="card" aria-live="polite"><div class="tile" aria-hidden="true"><svg viewBox="0 0 48 48" fill="none"><defs><linearGradient id="splashMark" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eaf5ff"/><stop offset=".45" stop-color="#a9d8ff"/><stop offset="1" stop-color="#7cc0f8"/></linearGradient></defs><g stroke="url(#splashMark)" stroke-width="6" stroke-linecap="round"><path d="M14 39V10"/><path d="M14 10h6.2a7.3 7.3 0 0 1 0 14.6H14"/><path d="M27.5 39.8 38 9"/></g></svg></div><h1><span class="bw-pallett">Pallett</span><span class="bw-ai">Ai</span></h1><div class="brand-sub">Studio</div><div id="status">Preparing Studio…</div><div id="detail">Getting everything ready.</div><div class="track" id="track"><div class="fill" id="fill"></div></div></main><script>window.__setStatus=function(message,detail,progress){document.getElementById('status').textContent=message||'';document.getElementById('detail').textContent=detail||'';var track=document.getElementById('track');var fill=document.getElementById('fill');if(typeof progress==='number'){track.classList.add('has-progress');fill.style.width=Math.max(0,Math.min(100,progress))+'%';fill.style.transform='none';}else{track.classList.remove('has-progress');fill.style.width='34%';fill.style.transform='';}};</script></body></html>`;
+      :root{color-scheme:dark;--bg:#04122b;--text:#eaf5ff;--muted:#9fb8d6;--line:rgba(159,212,255,.16);--blue:#7cc0f8;--blue2:#a9d8ff;--glow:rgba(124,192,248,.3);--wash:rgba(124,192,248,.13)}body.light{color-scheme:light;--bg:#f2f7fc;--text:#08172c;--muted:#5b7089;--line:rgba(10,40,80,.14);--blue:#2f7fd0;--blue2:#4f9be0;--glow:rgba(47,127,208,.2);--wash:rgba(47,127,208,.07)}*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}body{position:relative;display:grid;place-items:center;background:var(--bg);color:var(--text);font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}.aura{position:fixed;inset:-45%;pointer-events:none;background:radial-gradient(38% 32% at 24% 6%,var(--glow),transparent 62%),radial-gradient(32% 26% at 80% 94%,var(--glow),transparent 58%);animation:aura 20s cubic-bezier(.22,.8,.24,1) infinite alternate}@keyframes aura{from{transform:translate3d(-2.5%,-1.5%,0) scale(1)}to{transform:translate3d(3%,2%,0) scale(1.08)}}.card{position:relative;text-align:center;width:100%;padding:30px 40px}.tile{width:56px;height:56px;margin:0 auto 15px;border:1px solid var(--line);border-radius:17px;display:grid;place-items:center;background:linear-gradient(160deg,var(--wash),transparent 70%);box-shadow:0 0 38px var(--glow),inset 0 1px 0 rgba(234,245,255,.09)}.tile svg{width:29px;height:29px;display:block}.tile stop{stop-color:#eaf5ff}.tile stop:nth-child(2){stop-color:#a9d8ff}.tile stop:nth-child(3){stop-color:#7cc0f8}body.light .tile{box-shadow:0 10px 30px rgba(20,50,90,.1),inset 0 1px 0 #fff}body.light .tile stop{stop-color:#1d5fa8}body.light .tile stop:nth-child(2){stop-color:#2f7fd0}body.light .tile stop:nth-child(3){stop-color:#4f9be0}#skip{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);background:none;border:1px solid var(--line);color:var(--muted);font:inherit;font-size:11.5px;font-weight:600;letter-spacing:.01em;padding:6px 14px;border-radius:999px;cursor:pointer}#skip[hidden]{display:none}#skip:hover{color:var(--text);border-color:var(--blue)}#skip:focus-visible{outline:2px solid var(--blue);outline-offset:2px}#skip[disabled]{opacity:.6;cursor:default}h1{display:flex;align-items:baseline;justify-content:center;font-size:19px;font-weight:800;letter-spacing:-.045em;margin:0}.bw-pallett{background:linear-gradient(150deg,#ffffff 20%,#c9e7ff 60%,#7cc0f8 100%);-webkit-background-clip:text;background-clip:text;color:transparent}.bw-ai{background:linear-gradient(92deg,#a9d8ff 0%,#dceeff 55%,#ffffff 100%);-webkit-background-clip:text;background-clip:text;color:transparent}body.light .bw-pallett{background:none;color:var(--text)}body.light .bw-ai{background:linear-gradient(92deg,#1d5fa8 0%,#2f7fd0 55%,#4f9be0 100%);-webkit-background-clip:text;background-clip:text;color:transparent}.brand-sub{font-size:.57rem;letter-spacing:.34em;text-transform:uppercase;font-weight:700;color:var(--muted);margin:5px 0 17px}#status{font-weight:600;font-size:13px}#detail{min-height:34px;margin:6px auto 16px;max-width:330px;color:var(--muted);font-size:12px;line-height:1.5}.track{height:3px;border-radius:99px;background:var(--line);overflow:hidden}.fill{height:100%;width:34%;border-radius:inherit;background:linear-gradient(90deg,var(--blue),var(--blue2));animation:pulse 1.5s ease-in-out infinite}.track.has-progress .fill{animation:none}@keyframes pulse{0%,100%{opacity:.45;transform:translateX(-55%)}50%{opacity:1;transform:translateX(190%)}}@media (prefers-reduced-motion:reduce){.aura{animation:none}.fill{animation:none}}
+    </style></head><body class="${lightSplash ? 'light' : ''}"><div class="aura" aria-hidden="true"></div><main class="card" aria-live="polite"><div class="tile" aria-hidden="true"><svg viewBox="0 0 48 48" fill="none"><defs><linearGradient id="splashMark" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eaf5ff"/><stop offset=".45" stop-color="#a9d8ff"/><stop offset="1" stop-color="#7cc0f8"/></linearGradient></defs><g stroke="url(#splashMark)" stroke-width="6" stroke-linecap="round"><path d="M14 39V10"/><path d="M14 10h6.2a7.3 7.3 0 0 1 0 14.6H14"/><path d="M27.5 39.8 38 9"/></g></svg></div><h1><span class="bw-pallett">Pallett</span><span class="bw-ai">Ai</span></h1><div class="brand-sub">Studio</div><div id="status">Preparing Studio…</div><div id="detail">Getting everything ready.</div><div class="track" id="track"><div class="fill" id="fill"></div></div></main><button id="skip" type="button" hidden>Skip the update and open Studio</button><script>var skip=document.getElementById('skip');setTimeout(function(){skip.hidden=false;},${STARTUP_ESCAPE_AFTER_MS});skip.addEventListener('click',function(){skip.disabled=true;skip.textContent='Opening Studio…';if(window.paiSplash&&window.paiSplash.skip)window.paiSplash.skip();});window.__setStatus=function(message,detail,progress){document.getElementById('status').textContent=message||'';document.getElementById('detail').textContent=detail||'';var track=document.getElementById('track');var fill=document.getElementById('fill');if(typeof progress==='number'){track.classList.add('has-progress');fill.style.width=Math.max(0,Math.min(100,progress))+'%';fill.style.transform='none';}else{track.classList.remove('has-progress');fill.style.width='34%';fill.style.transform='';}};</script></body></html>`;
     startupWindow.loadURL('data:text/html;charset=UTF-8,' + encodeURIComponent(splash));
   }
 
@@ -565,18 +609,21 @@ function main() {
         const shown = percent === null ? 'Downloading update…' : 'Downloading update… ' + Math.round(percent) + '%';
         setStartupStatus(shown, 'The update will be installed before Studio opens.', percent);
       });
-      updater.on('update-downloaded', () => {
+      updater.on('update-downloaded', (info) => {
         // The startup gate calls quitAndInstall itself. Avoid displaying a
         // restart prompt while the splash screen is still protecting launch.
         // A timed-out/failed manual operation may finish late; ignore that
         // stale event instead of interrupting the user's current work.
         if (startupUpdateRunning || !manualUpdateInFlight) return;
+        // Name the version. The event carries it, and "a new version" gives the
+        // user nothing to decide with.
+        const next = info && info.version ? 'PallettAI Studio ' + info.version + ' is ready.' : 'A new version of PallettAI Studio is ready.';
         const r = dialog.showMessageBoxSync(win, {
           type: 'info',
           buttons: ['Restart now', 'Later'],
           defaultId: 0,
           title: 'PallettAI Studio',
-          message: 'A new version of PallettAI Studio is ready.',
+          message: next,
           detail: 'Restart now to install it, or it will install when you quit.'
         });
         if (r === 0) armUpdateAndQuit();
@@ -597,13 +644,16 @@ function main() {
     if (!app.isPackaged || !updater) return false;
     createStartupWindow();
     startupUpdateRunning = true;
+    startupSkipped = false;
+    startupSkipSignal = null;
     setStartupStatus('Checking for updates…', 'Current version ' + app.getVersion() + ' · this usually takes a few seconds.');
     try {
-      const result = await withTimeout(
+      const result = await raceStartupSkip(withTimeout(
         updater.checkForUpdates(),
         STARTUP_CHECK_TIMEOUT_MS,
         'Startup update check timed out'
-      );
+      ));
+      if (startupSkipped) return false;
       if (!result || !result.isUpdateAvailable) {
         setStartupStatus('Studio is up to date', 'Starting your workspace…', 100);
         await wait(350);
@@ -612,11 +662,15 @@ function main() {
       const info = result.updateInfo || result.versionInfo || {};
       const nextVersion = info.version || 'the latest version';
       setStartupStatus('Update found', 'Downloading ' + nextVersion + ' before Studio opens…', 0);
-      await withTimeout(
+      await raceStartupSkip(withTimeout(
         updater.downloadUpdate(),
         STARTUP_DOWNLOAD_TIMEOUT_MS,
         'Update download timed out'
-      );
+      ));
+      // The download itself cannot be called off, and it does not need to be:
+      // autoInstallOnAppQuit still finishes the job when the user next quits,
+      // and the partial file is discarded if it never completes.
+      if (startupSkipped) return false;
       setStartupStatus('Installing update…', 'Studio will restart automatically.', 100);
       startupUpdateRunning = false;
       // The gate owns this when the installer arms: it must leave the process
@@ -791,6 +845,7 @@ function main() {
     registerSecretIpc();
     registerAccentIpc();
     registerThemeIpc();
+    registerSplashIpc();
     app.on('activate', () => {
       if (startupUpdateRunning) {
         if (startupWindow && !startupWindow.isDestroyed()) startupWindow.focus();
