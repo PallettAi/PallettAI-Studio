@@ -4,24 +4,29 @@
 // Bump `version` when you ship. Each entry: version, date, tagline, highlights[].
 // Keep highlights to 3-4 items, written as user-facing wins (not commit logs).
 const RELEASE_NOTES = {
-  version: '0.4.5',
-  date: 'September 16, 2026',
-  tagline: 'The key we issued you now has somewhere to go \u2014 and cannot be quietly taken back',
+  version: '0.4.6',
+  date: 'September 17, 2026',
+  tagline: 'Your site can now answer a visitor, and change on a date \u2014 with no server behind it',
   highlights: [
     {
-      icon: 'lock',
-      title: 'Your key has a door of its own',
-      desc: 'A licence key could only ever be entered as the last row of the plan grid \u2014 and once an account is on a paid plan, the Upgrade button that opens that grid is hidden. So the one person most likely to be holding a key was the one person with no visible way to type it in. Settings now has Redeem a licence key under Plan & billing, with the referral box beside it, and it is there whatever plan you are on. It is the same verification as before, given its own door.'
+      icon: 'chat',
+      title: 'Your site can answer questions on its own',
+      desc: 'Concierge puts an Ask us panel on the site itself. You fill in your hours, prices, services, the area you cover and any questions you get asked, and it answers visitors from that \u2014 in the page, with no server, no API key and nothing sent anywhere until someone presses send. It is built to refuse rather than guess: a question it cannot place is offered to you as an enquiry through the same form your contact section already uses. Turn it on in the Designer and it goes out with the next export.'
     },
     {
       icon: 'clock',
-      title: 'A key issued for life can no longer acquire an expiry',
-      desc: 'This was the quiet one. A key that never expires was safe from a cancellation but not from a renewal: any paid event from the payment provider copied the subscription\u2019s period end onto the key, so a permanent licence silently picked up a date it had never been given \u2014 and the app, quite correctly, then treated that key as temporary. No expiry is written onto a licence any more, whatever the subscription says.'
+      title: 'And the site changes itself on the day you say',
+      desc: 'A dated strip above the navigation that you write once and then forget. Put an offer up with an end date and it takes itself down after midnight; add Christmas hours and they appear on the day. Anything already expired when you export is dropped from the file entirely, and end dates are inclusive and read in the visitor\u2019s own timezone, so nothing vanishes a day early for anyone abroad.'
     },
     {
-      icon: 'shield',
-      title: 'And it stays a licence, so it cannot be revoked by one',
-      desc: 'The same renewal relabelled the entitlement as a subscription. That mattered later, not immediately: cancelling a subscription is deliberately not allowed to revoke a licence we issued, but once the label said subscription, a cancellation revoked a key that was never revocable at all. A licence keeps its own tier now \u2014 the tier may only move upward, and billing, the customer portal and your receipts are untouched either way.'
+      icon: 'globe',
+      title: 'Shared links now unfurl with a picture',
+      desc: 'Every site has been generating a share card, but it was being handed over as an SVG \u2014 and X, WhatsApp and LinkedIn ignore SVG share images, so most shared links showed a bare title. The card is now rasterised to a PNG at export, so a link to your site shows the artwork. The same export pass also declares each image\u2019s dimensions, which stops photos shoving the page around while they load.'
+    },
+    {
+      icon: 'pulse',
+      title: 'Site Care \u2014 for the sites you have already shipped',
+      desc: 'A new view in the rail, and it is about a different job from building. It sweeps every project you have handed over and reports what has quietly stopped being true: a date that has passed, a price still sitting beside last year, placeholder or sample text nobody replaced, a section left empty that the next export will fill with stock photos, images with no alt text, and links that point at nothing. Building a site and keeping one true are two jobs, and this is the second one.'
     }
   ]
 };
