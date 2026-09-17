@@ -305,9 +305,48 @@ body.titlebar-inset .project-chip{-webkit-app-region:no-drag}
 .src-results .res-item b{color:var(--text);font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .src-results .res-item .res-actions{display:flex;gap:5px}
 .src-results .res-item .res-actions .icon-btn{width:26px;height:26px;font-size:.7rem}
+/* Per-source reachability, so the status sits on the card it describes. */
+.online-card .src-state{font-size:.62rem;font-weight:700;margin-left:8px;white-space:nowrap;vertical-align:middle}
+.online-card .src-state.ok{color:var(--ok)}
+.online-card .src-state.bad{color:var(--danger)}
+/* Neither live nor broken: a provider that answered with a rate limit. Amber,
+   because the source works and the panel is deliberately asking less often —
+   colouring it like a failure is how a working source looks dead. */
+.online-card .src-state.warn{color:var(--warn,#c9a227)}
+/* The icon grid: a fixed 6-up of square targets, sized so 26px artwork still
+   reads at a glance and the whole set fits without scrolling the panel. */
+.online-card .icon-cell{transition:background .12s ease,border-color .12s ease}
+.online-card .icon-cell:hover{background:color-mix(in srgb,var(--text) 6%,transparent);border-color:var(--accent)}
+.online-card .icon-cell:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* Retention and restore use .btn rows where the chosen option has to stay
+   visually distinct from the others. */
+.storage-actions .btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.storage-card label.storage-row{cursor:pointer}
+.storage-card label.storage-row:hover{background:color-mix(in srgb,var(--text) 4%,transparent)}
+/* A licence line on a licensed-media result: amber when the client's exported
+   site must carry the credit, muted when the image is CC0/PD and need not. */
+.src-results .res-item .src-lic{font-size:.66rem;color:var(--muted)}
+.src-results .res-item .src-lic.needs{color:#eab308}
 .pill{font-size:.7rem;font-weight:700;padding:4px 11px;border-radius:99px;background:var(--surface2);border:1px solid var(--border);color:var(--muted);vertical-align:middle}
 .pill.ok{color:var(--ok);border-color:rgba(52,211,153,.4)}
 .pill.bad{color:var(--danger);border-color:rgba(255,92,122,.4)}
+.pill.warn{color:#eab308;border-color:rgba(234,179,8,.4)}
+
+/* Local-library storage report. Sizes, not a bar chart: the number a creator
+   acts on is "how big is my library", and the quota bar is context for it. */
+.storage-card{margin:10px 0 16px;padding:14px 16px;border:1px solid var(--border);border-radius:14px;background:var(--surface);display:flex;flex-direction:column;gap:10px}
+.storage-head{display:flex;flex-direction:column;gap:2px}
+.storage-head b{font-size:1.05rem}
+.storage-sub{font-size:.75rem;color:var(--muted)}
+.storage-bar{height:6px;border-radius:99px;background:var(--surface2);overflow:hidden}
+.storage-bar span{display:block;height:100%;background:var(--accent);border-radius:99px}
+.storage-rows{display:flex;flex-direction:column;gap:4px}
+.storage-row{display:flex;justify-content:space-between;gap:12px;font-size:.8rem;padding:3px 0;border-bottom:1px dashed var(--border)}
+.storage-row:last-child{border-bottom:0}
+.storage-row em{color:var(--muted);font-style:normal;font-size:.72rem}
+.storage-note{margin:0;font-size:.78rem;color:var(--muted)}
+.storage-note.warn{color:#eab308}
+.storage-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
 .db-tabs{display:flex;gap:8px;margin-bottom:14px}
 .db-tab{background:var(--surface2);border:1px solid var(--border);color:var(--muted);padding:8px 16px;border-radius:10px;cursor:pointer;font-weight:600;font-size:.85rem}
 .db-tab.active{background:var(--grad);color:#04122b;border-color:transparent}

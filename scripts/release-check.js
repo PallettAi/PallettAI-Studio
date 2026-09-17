@@ -186,18 +186,38 @@ const SMOKES = [
   // screen emits has a style, and that the fields it reads exist on a real
   // audit report — three silent failures that no engine test can see.
   ['scripts/sitecare-view-smoke.js', 'Site Care view smoke (wiring, classes, contract)'],
+  // Every starter promises a different site, not the same page in a different
+  // colour. The suite reads three layers because they fail separately: the data
+  // (two templates sharing a skeleton), the layout catalog (a template naming a
+  // variant that does not exist renders the classic shape in silence), and the
+  // compiled export (a variant that falls through to a default is invisible to
+  // both of the others).
+  ['scripts/template-diversity-smoke.js', 'Template diversity smoke (skeletons, vocabulary, compiled output)'],
+  // The other half of that promise: what the generator invents, rather than
+  // what the starters ship. Same complaint, different producer.
+  ['scripts/ai-diversity-smoke.js', 'AI diversity smoke (generated sites must not collapse onto one look)'],
+  ['scripts/dashboard-refresh-smoke.js', 'Dashboard refresh smoke (delete/create/duplicate keep the list current)'],
   // Both of these features live inside the exported file, so their suite runs the
   // SHIPPED scripts against a stub DOM and compares the emitted matcher with the
   // studio's verdict by verdict. It also pins the two things a knowledge pack
   // makes newly dangerous: free text reaching an inline script, and page weight.
   ['scripts/concierge-schedule-smoke.js', 'Concierge & self-scheduling smoke (export behaviour)'],
+  // Both growth features end in an external handoff — a client-facing button
+  // on every page, and a register record applied to briefs and contact fields
+  // — so the suite checks real exports with/without the button, stubs the
+  // register, and cross-checks the three files every online source straddles.
+  ['scripts/growth-links-smoke.js', 'Growth links smoke (WhatsApp, Companies House)'],
   // macOS installs an update only once the app process is gone, and
   // electron-updater never asks it to leave — so the exit is ours to perform.
   // Getting that wrong strands every installed copy behind a splash it cannot
   // dismiss, which is exactly what shipped in 0.4.5. The suite runs the helper
   // against a fake electron app, because this failure is about the ORDER of
   // side effects and reading the source cannot see it.
-  ['scripts/updater-exit-smoke.js', 'Updater exit smoke (the app must leave for an update to install)']
+  ['scripts/updater-exit-smoke.js', 'Updater exit smoke (the app must leave for an update to install)'],
+  // Two claims made to a visitor, so the suite is mostly negative: a consent
+  // gate that is not really a gate, and a policy that names a service the site
+  // does not use, both look correct in a browser and are false in writing.
+  ['scripts/legal-pages-smoke.js', 'Legal pages & consent smoke (accurate policy, real cookie gate)']
 ];
 
 function runScript(args, label) {
@@ -325,6 +345,41 @@ function checkBuilder() {
 // ============================================================
 (async () => {
   runScript(['scripts/security-hardening-smoke.js'], 'Security hardening smoke');
+  // The Database panel's live sources span three files that cannot see each
+  // other — the fetch URL (data/online.js), the CSP allowlist that decides
+  // whether the renderer may make it (index.html), and the button that runs it
+  // (app.js). Every way of getting that wrong is silent, and two of them had
+  // shipped: a fetch blocked by the CSP reports "no results", and a source with
+  // no button is a card with nothing on it.
+  runScript(['scripts/online-sources-smoke.js'], 'Online sources smoke (CSP, panel wiring, payload shapes)');
+  // modules/store.js is the local database — every project, snapshot, asset and
+  // preset goes through it — and it had no suite at all because Node has no
+  // indexedDB. It runs here against scripts/fake-indexeddb.js, which is written
+  // to be unkind in the ways the real implementation is. Included because a
+  // store whose bugs only appear in the packaged app is a store that ships them.
+  runScript(['scripts/store-smoke.js'], 'Local store smoke (writes, recovery, usage, integrity)');
+  // Every script in the shell shares one global scope. A duplicate top-level
+  // `const` is a SyntaxError for the WHOLE file — the script silently never runs
+  // and its callers report a fallback — and a duplicate `function` is legal but
+  // the last file loaded wins, so a module can be running somebody else's
+  // implementation of a name it defined itself. Both had shipped.
+  runScript(['scripts/global-scope-smoke.js'], 'Global scope smoke (duplicate declarations across scripts)');
+  // The `.v1` suffix on every stored key was a naming accident, not a version,
+  // so a change to the shape of a project had two honest outcomes: keep the old
+  // shape forever, or lose what people made. This asserts that the registry is
+  // real, that migrations refuse rather than half-convert, and that a version is
+  // only advanced AFTER the migrated value has committed.
+  runScript(['scripts/schema-smoke.js'], 'Store format registry smoke (versions, migrations, order)');
+  // Autosave history is the largest thing a creator stores and nothing pruned
+  // it. The policy is pure and clock-injected, so the promise it makes — the
+  // newest snapshot of a project is never dropped, by any rule — is asserted
+  // here rather than asserted in a comment.
+  runScript(['scripts/revs-policy-smoke.js'], 'Autosave retention smoke (age, count, byte budget)');
+  // Restoring a backup used to overwrite everything and reload, which loses the
+  // work the backup existed to protect whenever the file comes from a second
+  // machine. Merging is now the default direction, and the rule it must keep —
+  // nothing that exists only on one side is dropped — is checked key by key.
+  runScript(['scripts/library-merge-smoke.js'], 'Library merge smoke (backup inspection, union, replace)');
   runScript(['scripts/templates-view-smoke.js'], 'Templates view smoke');
   runScript(['scripts/streak-placement-smoke.js'], 'Streak placement smoke');
   runScript(['scripts/dodo-checkout-smoke.js'], 'Dodo checkout smoke');

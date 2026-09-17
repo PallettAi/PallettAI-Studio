@@ -760,3 +760,178 @@ key** (or to any future provider).
    offline fallback, wipe-then-sync restore, Pro-unlimited unaffected.
 5. **No proxy deployment** until a trigger fires (F3 verdict). Heartbeat added when the app
    nears real user counts so the free project never pauses.
+
+---
+
+# Part G — Database & local-library layer (audited 2026-09-17)
+
+Scope: the persistence layer (`modules/store.js`), the cloud registry client
+(`modules/supabase.js` + `supabase/schema.sql`), and the online sources that feed the
+Database view (`data/online.js` + the CSP that gates them).
+
+## G0. Health, and how it was established
+
+| Layer | Verdict | Evidence |
+|---|---|---|
+| Cloud registry client + schema | healthy | `supabase-smoke` 25 ✓ · `vault-smoke` 27 ✓ · `streak-smoke` 50 ✓ · `credit-smoke` 37 ✓ |
+| Local store (`modules/store.js`) | healthy after fixes | `store-smoke` — 11 sections, runs `store.js` against `scripts/fake-indexeddb.js` |
+| Online sources (10 keyless) | reachable | `scripts/live-sources.js` — real endpoints, real `Origin: null` CORS ask |
+| Sources ↔ policy sync | now enforced | `scripts/online-sources-smoke.js` — 9 sections, offline |
+
+Neither `store.js` nor the source/policy relationship had any automated coverage before this
+audit; both were review-only. `store.js` underpins every project, revision, preset and brief,
+so it was the largest untested surface in the app.
+
+## G1. Defects found and fixed
+
+| # | Defect | Consequence | Fix |
+|---|---|---|---|
+| 1 | `api.quotable.io` certificate expired 2024-09-10, never renewed (host still answers 200) | the Quotes source was permanently dead while looking live | repointed at the maintained mirror of the same dataset; parser accepts both payload shapes |
+| 2 | `connect-src` never allowed `coverr.co` | the Coverr source could not fetch at all — read as "no clips" | host added |
+| 3 | `img-src` allowed API hosts but not the CDNs results come back on (5 hosts) | fetched images rendered broken | all result hosts enumerated, with the reason each one is needed |
+| 4 | The font card was marked "live" off `fontPreview()`, which is a local array | a permanently false status; nothing checked the CDN | `ONLINE.checkFontCdn()` asks the CDN for the stylesheet the preview uses; `connect-src` gained `fonts.googleapis.com` |
+| 5 | A failing source was retried on every call, and one failure marked the whole view offline | a dead provider cost a request per scene in the AI photo pass | per-source failure pacing (§G2) + per-card status |
+| 6 | `put()` resolved from the request callback, before the transaction committed | the localStorage migration could delete its copy while the write was still uncommitted — one project becoming none | writes resolve on commit |
+| 7 | A refused write (quota) was dropped and the connection torn down | silent data loss; a refusal is not a broken connection | value stays pending and is reported; only connection errors reconnect |
+| 8 | Companies House source landed without a `connect-src` entry and without a grid card | fetch blocked; listed in the panel with no way to run it | host allowed; card routes to its purpose-built lookup panel |
+| 9 | The sync guard only read URL literals inside `request()` calls | any source that built its URL in a helper escaped the check entirely | the scan follows one level of indirection (locals + helper bodies) |
+
+Defects 8 and 9 were found *by* the new guard, which is the point of having it: it fails on
+exactly the class of bug that hid #1–#4 for as long as it did.
+
+## G2. Now built
+
+**Per-source failure pacing** (`data/online.js`) — every read goes through `_cachedFor()`, which
+applies the pure `dueForRetry` maths per source. A success is never held back (the response
+cache already dedupes; refusing a working source would answer a click with an error). A failure
+widens the gap (15 s → 30 s → 60 s … capped at 5 min), so a provider that is down is asked less
+often the harder it struggles. A user click outranks the pacer via `allowSourceNow()` while
+keeping the failure count, so the *next* gap is wider. `sourceHealth(id)` reports failures, the
+last real error, cooling state and countdown to the card badge.
+
+**Local-library reporting** (`AppStore.usage/quota/persistence/requestPersistence` + a card in
+Database ▸ Local library) — measures the store with one cursor walk, reports real UTF-8 bytes
+per group (counts come from the in-memory copies, so they cost nothing), the origin's real
+quota, and whether the data is protected from automatic eviction with a one-click
+`persist()`. Also a backup/restore pair: one file of every stored key as the exact string the
+store holds (re-encoding a value the app failed to parse is how a backup loses what it was
+meant to save), and a restore that validates, previews per-key sizes and overwrites.
+
+## G3. Postgres/IndexedDB research: what to do *differently* for a desktop app
+
+These are Electron-specific answers to questions the Postgres/SQLite world answers
+mechanically:
+
+- **Never cascade-delete on migration.** Learning from #6: pick a migrate-then-delete order
+  (write, verify commit, then delete the old copy), exactly as the boot path now does.
+- **Storage limits are invisible.** SQLite files at least have a size a user can see in
+  Finder. IndexedDB quota is per-origin, opaque and can be *reduced* by the browser under
+  pressure. A quota bar plus an eviction-protection request is the desktop equivalent of
+telling a user where their database file lives — do not skip it.
+- **Best-effort storage is the default.** A browser-facing app loses data to a cleanup pass;
+  a SQLite file does not. Anything that claims durability must call `persist()`.
+- **Wipe-on-reinstall.** Clearing site data (or a reinstall in a fresh profile) wipes every
+  project. This is what makes the backup button a data-integrity feature, not a nicety.
+- **No `SELECT … ORDER BY` on the walk.** IndexedDB cursors walk in key order only; anything
+  that needs sorting (projects by recency, revisions by time) sorts in memory. Fine at this
+  scale, worth knowing before someone reaches for an index they cannot have.
+- **Single-writer per origin.** Two windows of the studio are two writers to one store;
+  `onversionchange` is the only coordination primitive. The store drops its handle and reopens
+  rather than fighting over it — extend that discipline to any new writer (the cloud vault
+  sync is the obvious candidate).
+
+## G4. Remaining enhancements, ordered by value
+
+1. **Migration path for the stored JSON.** Values are opaque `*.v1` JSON blobs; the only
+   version signal is the key name. A shape change to a project would force "keep the old key
+   forever or lose data". A `schemaVersion` inside each blob (or a per-key version registry)
+   plus a forward-migration runner is the single highest-value durability item left.
+2. **Carry attribution into assets.** Openverse already returns licence, creator and source per
+   image; the builder's footer uses it, but the Assets tab drops it. Storing the licence record
+   with the asset and emitting a credits file at handoff is what makes the library defensible
+   for client work. Pair with "pin to Assets" on any result and URL-hash dedupe.
+3. **Retention policy for autosave history.** Revisions are the largest thing most creators
+   store and nothing prunes them (`clearRevisions` is all-or-nothing). Age/count caps with a
+   dimmed "restore anyway" path, or rewind-by-session, would fix the main long-run growth term.
+4. **Per-project size breakdown.** `usage()` reports totals and groups; the next question a
+   creator asks is which project is the heavy one (inlined photos). Same cursor walk, grouped
+   by project id inside the projects blob.
+5. **Backup destination awareness.** A backup that lands in the Downloads folder is gone with
+   the machine. Offering the cloud vault (signed-in) or a chosen external folder turns the
+   existing export into real disaster recovery — this is also the mechanism that makes
+   wipe-on-reinstall survivable.
+6. **Incremental revisions.** Storing full snapshots is simple and safe but grows linearly;
+   diffing against the previous revision would cut storage several-fold at this scale.
+7. **Rate-limit awareness for keyless sources.** Openverse and the Wikimedia REST API are
+   shared free infrastructure. The new pacer backs off on failure; it does not yet respect a
+   budget or a 429's `Retry-After`. Reading that header is a small change with a real
+   courtesy payoff.
+8. **Coverage for the panel's wiring.** `online-sources-smoke` checks statically that every
+   card has controls and every host is allowed; the actual fetch → render → apply path is only
+   exercised by hand in the preview. A DOM-level test (or a tiny harness that drives the
+   panel's own handlers) would close the last gap between "the strings are right" and "the
+   feature works".
+
+## G5. Test map after this audit
+
+| Suite | Covers |
+|---|---|
+| `scripts/store-smoke.js` (+ `fake-indexeddb.js`) | debounce/latest-wins, commit-before-resolve, refused-write retention, serializer that throws, reconnect after a mid-read failure, version change, no-database fallback, usage/quota/persistence reporting |
+| `scripts/online-sources-smoke.js` | CSP enumeration, source→policy sync (both directions, following one level of indirection), every card runnable, parser shapes against real payloads, response cache, failure pacing, font-CDN check |
+| `scripts/live-sources.js` (network, not in the gate) | every keyless source against its real endpoint, CORS with the origin the packaged build sends, `CERT_HAS_EXPIRED` named as "source is dead" |
+| `supabase-smoke` · `vault-smoke` · `streak-smoke` · `credit-smoke` | registry client against an interface-faithful mock |
+
+---
+
+# Part H — The local database, round two
+
+Round two added four data modules, three new suites (plus two folded into existing ones), and
+found one bug that had already shipped and six more still sitting in the tree.
+
+## H1. What the store could not previously say
+
+| Question | Before | Now |
+|---|---|---|
+| What format is each stored value in? | Nothing. The `.v1` suffix was a naming accident, so a shape change meant "keep the old shape forever" or "lose the data". | `data/schema.js` — a per-key version registry with forward migrations, a sidecar, and a boot pass that runs BEFORE hydration |
+| Can those values actually be read? | Nothing. A blob that no longer parses looked identical to a healthy one: right size, empty list. | `AppStore.audit()` walks the real store and classifies every key: ok, unparseable, unexpected shape, unknown |
+| What does autosave history weigh, and can it be pruned? | Nothing. 12 snapshots a project, 24 MB ceiling, then the next snapshot was refused in silence. | `data/revs-policy.js` — age / per-project / byte-budget rules, previewed before they apply, with the newest snapshot of every project protected from all three |
+| What is in a backup file, and what would restoring do? | "This replaces the studio's local database with the backup, then reloads." | `data/library-merge.js` — the file is inspected, compared key by key, and offered as a MERGE (add what is missing, keep the newer copy of anything both have) or a replace, per key |
+| Is a struggling provider being asked less often? | Exponential backoff, guessed. A `429` was treated as an ordinary failure. | `Retry-After` (both spec forms) and `X-RateLimit-Reset` are obeyed, clamped to 30 minutes, surfaced as a distinct `rate limited` badge with a countdown |
+
+## H2. Defects found and fixed in this round
+
+1. **A shipped global-scope collision.** `data/library-merge.js` declared `const KINDS`, which already belonged to another module. A duplicate lexical declaration is a `SyntaxError` for the WHOLE file: the module never ran, and the Database view reported every stored format as `unknown` while looking perfectly calm. The three new modules are now IIFE-wrapped, and `scripts/global-scope-smoke.js` fails the release gate on any duplicate top-level declaration across the shell's 59 scripts.
+2. **Six further collisions in the tree, still live.** Same guard, found rather than fixed (they are in the AI/copy modules, which another agent is editing): `pack` (data/ai-scope.js vs data/ai-niches-extra.js — different signatures), `orderSections` (data/ai-fingerprint.js vs data/ai-compose.js — 2 vs 3 arguments), `hash` (data/ai-fingerprint.js vs data/copy.js — different algorithms), `seededShuffle`, `clip`, `files`. Function declarations do not throw; the last file loaded silently wins, so whichever module is earlier is running somebody else's implementation. Reported as warnings in the gate, not failures.
+3. **The registry was missing a key.** `pallettai.seeded.v1` is written by the app, so the format map was incomplete — which is exactly the drift the new suite exists to catch, and it caught it on the first run.
+4. **Two defects in the new code, both found by its own tests.** `runLibrary` deliberately parses only the values it must convert (parsing every inlined photo at boot would cost real time), so a value that needs no migration and is nonetheless unreadable is the integrity walk's job — the split is now asserted rather than assumed. And a retention budget can be exceeded by design: the last snapshot of a project is protected from the byte cap too, so a policy may free less than requested rather than empty a project.
+5. **Copy that misread its own numbers.** "Adds 1 item that exist only in the backup" and a row rendering as `+1+115 B` are now "that exists" and "merge +1 item … grows 115 B".
+
+## H3. The four new live sources
+
+All keyless, all verified against the real endpoints with the `Origin: null` the packaged build sends, and all now covered by the CSP guard:
+
+- **Iconify** (`api.iconify.design`) — 200,000+ open-source interface icons. The SVG is fetched and INLINED as a data URL, so an exported site carries its own icons instead of hot-linking somebody's API.
+- **Nager.Date** (`date.nager.at`) — official public holidays for 100+ countries, with the regional ones marked as regional. Feeds a closures table for a business site.
+- **Open-Meteo** (`api.open-meteo.com` + `geocoding-api` + `api.postcodes.io`) — today's conditions and a three-day outlook for a town, a UK postcode or `lat,lon`, and it resolves the place once so the live forecast widget is added with coordinates that are known to work.
+- **TheMealDB** (`www.themealdb.com`, API and images) — dishes, categories, cuisines, photos and method text for food businesses.
+
+Two of them are not new providers at all: Open-Meteo already backs the exported weather widget, and Iconify already appeared in `img-src` — what was missing was the panel's half of the feature.
+
+## H4. Test map added in this round
+
+| Suite | Covers |
+|---|---|
+| `scripts/schema-smoke.js` | registry ↔ the app's own key list (read out of `app.js`, so it cannot drift), plan maths, real migrations, refusals that leave the original byte-for-byte, version-advance-only-after-commit, idempotence, and the boot ORDER (upgrade before hydration) |
+| `scripts/revs-policy-smoke.js` | rule clamping, per-project age/count, the byte budget, the protected newest snapshot, apply-without-mutating, drop ordering, quota pressure levels, presets |
+| `scripts/library-merge-smoke.js` | backup validation, key-by-key comparison, union (nothing lost, newer wins, self-merge is a no-op), asset dedupe, snapshot union and cap, settings gap-fill, merge vs replace plans, per-key selection |
+| `scripts/global-scope-smoke.js` | duplicate top-level declarations across every script the shell loads |
+| `scripts/store-smoke.js` §10b | the integrity walk: unparseable, wrong-shape, unknown-key, and that the audit does not touch what it cannot read |
+| `scripts/online-sources-smoke.js` §7, §10 | payload shapes for all four new sources; `Retry-After` in both forms, the 30-minute clamp, a hold surviving a click, and recovery on success |
+
+## H5. Still to do, in value order
+
+1. **Rename the six colliding globals** and wrap the affected data modules — the guard reports them, and each is a latent last-wins bug.
+2. **A DOM-level test for the panel.** The suites check wiring statically and parsers in isolation; the fetch → render → apply path is still only exercised by hand in the preview.
+3. **Attribution credits file at handoff.** Openverse already returns licence, creator and source per image, and it is stored on the section; emitting a `credits.txt` with the export is what makes an asset library defensible for client work.
+4. **Pin any result to the Assets tab** with URL-hash dedupe (the fingerprint function is already in `data/schema.js` for exactly this).
+5. **Format upgrades for the remaining keys.** Only projects and assets have migrations today; the registry rows for the others exist so the next shape change attaches a migration rather than starting from nothing.

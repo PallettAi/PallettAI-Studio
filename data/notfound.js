@@ -91,21 +91,36 @@ const NotFound = (() => {
   // compatible with the export as it is built: styles and scripts are inline,
   // images come from the project's own URLs, and nothing the site does needs
   // an eval — so no `unsafe-eval`, and no `unsafe-inline` for scripts.
-  function headers(project) {
+  // The policy has to permit what the export actually tells the browser to do.
+  // It previously did not: analytics was blocked outright (the hosts were never
+  // allowed, so enabling Analytics in the Studio produced silence), and so were
+  // the form services and booking embeds the app offers. An allow-list that
+  // omits a configured feature is not "hardening", it is a broken site with a
+  // security label on it. Only hosts the Studio itself configures are added.
+  function headers(project, settings) {
     const site = (project && project.site) || {};
+    const s = settings || {};
     const external = ['https://fonts.googleapis.com', 'https://fonts.gstatic.com'];
     const imgHosts = ['https:', 'data:'];
+    const analyticsId = String(s.analyticsId || '').trim();
+    const plausible = s.analyticsProvider === 'plausible';
+    const scriptHosts = analyticsId ? [plausible ? 'https://plausible.io' : 'https://www.googletagmanager.com'] : [];
+    const connectHosts = analyticsId
+      ? (plausible ? ['https://plausible.io'] : ['https://www.google-analytics.com', 'https://www.googletagmanager.com'])
+      : [];
+    const scriptSrc = ["'self'", "'unsafe-inline'"].concat(scriptHosts).join(' ');
+    const connectSrc = ["'self'"].concat(connectHosts).join(' ');
     const csp = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline'",
+      'script-src ' + scriptSrc,
       "style-src 'self' 'unsafe-inline'",
       "img-src " + imgHosts.join(' '),
       "font-src 'self' " + external.join(' '),
-      "connect-src 'self'",
-      "frame-src https://www.youtube.com https://player.vimeo.com https://maps.google.com",
+      'connect-src ' + connectSrc,
+      "frame-src https://www.youtube.com https://player.vimeo.com https://www.google.com https://maps.google.com https://open.spotify.com https://calendly.com https://cal.com https://tidycal.com https://coverr.co",
       "object-src 'none'",
       "base-uri 'self'",
-      "form-action 'self' https://formspree.io https://api.web3forms.com",
+      "form-action 'self' https://formspree.io https://api.web3forms.com https://formsubmit.co",
       "frame-ancestors 'self'"
     ].join('; ');
 
@@ -144,7 +159,7 @@ const NotFound = (() => {
     const out = [];
     const page = html(project, render, opts);
     if (page) out.push({ name: '404.html', content: page });
-    out.push({ name: '_headers', content: headers(project) });
+    out.push({ name: '_headers', content: headers(project, (opts && opts.settings) || {}) });
     out.push({ name: '_redirects', content: redirects() });
     out.push({ name: '.nojekyll', content: nojekyll() });
     return out;

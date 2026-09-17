@@ -115,6 +115,12 @@ body.photo-grade{
   function pagesOf(project) { return normalizePages(project); }
   function pageHref(pg) { return (String(pg.slug || slugify(pg.name)) + '.html').replace(/^index\.html$/, 'index.html'); }
 
+  // Pages a visitor can navigate to. Generated legal pages are rendered, linked
+  // from the footer and listed in the sitemap, but they must not compete with
+  // the real navigation — nor be mistaken for the page that owns the contact
+  // form when the nav's Contact link is worked out.
+  function visiblePages() { return _ctx.pages.filter((pg) => pg && pg.hidden !== true); }
+
   // Current build context (set while a page is being rendered).
   let _ctx = { pages: [], page: null };
 
@@ -125,8 +131,9 @@ body.photo-grade{
     const arr = Array.isArray(p.site.sections) ? p.site.sections : [];
     const local = arr.findIndex((x) => x.type === 'contact');
     if (local !== -1) return '#sec-contact-' + local;
-    if (_ctx.pages.length > 1) {
-      for (const pg of _ctx.pages) {
+    const others = visiblePages();
+    if (others.length > 1) {
+      for (const pg of others) {
         if (pg === _ctx.page || !Array.isArray(pg.sections)) continue;
         const i = pg.sections.findIndex((x) => x.type === 'contact');
         if (i !== -1) return pageHref(pg) + '#sec-contact-' + i;
@@ -141,6 +148,44 @@ body.photo-grade{
     const mail = String((p.site && p.site.email) || '').trim();
     if (mail) return mail.indexOf('@') !== -1 ? 'mailto:' + mail : '#top';
     return '#top';
+  }
+
+  /*
+    The project as the SITE sees it, rather than as the current file sees it.
+
+    On a legal page the current file's sections ARE the policy, so a contact
+    index read from them (`#sec-contact-3`) names the wrong block once it is
+    prefixed with the home file name — the home page may have three sections.
+    Everything the nav and footer point at has to be read through the page a
+    visitor would land on.
+  */
+  function siteProject(p) {
+    const page = _ctx.page;
+    if (!page || !page.legal) return p;
+    const home = _ctx.pages.filter((pg) => pg && pg.hidden !== true)[0] || _ctx.pages[0];
+    if (!home || !Array.isArray(home.sections)) return p;
+    return { ...p, site: { ...p.site, sections: home.sections } };
+  }
+
+  /*
+    Where an in-page anchor has to point FROM the page being rendered.
+
+    A generated legal page is a separate FILE, so a bare `#top` or `#sec-…`
+    stays inside that file and the site becomes unreachable — on a single-page
+    site every nav and footer link was a dead end, with no way back to the
+    homepage at all. On a legal page the site's own file name is prefixed, and
+    on every other page the anchor is left exactly as it was.
+  */
+  function anchorRef(href) {
+    const page = _ctx.page;
+    const target = href || '#top';
+    // `page.legal` is the page's kind ('privacy' / 'cookies' / 'terms'), so the
+    // test is truthiness — comparing it to `true` silently skipped every legal
+    // page and left the nav pointing at anchors that exist only on the home file.
+    if (!page || !page.legal || target.charAt(0) !== '#') return target;
+    const home = _ctx.pages.filter((pg) => pg && pg.hidden !== true)[0] || _ctx.pages[0];
+    if (!home || home === page) return target;
+    return pageHref(home) + target;
   }
 
   // ---------------- form delivery ----------------
@@ -713,17 +758,97 @@ body.photo-grade{
       </aside>`);
   }
 
+  // The ways a visitor can reach a business, as data rather than as markup.
+  // One source, so a variant that wants tiles and one that wants a single inline
+  // line cannot disagree about which details exist — and a detail the owner has
+  // not filled in is absent from both, rather than an empty bullet on the page.
+  function contactChannels(p) {
+    const wa = p.site.whatsapp && p.site.whatsapp.number
+      ? `https://wa.me/${esc(p.site.whatsapp.number)}${p.site.whatsapp.message ? '?text=' + encodeURIComponent(p.site.whatsapp.message) : ''}`
+      : '';
+    return [
+      p.site.email ? { icon: '✉️', label: 'Email us', href: 'mailto:' + p.site.email, value: p.site.email } : null,
+      p.site.phone ? { icon: '📞', label: 'Call us', href: 'tel:' + p.site.phone.replace(/[^0-9+]/g, ''), value: p.site.phone } : null,
+      p.site.address ? { icon: '📍', label: 'Find us', href: '', value: p.site.address } : null,
+      p.site.whatsapp && p.site.whatsapp.number ? { icon: '💬', label: 'WhatsApp', href: wa, value: p.site.whatsapp.label || p.site.whatsapp.number } : null
+    ].filter(Boolean);
+  }
+
   function renderContact(p, s, i) {
     const pro = (p.suites || []).includes('contactpro');
-    const info = [
-      p.site.email ? `<li>✉️ <a href="mailto:${esc(p.site.email)}">${esc(p.site.email)}</a></li>` : '',
-      p.site.phone ? `<li>📞 <a href="tel:${esc(p.site.phone.replace(/[^0-9+]/g, ''))}">${esc(p.site.phone)}</a></li>` : '',
-      p.site.address ? `<li>📍 ${esc(p.site.address)}</li>` : ''
-    ].filter(Boolean).join('');
+    const channels = contactChannels(p);
+    const info = channels.map((c) => `<li>${c.icon} ${c.href ? `<a href="${esc(c.href)}"${/^https?:/.test(c.href) ? ' target="_blank" rel="noopener"' : ''}>${esc(c.value)}</a>` : esc(c.value)}</li>`).join('');
+    const line = channels.map((c) => (c.href ? `<a href="${esc(c.href)}"${/^https?:/.test(c.href) ? ' target="_blank" rel="noopener"' : ''}>${esc(c.value)}</a>` : `<span>${esc(c.value)}</span>`)).join('<span class="cm-sep">·</span>');
     const whatsapp = pro && p.site.phone
       ? `<a class="btn ghost wa" href="https://wa.me/${esc(p.site.phone.replace(/[^0-9]/g, ''))}" target="_blank" rel="noopener">💬 WhatsApp us</a>` : '';
     const map = pro && p.site.address
       ? `<iframe class="map" src="https://maps.google.com/maps?q=${encodeURIComponent(p.site.address)}&output=embed" loading="lazy" title="Map"></iframe>` : '';
+    const note = `<p class="form-note">${esc(s.extra || 'We reply within one business day.')}</p>`;
+
+    // Every variant ships the same three fields with the same names and the same
+    // data-contact hook: the delivery pipeline, the client editor and the exported
+    // form all key off those, so a layout choice can never change what is sent.
+    const fields = (rows, paired) => `
+          ${paired ? '<div class="cf-row">' : ''}
+          <input name="name" placeholder="Your name" required>
+          <input name="email" type="email" placeholder="Your email" required>
+          ${paired ? '</div>' : ''}
+          <textarea name="message" rows="${rows}" placeholder="Tell us about your project…" required></textarea>`;
+
+    // Tiles — details as three cards across the top, form wide underneath.
+    if (s.layout === 'cards') {
+      const tiles = channels.slice(0, 3).map((c) => `
+          <li class="ct-tile"><span class="ct-ico">${c.icon}</span><b>${esc(c.label)}</b>${c.href ? `<a href="${esc(c.href)}"${/^https?:/.test(c.href) ? ' target="_blank" rel="noopener"' : ''}>${esc(c.value)}</a>` : `<span>${esc(c.value)}</span>`}</li>`).join('');
+      return sectionShell(s, i, `
+      <div class="contact-cards">
+        ${head(s)}
+        ${s.text ? `<p class="sub">${esc(s.text)}</p>` : ''}
+        ${tiles ? `<ul class="contact-tiles">${tiles}</ul>` : ''}
+        <form class="contact-form card contact-wide" data-contact data-form="Contact message">
+          ${fields(3, true)}
+          <button class="btn solid" type="submit">Send message</button>
+          ${note}
+        </form>
+      </div>
+      ${map}`);
+    }
+
+    // Minimal — one narrow column, no card, details on a single line.
+    if (s.layout === 'minimal') {
+      return sectionShell(s, i, `
+      <div class="contact-min">
+        ${head(s)}
+        ${s.text ? `<p class="sub">${esc(s.text)}</p>` : ''}
+        ${line ? `<p class="contact-min-line">${line}</p>` : ''}
+        <form class="contact-form form-bare" data-contact data-form="Contact message">
+          ${fields(4, false)}
+          <button class="btn solid" type="submit">Send message</button>
+          ${note}
+        </form>
+        ${whatsapp}
+      </div>
+      ${map}`);
+    }
+
+    // Overlap — a tall gradient panel with the form card riding over its edge.
+    if (s.layout === 'overlap') {
+      return sectionShell(s, i, `
+      <div class="contact-overlap">
+        <div class="co-panel">
+          ${head(s)}
+          ${s.text ? `<p>${esc(s.text)}</p>` : ''}
+          <ul class="contact-list">${info}</ul>
+          ${whatsapp}
+        </div>
+        <form class="contact-form card co-card" data-contact data-form="Contact message">
+          ${fields(4, false)}
+          <button class="btn solid" type="submit">Send message</button>
+          ${note}
+        </form>
+      </div>
+      ${map}`);
+    }
+
     const cSplit = s.layout === 'split';
     return sectionShell(s, i, `
       <div class="contact-grid ${cSplit ? 'c-split' : ''}">
@@ -734,11 +859,9 @@ body.photo-grade{
           ${whatsapp}
         </div>
         <form class="contact-form card" data-contact data-form="Contact message">
-          <input name="name" placeholder="Your name" required>
-          <input name="email" type="email" placeholder="Your email" required>
-          <textarea name="message" rows="5" placeholder="Tell us about your project…" required></textarea>
+          ${fields(5, false)}
           <button class="btn solid" type="submit">Send message</button>
-          <p class="form-note">${esc(s.extra || 'We reply within one business day.')}</p>
+          ${note}
         </form>
       </div>
       ${map}`);
@@ -1094,14 +1217,35 @@ body.photo-grade{
   };
 
   // ---------------- nav ----------------
+  // WhatsApp click-to-chat — floating-button styles. Emitted only when the
+  // site actually sets a WhatsApp number, so exports without one stay
+  // byte-identical. Sits above the Tawk chat bubble, honours the visitor's
+  // reduced-motion setting, and uses the brand primary so it belongs to the
+  // site rather than floating in as a foreign widget.
+  function waCss(p) {
+    const wa = p.site && p.site.whatsapp;
+    if (!wa || !wa.number) return '';
+    const pal = DB.getPalette(p.site.palette) || {};
+    const brand = /^#[0-9a-fA-F]{3,8}$/.test(String(pal.primary || '')) ? pal.primary : '#25D366';
+    return `<style>
+.wa-fab{position:fixed;right:18px;bottom:78px;width:54px;height:54px;border-radius:50%;background:${brand};color:#fff;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(0,0,0,.25);z-index:60;text-decoration:none;transition:transform .15s ease}
+.wa-fab svg{width:28px;height:28px;fill:currentColor}
+.wa-fab:hover{transform:translateY(-2px)}
+.wa-fab:focus-visible{outline:3px solid currentColor;outline-offset:2px}
+@media (max-width:640px){.wa-fab{right:14px;bottom:70px;width:48px;height:48px}.wa-fab svg{width:24px;height:24px}}
+@media (prefers-reduced-motion:reduce){.wa-fab{transition:none}}
+</style>`;
+  }
+
   function buildNav(p) {
     const s = p.site;
-    const multi = _ctx.pages.length > 1;
+    const navPages = visiblePages();
+    const multi = navPages.length > 1;
     const page = _ctx.page;
     const links = [];
     if (multi) {
       // multi-page sites navigate between pages
-      _ctx.pages.forEach((pg) => {
+      navPages.forEach((pg) => {
         const here = pg === page;
         // The current page says so. A keyboard or screen-reader visitor is
         // otherwise told nothing about where in the site they have landed,
@@ -1113,18 +1257,22 @@ body.photo-grade{
           : ' class="page-link" data-page="' + esc(pg.id) + '"'}>${esc(pg.name)}</a>`);
       });
     } else {
+      // On a generated legal page the nav has to describe the SITE, not the
+      // document the visitor is standing on — a nav built from the privacy
+      // page's own sections offers "What you get", which is a clause list.
+      const navProject = siteProject(p);
       const seen = {};
-      s.sections.forEach((sec, i) => {
+      navProject.site.sections.forEach((sec, i) => {
         if (!seen[sec.type] && ['features', 'pricing', 'gallery', 'about', 'blog', 'shop', 'faq', 'testimonials', 'booking'].includes(sec.type)) {
           seen[sec.type] = true;
-          links.push(`<a href="#sec-${sec.type}-${i}">${esc(DB.sectionTypes[sec.type].name)}</a>`);
+          links.push(`<a href="${anchorRef('#sec-' + sec.type + '-' + i)}">${esc(DB.sectionTypes[sec.type].name)}</a>`);
         }
       });
-      links.push(`<a href="${contactRef(p)}">Contact</a>`);
+      links.push(`<a href="${anchorRef(contactRef(navProject))}">Contact</a>`);
     }
     const cart = (p.suites || []).includes('shop') ? `<button class="cart-btn" data-cart="open">🛒<span class="cart-count" hidden>0</span></button>` : '';
     const themeBtn = s.themeToggle === false ? '' : `<button class="theme-btn" aria-label="Toggle dark or light theme">🌙</button>`;
-    const cta = s.navCta ? `<a class="btn solid small nav-cta" href="${esc(safeHref(s.ctaLink, contactRef(p)))}">${esc(s.navCta)}</a>` : '';
+    const cta = s.navCta ? `<a class="btn solid small nav-cta" href="${esc(anchorRef(safeHref(s.ctaLink, contactRef(p))))}">${esc(s.navCta)}</a>` : '';
     const cls = (s.navSticky === false ? ' static' : '') + (s.navStyle === 'transparent' ? ' transparent' : '');
     const mark = s.logo
       ? `<span class="brand-mark"><img src="${esc(s.logo)}" alt="" style="aspect-ratio:1/1"></span>`
@@ -1132,7 +1280,7 @@ body.photo-grade{
     return `
     <nav class="nav${cls}">
       <div class="nav-inner container">
-        <a class="brand" href="#top">${mark}${esc(s.name || 'My Site')}</a>
+        <a class="brand" href="${anchorRef('#top')}">${mark}${esc(s.name || 'My Site')}</a>
         <div class="nav-links">${links.join('')}</div>
         ${cart}
         ${themeBtn}
@@ -1211,6 +1359,10 @@ body.photo-grade{
       ? p.site.socials.map((so) => `<a class="social" href="${esc(safeHref(so.url, '#'))}" target="_blank" rel="noopener" aria-label="Social">${esc(so.icon || '•')}</a>`).join('')
       : ['𝕏', 'in', 'ig', '▶'].map((s2) => `<a class="social" href="#" aria-label="Social">${s2}</a>`).join(''));
     const mark = p.site.logo ? `<img src="${esc(p.site.logo)}" alt="" style="aspect-ratio:1/1">` : '◆ ';
+    // Privacy, cookies and terms — small, on every page, and only when the
+    // export actually carries those files (see data/legal.js).
+    const footLegal = (typeof Legal !== 'undefined' && Legal.footerLinks) ? Legal.footerLinks(settings) : '';
+    const footPages = visiblePages();
     return `
     <footer class="footer">
       <div class="container foot-grid">
@@ -1229,18 +1381,19 @@ body.photo-grade{
           <strong>Explore</strong>
           ${(Array.isArray(p.site.navLinks) && p.site.navLinks.length
             ? p.site.navLinks.filter(x=> x && x.visible!==false).map(it => `<p><a href="${esc(safeHref(it.href||'#','#'))}">${esc(it.label||it.href||'Link')}</a></p>`).join('')
-            : (_ctx.pages.length > 1
-            ? _ctx.pages.map((pg) => {
+            : (footPages.length > 1
+            ? footPages.map((pg) => {
                 const here = pg === _ctx.page;
-                return `<p><a href="${here ? '#top' : pageHref(pg)}"${here ? '' : ' class="page-link" data-page="' + esc(pg.id) + '"'}>${esc(pg.name)}</a></p>`;
+                return `<p><a href="${here ? anchorRef('#top') : pageHref(pg)}"${here ? '' : ' class="page-link" data-page="' + esc(pg.id) + '"'}>${esc(pg.name)}</a></p>`;
               }).join('')
-            : `<p><a href="#top">Home</a></p><p><a href="${contactRef(p)}">Contact</a></p>`))}
+            : `<p><a href="${anchorRef('#top')}">Home</a></p><p><a href="${anchorRef(contactRef(siteProject(p)))}">Contact</a></p>`))}
         </div>
       </div>
       ${imageCreditsHTML(p)}
       ${translationCredit(p)}
       <div class="container foot-end">
         <p>© ${year} ${esc(p.site.name || 'My Site')}. All rights reserved.</p>
+        ${footLegal}
         ${made}
       </div>
       ${settings.proExport === true ? '' : `
@@ -1804,6 +1957,9 @@ body.theme-dark .hero-tag{color:#e8eaf2}
 .socials,.social{display:inline-block;margin:14px 8px 0 0;width:38px;height:38px;border-radius:10px;background:color-mix(in srgb,var(--text) 8%,transparent);display:grid;place-items:center;font-size:.85rem;font-weight:700}
 .foot-end{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:20px 24px;border-top:1px solid color-mix(in srgb,var(--text) 8%,transparent);color:var(--muted);font-size:.85rem;flex-wrap:wrap}
 .foot-credits{border-top:1px solid color-mix(in srgb,var(--text) 6%,transparent);padding:16px 24px;color:var(--muted);font-size:.76rem;line-height:1.9}
+.foot-legal{margin:0;display:flex;gap:10px;flex-wrap:wrap}
+.foot-legal a{color:inherit;text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--text) 20%,transparent)}
+.foot-legal a:hover{color:var(--primary-text);border-color:var(--primary)}
 .foot-credits b{color:var(--text);font-weight:700;margin-right:8px}
 .foot-credits a{color:var(--muted);text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--text) 28%,transparent);text-underline-offset:2px}
 .foot-credits a:hover{color:var(--primary-text)}
@@ -1877,6 +2033,38 @@ ${settings.proExport === true ? '' : `
 .contact-grid.c-split .c-panel .sub{color:rgba(255,255,255,.8)}
 .contact-grid.c-split .c-panel .contact-list a{color:#fff;text-decoration:underline;text-underline-offset:3px}
 .contact-grid.c-split .contact-form{box-shadow:var(--shadow)}
+/* contact: tile row — details as cards, form wide beneath */
+.contact-cards{display:grid}
+.contact-cards .sec-head{text-align:center;margin-left:auto;margin-right:auto}
+.contact-cards>.sub{text-align:center;margin-left:auto;margin-right:auto}
+.contact-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;list-style:none;padding:0;margin:0 0 28px}
+.ct-tile{display:flex;flex-direction:column;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:calc(var(--radius) * .55);padding:22px 20px}
+.ct-tile b{font-size:.72rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.ct-tile a,.ct-tile span{color:var(--text);text-decoration:none;word-break:break-word}
+.ct-tile a:hover{color:var(--primary)}
+.ct-ico{font-size:1.3rem;line-height:1}
+.contact-wide{width:100%;max-width:720px;margin:0 auto}
+.contact-form .cf-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+/* contact: minimal — one narrow column, no card, details on a line */
+.contact-min{max-width:600px;margin:0 auto;text-align:center}
+.contact-min .sec-head{text-align:center;margin-left:auto;margin-right:auto}
+.contact-min .sub{text-align:center;margin-left:auto;margin-right:auto}
+.contact-min-line{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;color:var(--muted);margin:4px 0 28px}
+.contact-min-line a{color:var(--text);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--primary) 45%,transparent)}
+.cm-sep{opacity:.45}
+.form-bare{display:grid;gap:14px;text-align:left;background:none;border:0;box-shadow:none;padding:0}
+.form-bare input,.form-bare textarea{background:transparent;border:0;border-bottom:1px solid var(--border);border-radius:0;padding:10px 2px;color:var(--text);width:100%;font:inherit}
+.form-bare input:focus,.form-bare textarea:focus{border-bottom-color:var(--primary)}
+.form-bare textarea{resize:vertical}
+/* contact: overlap — gradient panel with the form riding over its edge */
+.contact-overlap{display:grid;grid-template-columns:.95fr 1.05fr;align-items:center}
+.contact-overlap .co-panel{background:var(--grad);border-radius:var(--radius);padding:44px;color:#fff;box-shadow:var(--shadow);align-self:stretch;display:flex;flex-direction:column;justify-content:center}
+.contact-overlap .co-panel .eyebrow{color:rgba(255,255,255,.85)}
+.contact-overlap .co-panel .sub,.contact-overlap .co-panel p{color:rgba(255,255,255,.82)}
+.contact-overlap .co-panel .contact-list a{color:#fff;text-decoration:underline;text-underline-offset:3px}
+.contact-overlap .co-card{position:relative;z-index:2;margin:26px 0 26px -64px;box-shadow:var(--shadow)}
+@media(max-width:820px){.contact-overlap{grid-template-columns:1fr}.contact-overlap .co-panel{padding:32px}.contact-overlap .co-card{margin:18px 0 0}}
+@media(max-width:560px){.contact-form .cf-row{grid-template-columns:1fr}}
 /* cta: email capture */
 .cta-email{display:flex;align-items:center;justify-content:space-between;gap:28px;text-align:left;flex-wrap:wrap}
 .cta-email .nl-form input{background:rgba(255,255,255,.92);color:#111}
@@ -2008,18 +2196,30 @@ ${motionCSS(p)}
       });
     }
 
-    // cookie banner
+    // cookie banner — and the consent decision that makes it mean something
     if (CFG.cookieBanner) {
-      let accepted = null;
-      try { accepted = localStorage.getItem('pallettai_cookies_ok'); } catch (err) { accepted = null; }
-      if (!accepted) {
+      let choice = null;
+      try { choice = localStorage.getItem('pallettai_cookies_ok'); } catch (err) { choice = null; }
+      // '1' accepted, '0' declined. Either answer is remembered, so nobody is
+      // asked twice and a decline is never quietly turned into a yes.
+      if (choice !== '1' && choice !== '0') {
         const b = document.createElement('div');
         b.className = 'cookie-banner';
-        b.innerHTML = '<span>🍪 This site uses cookies to improve your experience.</span>';
+        b.innerHTML = '<span>🍪 This site uses cookies to measure visits. You can accept or decline.</span>';
+        const remember = (value) => { try { localStorage.setItem('pallettai_cookies_ok', value); } catch (err) {} };
         const ok = document.createElement('button');
         ok.className = 'btn solid small'; ok.textContent = 'Accept';
-        ok.addEventListener('click', () => { try { localStorage.setItem('pallettai_cookies_ok', '1'); } catch (err) {} b.remove(); });
+        ok.addEventListener('click', () => {
+          remember('1');
+          // analytics was held back precisely so this could happen here
+          if (typeof window.__paiAnalytics === 'function') { try { window.__paiAnalytics(); } catch (err) {} }
+          b.remove();
+        });
+        const no = document.createElement('button');
+        no.className = 'btn ghost small'; no.textContent = 'Decline';
+        no.addEventListener('click', () => { remember('0'); b.remove(); });
         b.appendChild(ok);
+        b.appendChild(no);
         document.body.appendChild(b);
       }
     }
@@ -2488,6 +2688,21 @@ ${motionCSS(p)}
       s.src = 'https://embed.tawk.to/' + tw.id + '/default';
       document.body.appendChild(s);
     }
+    // WhatsApp click-to-chat — a plain anchor, not a widget. wa.me opens the
+    // chat in the visitor's own WhatsApp (app on mobile, web.whatsapp.com on
+    // desktop), so nothing here phones home and nothing needs loading.
+    var wa = cfg.whatsapp;
+    if (wa && wa.number) {
+      var waHref = 'https://wa.me/' + wa.number + (wa.message ? '?text=' + encodeURIComponent(wa.message) : '');
+      var fab = document.createElement('a');
+      fab.className = 'wa-fab';
+      fab.href = waHref;
+      fab.target = '_blank';
+      fab.rel = 'noopener';
+      fab.setAttribute('aria-label', wa.label || 'Chat on WhatsApp');
+      fab.innerHTML = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3C9.4 3 4 8.3 4 14.9c0 2.6.8 5 2.3 7L4.6 29l7.3-1.9c1.9 1 4 1.6 6.1 1.6h.1c6.6 0 12-5.3 12-11.9C30 8.3 22.6 3 16 3zm5.9 16.9c-.3.8-1.5 1.5-2.1 1.6-.6.1-1.3.1-2.1-.1-.5-.2-1.1-.4-1.9-.7-3.4-1.5-5.6-4.9-5.8-5.1-.2-.2-1.4-1.8-1.4-3.5 0-1.7.9-2.5 1.2-2.8.3-.3.7-.4 1-.4h.7c.2 0 .5-.1.8.6.3.8 1 2.6 1.1 2.8.1.2.2.4 0 .7-.1.3-.2.4-.4.7-.2.2-.4.5-.6.6-.2.2-.4.4-.2.8.2.4 1 1.7 2.2 2.7 1.5 1.3 2.8 1.8 3.2 2 .4.2.6.1.9-.1.2-.2 1-.9 1.2-1.3.3-.4.5-.3.9-.2.4.1 2.2 1 2.6 1.2.4.2.6.3.7.5.1.2.1 1-.2 1.8z"/></svg>';
+      document.body.appendChild(fab);
+    }
   }
 
   // ---------------- structured data (JSON-LD) ----------------
@@ -2635,6 +2850,9 @@ ${motionCSS(p)}
       // is also what tells the emitted script to do nothing at all.
       concierge: (typeof Concierge !== 'undefined' && Concierge.packFor) ? Concierge.packFor(p.site) : null,
       chat: p.site.chatWidget || null,
+      // WhatsApp click-to-chat: the floating deep link is rendered client-side
+      // per page from this config — no script tag, no third party, no tracking.
+      whatsapp: p.site.whatsapp || null,
       widgetRefresh: settings.widgetRefreshSec || 0 // seconds between live-widget refetches (0 = never)
     };
 
@@ -2651,12 +2869,34 @@ ${motionCSS(p)}
     const customCss = d2.customCss ? `<style>${cssSafe(d2.customCss)}</style>` : '';
     const customJs = d2.customJs ? `<script>${jsSafe(d2.customJs)}<\/script>` : '';
 
-    // analytics
-    const analytics = settings.analyticsId
+    // analytics (the plain tags; consent gating is applied just below)
+    const analyticsPlain = settings.analyticsId
       ? (settings.analyticsProvider === 'plausible'
         ? `<script defer data-domain="${esc(settings.analyticsId)}" src="https://plausible.io/js/script.js"><\/script>`
         : `<script async src="https://www.googletagmanager.com/gtag/js?id=${esc(settings.analyticsId)}"><\/script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${esc(settings.analyticsId)}');<\/script>`)
       : '';
+
+    // analytics — consented, not assumed.
+    //
+    // The cookie banner used to be decorative: it stored a flag that nothing
+    // read, so Google Analytics set its cookies the moment the page loaded
+    // whether or not the visitor had agreed. When the banner is on, analytics
+    // now waits for consent and is started by the banner's Accept button; a
+    // visitor who declines gets the banner once and never a tracking cookie.
+    // When the banner is off the owner has chosen not to ask, and the tags load
+    // exactly as before.
+    const analyticsProvider = settings.analyticsProvider === 'plausible' ? 'plausible' : 'ga4';
+    const analyticsConsentGated = !!(settings.analyticsId && settings.cookieBanner === true);
+    const analytics = (() => {
+      if (!settings.analyticsId || !analyticsConsentGated) return analyticsPlain;
+      const id = JSON.stringify(String(settings.analyticsId).trim()).replace(/</g, '\\u003c');
+      const load = analyticsProvider === 'plausible'
+        ? `var t=document.createElement('script');t.defer=true;t.setAttribute('data-domain',${id});t.src='https://plausible.io/js/script.js';document.head.appendChild(t);`
+        : `var t=document.createElement('script');t.async=true;t.src='https://www.googletagmanager.com/gtag/js?id='+encodeURIComponent(${id});document.head.appendChild(t);window.dataLayer=window.dataLayer||[];window.gtag=function(){window.dataLayer.push(arguments);};window.gtag('js',new Date());window.gtag('config',${id});`;
+      return `<script>(function(){var on=false;window.__paiAnalytics=function(){if(on)return;on=true;${load}};`
+        + `var ok=false;try{ok=localStorage.getItem('pallettai_cookies_ok')==='1'}catch(e){}`
+        + `if(ok)window.__paiAnalytics();})();<\/script>`;
+    })();
 
     // Security hardening starter: exported sites are fully self-contained (inline
     // CSS/JS, no server), so a strict meta CSP would break the inline scripts the
@@ -2714,7 +2954,7 @@ ${meta}${schema}
 ${fontLink}
 ${customFontStyle}
 ${analytics}
-<style>${siteCSS(p, settings)}</style>
+<style>${siteCSS(p, settings)}</style>${waCss(p)}
 ${styleCss}
 ${customCss}
 ${scheduleCss}
@@ -2771,6 +3011,14 @@ ${customJs}
     const focusMod = optionalModule('Focus');
     if (focusMod) html = focusMod.pass(html, { slug: (page && page.slug) || 'index' });
 
+    // Generated legal pages carry their own provenance in the source: a
+    // visitor never sees it, but whoever picks the exported file up does, so a
+    // starting document is not mistaken for a vetted one. Injected here so it
+    // survives the minify pass below.
+    if (page && page.legal && typeof Legal !== 'undefined' && Legal.NOTE) {
+      html = html.replace('</head>', Legal.NOTE + '\n</head>');
+    }
+
     if (settings.minify) {
       html = html.split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
     }
@@ -2808,16 +3056,33 @@ ${customJs}
     return pageRender(project, settings, null);
   }
 
+  /*
+    Attach the generated legal pages, if the feature is on.
+
+    This is the single integration point that puts privacy / cookies / terms on
+    every export route at once — ZIP download, publish, client handoff and the
+    sitemap — because all of them build their page list from here. data/legal.js
+    returns a shallow copy of the project, so the live project in the Studio is
+    never given pages the creator did not add.
+  */
+  function withLegal(project, settings) {
+    try {
+      if (typeof Legal !== 'undefined' && Legal.attach) return Legal.attach(project, settings);
+    } catch (e) { /* an export must never fail because a page group is missing */ }
+    return project;
+  }
+
   // Build every page as a separate standalone HTML file (multi-page export).
   function buildSitePages(project, settings = {}) {
-    const pages = normalizePages(project);
-    return pages.map((pg) => ({ page: pg, html: pageRender(project, settings, pg) }));
+    const built = withLegal(project, settings);
+    const pages = normalizePages(built);
+    return pages.map((pg) => ({ page: pg, html: pageRender(built, settings, pg) }));
   }
 
   // robots.txt + sitemap.xml — added to folder / zip / publish exports.
   // robots.txt ships always; sitemap needs the live URL set in the designer.
   function seoExtras(project, settings = {}) {
-    const pages = normalizePages(project);
+    const pages = normalizePages(withLegal(project, settings));
     const base = String((project.site && project.site.url) || '').trim().replace(/\/+$/, '');
     const xml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const files = [{ name: 'robots.txt', content: 'User-agent: *\nAllow: /\n' + (base ? 'Sitemap: ' + base + '/sitemap.xml\n' : '') }];

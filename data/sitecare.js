@@ -78,9 +78,19 @@ const SiteCare = (() => {
 
   // Money is the context where a past year is a statement of fact, not a
   // historical note. "Est. 1998" is fine; "£249 in 2024" is a live problem.
-  const MONEY = /[£$€]|\b(price|prices|pricing|offer|offers|sale|deal|from|valid|expires?|save|discount)\b/i;
+  //
+  // What counts as money is a FIGURE — a currency symbol or word, or a
+  // percentage — because this used to be a list of English words (price, offer,
+  // valid, from, save) and those are ordinary prose far more often than they are
+  // money. Read in the browser, "We have been trading since 2024 from our
+  // workshop in Digbeth" came out as a stale-price warning. A written amount is
+  // included so "two hundred pounds in 2024" still fires.
+  const MONEY = /[£$€]|\b(pounds?|dollars?|euros?|gbp|usd|eur)\b|\d\s?%/i;
   const YEAR = /\b(19[89]\d|20\d{2})\b/g;
   const ISO_DATE = /\b(19|20)\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b/g;
+  // The same date pattern, used to cut dates out before the year scan. Built
+  // from ISO_DATE's own source so the two can never drift apart.
+  const DATE_MASK = new RegExp(ISO_DATE.source, 'g');
 
   // A section with none of this is a wireframe someone forgot to fill in.
   const TEXT_KEYS = [
@@ -240,9 +250,16 @@ const SiteCare = (() => {
             dm = ISO_DATE.exec(text);
           }
           // 4 — a past year sitting next to money reads as last season's price
-          if (MONEY.test(text)) {
+          //
+          // The years inside a yyyy-mm-dd are cut out first: a date is not a
+          // year, and the date was already reported above. Without this, one
+          // line — "Book before 2025-12-20 for the Christmas price" — produced
+          // two findings and lost 10 points for a single stale sentence, the
+          // second blaming a year that was never written as one.
+          const forYear = text.replace(DATE_MASK, ' ');
+          if (MONEY.test(forYear)) {
             YEAR.lastIndex = 0;
-            let ym = YEAR.exec(text);
+            let ym = YEAR.exec(forYear);
             while (ym) {
               const y = parseInt(ym[1], 10);
               if (y < thisYear) {
@@ -253,7 +270,7 @@ const SiteCare = (() => {
                 timeSensitive += 1;
                 break;
               }
-              ym = YEAR.exec(text);
+              ym = YEAR.exec(forYear);
             }
           }
         });
@@ -375,9 +392,24 @@ const SiteCare = (() => {
     } else {
       const bits = [];
       if (counts.error) bits.push(counts.error + ' unfinished ' + (counts.error === 1 ? 'item' : 'items'));
-      if (counts.warn) bits.push(counts.warn + ' worth checking');
+      // "1 worth checking" is a count with no noun — the singular needs the noun
+      // spelled out, and it costs nothing in the plural.
+      if (counts.warn) bits.push(counts.warn + ' ' + (counts.warn === 1 ? 'item' : 'items') + ' worth checking');
       if (counts.info) bits.push(counts.info + ' note' + (counts.info === 1 ? '' : 's'));
-      summary = 'This site is not ready to hand over: ' + bits.join(', ') + '. Next review ' + ymd(reviewBy) + '.';
+      // The verdict has to match the worst thing found. A site at 98/100 with one
+      // missing alt attribute was told "not ready to hand over: 1 note" — which
+      // is the crying-wolf failure this file's own header warns against, and it
+      // does not parse as a sentence either. Only real unfinished copy earns the
+      // strong line, and the weaker two still have to be worth reading.
+      const list = bits.join(', ');
+      if (counts.error) {
+        summary = 'This site is not ready to hand over: ' + list + '.';
+      } else if (counts.warn) {
+        summary = 'Nothing unfinished, but worth a look before you hand over: ' + list + '.';
+      } else {
+        summary = 'Nothing unfinished — ' + list + ', so nothing blocks a handover.';
+      }
+      summary += ' Next review ' + ymd(reviewBy) + '.';
     }
 
     return {

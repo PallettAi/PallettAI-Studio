@@ -1297,11 +1297,11 @@ const AI = (() => {
   // Each look pulls palette IDs, a heading style and a body style together so
   // two sites for the same brief still come out visually distinct.
   const LOOK_PALETTES = {
-    light:    ['paper', 'sage', 'mulberry', 'lagoon', 'aurora', 'ocean', 'emerald'],
-    warm:     ['paper', 'sage', 'sunset', 'terracotta', 'roast', 'blush', 'candy'],
-    bright:   ['candy', 'lagoon', 'aurora', 'cherry', 'sunset', 'emerald'],
+    light:    ['paper', 'sage', 'mulberry', 'lagoon', 'aurora', 'ocean', 'emerald', 'stone', 'blush'],
+    warm:     ['paper', 'sage', 'sunset', 'terracotta', 'roast', 'blush', 'candy', 'mulberry'],
+    bright:   ['candy', 'lagoon', 'aurora', 'cherry', 'sunset', 'emerald', 'blush', 'mulberry'],
     dark:     ['ink', 'cobalt', 'grape', 'pine', 'midnight', 'noir', 'roast'],
-    editorial: ['paper', 'stone', 'ink', 'mulberry', 'grape', 'noir'],
+    editorial: ['paper', 'stone', 'ink', 'mulberry', 'grape', 'noir', 'sage'],
     classic:  ['midnight', 'ocean', 'noir', 'candy', 'sunset', 'emerald', 'aurora']
   };
   // serif/sans/mono heading pools (free first, pro appended for paid tiers)
@@ -1322,37 +1322,44 @@ const AI = (() => {
     return f;
   }
 
-  // Choose the look: taste drives it, otherwise the business type picks a
-  // family of looks so variety comes from jitter, not luck.
+  // Every industry gets a tray of looks it can wear, and every taste maps to a
+  // set of looks that honour it. Taste narrows the tray (it never forces one
+  // look — that collapsed a whole industry onto a single design), then the seed
+  // chooses within what is left.
+  const LOOK_TRAYS = {
+    tech:      ['dark', 'techy', 'minimal', 'noir', 'editorial'],
+    creative:  ['editorial', 'light', 'noir', 'playful', 'minimal', 'techy'],
+    food:      ['warm', 'light', 'playful', 'editorial', 'noir'],
+    retail:    ['light', 'playful', 'warm', 'editorial', 'bright', 'noir'],
+    travel:    ['editorial', 'light', 'warm', 'bright', 'noir'],
+    fitness:   ['bold', 'bright', 'dark', 'techy', 'playful'],
+    beauty:    ['editorial', 'light', 'warm', 'minimal', 'noir'],
+    edu:       ['light', 'bright', 'editorial', 'playful', 'minimal'],
+    home:      ['warm', 'light', 'bold', 'editorial', 'minimal'],
+    events:    ['editorial', 'light', 'bright', 'noir', 'warm'],
+    auto:      ['bold', 'dark', 'warm', 'techy', 'noir'],
+    music:     ['dark', 'bold', 'noir', 'playful', 'editorial'],
+    nonprofit: ['light', 'warm', 'editorial', 'bright', 'minimal'],
+    generic:   ['light', 'editorial', 'warm', 'dark', 'minimal', 'bright', 'playful', 'noir']
+  };
+  const TASTE_LOOKS = {
+    minimal:  ['minimal', 'light'],
+    editorial: ['editorial', 'noir', 'light'],
+    premium:  ['noir', 'editorial', 'dark'],
+    playful:  ['playful', 'bright', 'light'],
+    bold:     ['bold', 'dark', 'noir'],
+    techy:    ['techy', 'dark', 'minimal'],
+    warm:     ['warm', 'light', 'editorial'],
+    vibrant:  ['bright', 'playful', 'bold']
+  };
   function lookFor(typeId, taste, seed) {
-    const j = Math.abs(seed) % 10;
-    const map = {
-      tech:     ['dark', 'techy-', 'minimal-', 'editorial-'],
-      creative: ['editorial-', 'light-', 'noir-', 'playful-'],
-      food:     ['warm-', 'light-', 'playful-', 'editorial-'],
-      retail:   ['light-', 'playful-', 'warm-', 'editorial-'],
-      travel:   ['editorial-', 'light-', 'warm-', 'bright-'],
-      fitness:  ['bold-', 'bright-', 'dark-'],
-      beauty:   ['editorial-', 'light-', 'warm-'],
-      edu:      ['light-', 'bright-', 'editorial-'],
-      home:     ['warm-', 'light-', 'bold-'],
-      events:   ['editorial-', 'light-', 'bright-'],
-      auto:     ['bold-', 'dark-', 'warm-'],
-      music:    ['dark-', 'bold-', 'noir-'],
-      nonprofit: ['light-', 'warm-', 'editorial-'],
-      generic:  ['light-', 'editorial-', 'warm-', 'dark-']
-    };
-    const tray = map[typeId] || map.generic;
-    let pick = tray[j % tray.length];
-    if (taste) {
-      const t = TASTE[taste];
-      const byTaste = { dark: 'dark-', light: 'light-', serif: 'editorial-', warm: 'warm-', bright: 'bright-' };
-      if (t.dark && j % 3 !== 2) pick = byTaste.dark;
-      else if (t.serif && j % 2 === 0) pick = byTaste.serif;
-      else if (!t.serif && t.radius === 'round' && !t.dark) pick = byTaste.bright;
-      else if (t.serif && !t.dark && j % 3 !== 1) pick = byTaste.light;
+    const tray = (LOOK_TRAYS[typeId] || LOOK_TRAYS.generic).slice();
+    let candidates = tray;
+    if (taste && TASTE_LOOKS[taste]) {
+      const compat = TASTE_LOOKS[taste].filter((look) => tray.includes(look));
+      if (compat.length) candidates = compat;
     }
-    return pick.replace(/-$/, ''); // 'noir', 'bold', 'playful', 'techy', 'minimal' etc.
+    return candidates[Math.abs(Number(seed) || 0) % candidates.length];
   }
 
   const LOOK_STYLE = {
@@ -1387,9 +1394,15 @@ const AI = (() => {
       palette = pick(fam.length ? fam : ['paper'], seed);
     }
 
-    // heading + body pairing
+    // heading + body pairing — a sans look still gets a distinct display face
+    // (only 'minimal' deliberately keeps one family throughout), otherwise half
+    // of all generated sites shared the body font as their heading.
     let bodyPool = ls.body === 'serif' ? BODY_SERIF : BODY_SANS;
-    let headPool = ls.head === 'serif' ? HEAD_SERIF : ls.head === 'mono' ? HEAD_MONO : ls.head === 'display' ? HEAD_SANS : null;
+    let headPool = ls.head === 'serif' ? HEAD_SERIF
+      : ls.head === 'mono' ? HEAD_MONO
+        : ls.head === 'display' ? HEAD_SANS
+          : (ls.head === 'sans' && look !== 'minimal') ? HEAD_SANS
+            : null;
     const bodyPoolFree = bodyPool.filter(freeOK);
     const bodyFont = pickFontFrom(bodyPoolFree.length ? bodyPoolFree : ['inter'], seed >> 1);
     let headFont = bodyFont;
@@ -2080,10 +2093,15 @@ const AI = (() => {
   function insertNicheExtras(sections, extras) {
     if (!extras || !extras.length) return sections;
     const list = sections.slice();
+    // A niche's own sections never double up with the flow the generator
+    // already built — a second gallery is not a richer site.
+    const present = new Set(list.map((x) => x && x.type));
+    const wanted = extras.filter((x) => x && !present.has(x.name));
+    if (!wanted.length) return list;
     // build extras first (stable id order), then splice in two passes so
     // indexes computed on the original list stay correct per group
-    const afterAbout = extras.filter((x) => x.at === 'after-about');
-    const beforeCta = extras.filter((x) => x.at === 'before-cta');
+    const afterAbout = wanted.filter((x) => x.at === 'after-about');
+    const beforeCta = wanted.filter((x) => x.at === 'before-cta');
     let aboutAt = list.findIndex((x) => x.type === 'about');
     if (aboutAt === -1) aboutAt = list.findIndex((x) => x.type !== 'hero' && x.type !== 'nav');
     if (aboutAt !== -1) {
@@ -2169,14 +2187,18 @@ const AI = (() => {
 
   // catalog layouts the AI assigns per business type when generating “creative”
   const LAYOUT_FLAVOR = {
-    hero: { tech: ['split', 'terminal'], creative: ['split', 'minimal'], food: ['minimal'], retail: ['split'], travel: ['split', 'minimal'], fitness: ['terminal', 'split'], beauty: ['minimal'], edu: ['terminal', 'split'], home: ['split'], events: ['minimal', 'split'], auto: ['split', 'terminal'], music: ['terminal', 'minimal'], nonprofit: ['minimal'], generic: ['split', 'minimal'] },
-    features: { tech: ['bento'], edu: ['bento'], creative: ['numbered'], beauty: ['numbered'], generic: ['bento'] },
-    stats: { tech: ['band'], fitness: ['band'], edu: ['band'], home: ['band'], generic: ['band'] },
-    pricing: { generic: ['stacked'] },
-    testimonials: { creative: ['masonry'], beauty: ['masonry'], food: ['masonry'], travel: ['masonry'], generic: ['masonry'] },
-    gallery: { creative: ['mosaic'], food: ['mosaic'], retail: ['mosaic'], travel: ['mosaic'], home: ['mosaic'], events: ['mosaic'], music: ['mosaic'], generic: ['mosaic'] },
-    about: { generic: ['floating'] },
-    cta: { generic: ['splash'] }
+    hero: { tech: ['split', 'terminal', 'minimal'], creative: ['split', 'minimal', ''], food: ['minimal', 'split', ''], retail: ['split', '', 'minimal'], travel: ['split', 'minimal'], fitness: ['terminal', 'split', ''], beauty: ['minimal', 'split'], edu: ['terminal', 'split', 'minimal'], home: ['split', 'minimal'], events: ['minimal', 'split', ''], auto: ['split', 'terminal'], music: ['terminal', 'minimal', 'split'], nonprofit: ['minimal', 'split'], generic: ['split', 'minimal', ''] },
+    features: { tech: ['bento', 'numbered', 'strip'], edu: ['bento', 'numbered'], creative: ['numbered', 'strip'], beauty: ['numbered', 'strip'], retail: ['numbered', 'strip'], food: ['numbered', 'strip'], generic: ['bento', 'strip', 'numbered', ''] },
+    stats: { tech: ['band'], fitness: ['band'], edu: ['band'], home: ['band'], generic: ['band', ''] },
+    pricing: { generic: ['stacked', ''] },
+    testimonials: { creative: ['masonry', ''], beauty: ['masonry', ''], food: ['masonry', ''], travel: ['masonry', ''], generic: ['masonry', ''] },
+    gallery: { generic: ['mosaic', ''] },
+    faq: { generic: ['', 'columns'] },
+    about: { generic: ['floating', '', 'left'] },
+    contact: { generic: ['', 'split'] },
+    logos: { generic: ['', 'grid'] },
+    table: { generic: ['', 'compare'] },
+    cta: { generic: ['splash', '', 'email'] }
   };
   function pickLayout(typeId, secType, seed) {
     const cands = (LAYOUT_FLAVOR[secType] || {})[typeId] || (LAYOUT_FLAVOR[secType] || {}).generic || [];
@@ -2185,18 +2207,41 @@ const AI = (() => {
   }
 
   // ---------- main generator ----------
-  // per-look hero flavour (each is a valid catalog layout id)
+  // per-look hero flavour (each is a valid, free-tier catalog layout id)
   const LOOK_HERO = {
-    editorial: ['minimal', 'split', 'minimal'],
-    light:     ['split', 'minimal', ''],
-    warm:      ['split', '', 'split'],
-    bright:    ['split', '', 'minimal'],
-    dark:      ['split', 'minimal', 'terminal'],
-    bold:      ['terminal', 'split', ''],
-    noir:      ['minimal', 'split', 'terminal'],
-    playful:   ['minimal', '', 'split'],
-    techy:     ['terminal', 'split', 'minimal'],
-    minimal:   ['minimal', 'split', 'minimal']
+    editorial: ['minimal', 'split', 'minimal', ''],
+    light:     ['split', 'minimal', '', 'split'],
+    warm:      ['split', '', 'minimal', 'split'],
+    bright:    ['split', '', 'minimal', 'split'],
+    dark:      ['split', 'minimal', 'terminal', ''],
+    bold:      ['terminal', 'split', '', 'minimal'],
+    noir:      ['minimal', 'split', 'terminal', ''],
+    playful:   ['minimal', '', 'split', 'terminal'],
+    techy:     ['terminal', 'split', 'minimal', ''],
+    minimal:   ['minimal', 'split', 'minimal', '']
+  };
+
+  // Entrance motion per look. The copy engine hard-codes one animation per
+  // section type, so every generated site moved in exactly the same way; the
+  // look now owns a small, harmonious motion family and the seed varies it.
+  const LOOK_MOTION = {
+    editorial: ['fade-in', 'fade-up', 'slide-right', 'fade-in'],
+    light:     ['fade-up', 'fade-in', 'zoom-in', 'fade-up'],
+    warm:      ['fade-up', 'slide-left', 'fade-in', 'fade-up'],
+    bright:    ['zoom-in', 'fade-up', 'bounce-in', 'fade-in'],
+    dark:      ['fade-up', 'flip-up', 'slide-right', 'fade-in'],
+    bold:      ['flip-up', 'zoom-in', 'slide-right', 'fade-up'],
+    noir:      ['fade-in', 'slide-right', 'fade-up', 'fade-in'],
+    playful:   ['bounce-in', 'zoom-in', 'fade-up', 'fade-in'],
+    techy:     ['fade-in', 'flip-up', 'slide-right', 'fade-up'],
+    minimal:   ['fade-in', 'fade-up', 'fade-in', 'fade-up']
+  };
+  // Page rhythm per look — a 1140px container for every site was another tell.
+  const LOOK_WIDTHS = {
+    editorial: [1080, 1140], light: [1140, 1200], warm: [1140, 1200],
+    bright: [1140, 1200], dark: [1140, 1260], bold: [1200, 1260],
+    noir: [1080, 1140], playful: [1140, 1200], techy: [1140, 1260],
+    minimal: [1080, 1140, 1200]
   };
 
   function generateSite(prompt, opts = {}) {
@@ -2357,9 +2402,30 @@ const AI = (() => {
       return preset;
     };
 
-    let sections = (effType.sections || type.sections || []).map((name) => sec(name, S(name)));
+    // composition: the seed may add the sections this trade suits but doesn't
+    // always ship, then drop a few optional ones — so two sites differ in shape
+    // and not only in order.
+    const ComposerLib = composeLib();
+    const creative = opts.layouts !== 'classic' && !!(ComposerLib && ComposerLib.varyNames);
+    const extras = nicheExtras(niche, type, bank);
+    let names = (effType.sections || type.sections || []).slice();
+    let addedTypes = [];
+    if (creative) {
+      // the niche's own sections are reserved against the section cap first
+      const varied = ComposerLib.varyNames(names, {
+        typeId: type.id, nicheId: niche && niche.id, seed, tier: opts.tier, reserve: extras.length
+      });
+      names = varied.names;
+      addedTypes = varied.added;
+    }
+    let sections = names.map((name) => sec(name, S(name)));
     // deep niche packs add real sections of their own (menu tables, galleries)
-    sections = insertNicheExtras(sections, nicheExtras(niche, type, bank));
+    sections = insertNicheExtras(sections, extras);
+    if (creative && ComposerLib.varyPresence) {
+      sections = ComposerLib.varyPresence(sections, {
+        typeId: type.id, nicheId: niche && niche.id, seed, keep: addedTypes
+      });
+    }
 
     // design-DNA pass: hero treatment per look, and gentle variation so two
     // runs of the same brief don't feel identical.
@@ -2382,6 +2448,12 @@ const AI = (() => {
       if ((dna.look === 'minimal' || dna.look === 'noir') && Math.abs(seed) % 5 === 4 && sections.length > 6) {
         sections = sections.filter((x) => x.type !== 'pricing');
       }
+      // motion: the look picks the family, the seed and the position vary it
+      const motion = LOOK_MOTION[dna.look] || LOOK_MOTION.light;
+      sections.forEach((sec, i) => {
+        if (!sec) return;
+        sec.animation = motion[Math.abs(seed + i * 397) % motion.length];
+      });
     }
     if (Finger && opts.layouts !== 'classic') {
       sections = Finger.orderSections(sections, seed + 17);
@@ -2408,6 +2480,14 @@ const AI = (() => {
     const photoGrade = (Finger && Finger.photoGradeSpec)
       ? Finger.photoGradeSpec({ on: !!(opts && opts.photoGrade), typeId: type.id, look: dna.look })
       : { on: false, blend: 'color', strength: 0 };
+    // nav + rhythm: every generated site used to ship a sticky solid bar over a
+    // 1140px container. Photo-led looks can float the nav over the hero, and the
+    // look decides the container width.
+    const photoMode = (opts && opts.photoMode) || 'real';
+    const widths = LOOK_WIDTHS[dna.look] || [1140];
+    const containerWidth = widths[Math.abs(seed) % widths.length];
+    const transparentNav = opts.layouts !== 'classic' && photoMode !== 'none' && dna.look !== 'minimal' && Math.abs(seed) % 2 === 0;
+    const stickyNav = !(dna.look === 'minimal' && Math.abs(seed) % 3 === 0);
 
     const project = {
       id: 'ai_' + Math.random().toString(36).slice(2, 10),
@@ -2440,7 +2520,9 @@ const AI = (() => {
         palette: dna.palette,
         font: dna.font,
         fontDisplay: dna.fontDisplay,
-        design: { containerWidth: 1140, radius: dna.radius, spacing: dna.spacing },
+        design: { containerWidth, radius: dna.radius, spacing: dna.spacing },
+        navStyle: transparentNav ? 'transparent' : '',
+        navSticky: stickyNav,
         sections,
         brief: brief || undefined,
         voice,

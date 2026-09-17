@@ -21,7 +21,16 @@ const App = (() => {
   let settingsTab = 'account'; // active Settings tab (Settings → tabs)
   let dbTab = 'sections';
   let selectedSec = null;
-  let onlineHealth = { checked: false, ok: null };
+  // Reachability of the Database panel's live sources, keyed by source id. A
+  // missing id means "not tried this session".
+  //
+  // This was one { checked, ok } flag set by whichever fetch ran last, so a
+  // single dead provider painted the whole Database view "● offline" while the
+  // connection was fine. That is not hypothetical: it is exactly how a quotes
+  // API with a certificate that expired in September 2024 presented itself for
+  // two years — the panel blamed the creator's internet for one upstream's
+  // lapse, and the other nine sources were working the whole time.
+  let onlineHealth = { sources: Object.create(null) };
   let currentView = 'dashboard';
   let lastAI = null;
   let directionState = null;
@@ -31,6 +40,9 @@ const App = (() => {
   let qualityTarget = null;
   let accMode = 'signin'; // settings account card: signin | signup
   let bootStoreOK = false; // IndexedDB (AppStore) ready — else localStorage fallback
+  // What the format upgrade did at boot, kept so the Database view can report it
+  // rather than this being a silent step that only shows up as a different site.
+  let bootSchema = null;
   let dashPrompt = ''; // prompt staged from the dashboard's AI Studio tile
   let aiStudyController = null;
   let initialized = false;
@@ -135,16 +147,31 @@ const App = (() => {
   // Keep the dashboard current after save bursts without paying for one rebuild per
   // keystroke. This is a cheap coalesce of the refresh that saveProjects() used to
   // trigger immediately on every write.
+  //
+  // It has to do two different jobs, and it used to do only the cheap one. Metrics
+  // can be recomputed freely while the user edits; the project LIST cannot, and
+  // making that distinction without a way to tell them apart is how deleting a
+  // project left its row on screen until the user switched tabs and came back —
+  // the delete saved, this timer fired, and all it rebuilt was the numbers.
+  // So the list's shape is compared, and only a real structural change pays for
+  // the full rebuild. Measured against ids and names rather than the whole
+  // project: a rename is a visible change to the list, a section edit is not.
   let dashboardRefreshTimer = null;
+  let dashboardListKey = '';
+
+  function projectListKey() {
+    return projects.map((p) => p.id + '\u0000' + (p.name || '')).join('\u0001');
+  }
+
   function scheduleDashboardRefresh() {
     clearTimeout(dashboardRefreshTimer);
     dashboardRefreshTimer = setTimeout(() => {
       dashboardRefreshTimer = null;
-      if (currentView === 'dashboard') {
-        // Project changes only affect dashboard metrics/activity; keep the
-        // template library and import controls mounted during autosave bursts.
-        renderDashOverview();
-      }
+      if (currentView !== 'dashboard') return;
+      // Project changes only affect dashboard metrics/activity; keep the
+      // template library and import controls mounted during autosave bursts.
+      if (projectListKey() !== dashboardListKey) renderDashboard();
+      else renderDashOverview();
     }, 400);
   }
 
@@ -284,7 +311,13 @@ const App = (() => {
       customCss: String(d.customCss || '').slice(0, 16000),
       styleCss: String(d.styleCss || '').slice(0, 16000)
     };
-    p.heroLayout = ['centered', 'split', 'minimal'].includes(String(raw.heroLayout)) ? String(raw.heroLayout) : 'centered';
+    // Read from the same catalog the Designer's hero picker is built from. This
+    // list used to be hand-written as centered/split/minimal, which quietly
+    // dropped two treatments that picker offers: choose Terminal window or Aurora,
+    // reload, and you were back to Centered — and a template could not ship either
+    // of them at all.
+    const heroLayoutIds = ['centered'].concat((DB.layoutsFor('hero') || []).map((v) => v.id).filter(Boolean));
+    p.heroLayout = heroLayoutIds.includes(String(raw.heroLayout)) ? String(raw.heroLayout) : 'centered';
     p.navSticky = raw.navSticky !== false;
     p.navStyle = raw.navStyle === 'transparent' ? 'transparent' : '';
     p.themeToggle = raw.themeToggle !== false;
@@ -899,7 +932,10 @@ const App = (() => {
     if (!s.metaDescription) issues.push({ level: 'info', msg: 'No meta description — add one in Design & branding for better SEO.' });
     if (!s.formEndpoint) issues.push({ level: 'info', msg: 'Forms are demo flows — paste a Formspree/Web3Forms endpoint in Design & branding to receive real messages.' });
     const audit = seoAudit(c);
-    const gColor = ['A+', 'A', 'B'].includes(audit.letter) ? '#22c55e' : audit.letter === 'C' ? '#eab308' : '#ef4444';
+    // Both grades here go through qualityColor(): this modal used to carry its
+    // own copy of the letter-to-colour rule, which is how the same grade ends up
+    // two different greens in two screens.
+    const gColor = qualityColor(audit.letter);
     const ic = (l, fix) => (l === 'error' ? '🔴' : l === 'warn' ? '🟡' : (fix ? '🔵' : '✅'));
 
     // Site care answers the other half of health. Everything above asks "is
@@ -911,7 +947,7 @@ const App = (() => {
     // something only found by looking.
     let care = null;
     try { if (typeof SiteCare !== 'undefined' && SiteCare.audit) care = SiteCare.audit(c); } catch (e) { care = null; }
-    const careColor = care ? (['A+', 'A', 'B'].includes(care.letter) ? '#22c55e' : care.letter === 'C' ? '#eab308' : '#ef4444') : '';
+    const careColor = care ? qualityColor(care.letter) : '';
     openModal('Site health', `
       <p style="color:var(--muted);margin-bottom:14px">${issues.length ? issues.length + ' finding' + (issues.length === 1 ? '' : 's') + ' for “' + esc(s.name) + '”.' : 'No issues found — this site is in great shape. 🎉'}</p>
       <div style="display:flex;flex-direction:column;gap:8px">
@@ -1291,6 +1327,54 @@ const App = (() => {
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
   }
+  /*
+    Two small shared dialogs the Database view needs.
+
+    confirmModal exists because window.confirm() is the wrong thing to put in
+    front of a destructive action here: its wording cannot explain what survives,
+    and in the packaged app it renders as an OS dialog that looks nothing like the
+    studio. copyText exists because "copy this" now appears in several places and
+    each one had its own inline clipboard branch that failed silently wherever the
+    API is unavailable.
+  */
+  function confirmModal(title, message, onYes, yesLabel) {
+    openModal(title, `
+      <p>${esc(message)}</p>
+      <div class="storage-actions">
+        <button class="btn danger" id="confirmYes">${esc(yesLabel || 'Do it')}</button>
+        <button class="btn ghost" id="confirmNo">Cancel</button>
+      </div>
+    `);
+    const no = $('#confirmNo');
+    if (no) no.onclick = closeModal;
+    const yes = $('#confirmYes');
+    if (yes) yes.onclick = () => { closeModal(); onYes(); };
+  }
+
+  function copyText(text, okMessage) {
+    const done = () => toast(okMessage || 'Copied 📋', true);
+    const failed = () => toast('Could not copy — select the text instead', false);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, failed);
+      return;
+    }
+    // No clipboard API (or a denied permission): a temporary textarea and
+    // execCommand is the only route left, and it is worth taking — an explicit
+    // "copy" that copies nothing is worse than a fallback that works.
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand && document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (ok) done(); else failed();
+    } catch (e) { failed(); }
+  }
+
   function openModal(title, bodyHTML, wide) {
     modalPrevFocus = document.activeElement;
     $('#modalTitle').textContent = title;
@@ -2655,6 +2739,10 @@ const App = (() => {
   }
 
   function renderDashboard() {
+    // Recorded first, so the empty state counts as a render too: deleting the
+    // last project left this stale, and every refresh after that paid for a
+    // full rebuild it did not need.
+    dashboardListKey = projectListKey();
     renderDashOverview();
     renderTemplateDoor();
 
@@ -2722,6 +2810,22 @@ const App = (() => {
     // template's own; Blank Canvas always uses them. Design numbers are studio-wide.
     const custPal = settings.defaultPalette && settings.defaultPalette !== DB.defaultSettings.defaultPalette;
     const custFont = settings.defaultFont && settings.defaultFont !== DB.defaultSettings.defaultFont;
+    // The same rule for the REST of a template's look. Palette and font were
+    // already per-template; everything else — hero treatment, corner radius,
+    // vertical rhythm, container width, nav style — came from Studio-wide
+    // settings, so two templates that differed in colour still arrived with the
+    // same proportions. A template now carries its own `design`, and a setting the
+    // user has deliberately changed still wins, exactly as palette and font do.
+    const dbDefaults = DB.defaultSettings || {};
+    const customised = (key) => settings[key] !== undefined && settings[key] !== dbDefaults[key];
+    const fromTemplate = (key, value, fallback) => {
+      if (customised(key)) return settings[key];
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      if (typeof value === 'string' && value) return value;
+      if (typeof value === 'boolean') return value;
+      return settings[key] === undefined ? fallback : settings[key];
+    };
+    const tplDesign = (tpl && tpl.design) || {};
     const p = {
       id: uid(),
       name: tpl.name + ' Site',
@@ -2742,13 +2846,14 @@ const App = (() => {
         url: String(settings.businessUrl || '').trim(),
         palette: (tpl.id === 'blank' || custPal) ? settings.defaultPalette : tpl.palette,
         font: (tpl.id === 'blank' || custFont) ? settings.defaultFont : tpl.font,
-        heroLayout: settings.defaultHeroLayout || 'centered',
-        navSticky: settings.defaultNavSticky !== false,
-        themeToggle: settings.defaultThemeToggle !== false,
+        heroLayout: fromTemplate('defaultHeroLayout', tpl.heroLayout, 'centered'),
+        navSticky: fromTemplate('defaultNavSticky', tpl.navSticky, true),
+        themeToggle: fromTemplate('defaultThemeToggle', tpl.themeToggle, true),
+        navStyle: tpl.navStyle === 'transparent' ? 'transparent' : '',
         design: {
-          containerWidth: settings.defaultContainerWidth || 1140,
-          radius: settings.defaultRadius || 20,
-          spacing: settings.defaultSpacing || 96
+          containerWidth: fromTemplate('defaultContainerWidth', tplDesign.containerWidth, 1140),
+          radius: fromTemplate('defaultRadius', tplDesign.radius, 20),
+          spacing: fromTemplate('defaultSpacing', tplDesign.spacing, 96)
         },
         sections: DB.sectionsFromTemplate(tpl)
       }
@@ -3379,18 +3484,52 @@ const App = (() => {
     const c = current();
     const f = $('#previewFrame');
     if (!c || !f) return;
-    f.srcdoc = Builder.buildSiteHTML(c, exportSettings());
-    if (Builder.pages(c).length > 1) {
-      f.onload = () => {
-        const d = f.contentDocument;
-        if (!d) return;
-        d.querySelectorAll('a.page-link').forEach((a) => {
-          a.onclick = (e) => { e.preventDefault(); const id = a.getAttribute('data-page'); if (id) setActivePage(id); };
+    const settings = exportSettings();
+    const legalOn = settings.legalPages === true;
+    f.srcdoc = Builder.buildSiteHTML(c, settings);
+
+    // Generated legal pages are files in the export, not pages in the project,
+    // so `setActivePage` cannot reach them. Previewing them here means a creator
+    // can read what will be shipped instead of taking it on faith — and the
+    // footer links would otherwise dead-end inside the frame.
+    const legalFiles = {};
+    if (legalOn) {
+      try {
+        sitePageFiles(c).forEach((file) => {
+          if (Legal.KINDS.indexOf(file.slug) !== -1) legalFiles[file.slug] = file.html;
         });
-      };
-    } else {
-      f.onload = null;
+      } catch (e) { /* preview falls back to the site page */ }
     }
+    let viewingLegal = null;
+
+    if (Builder.pages(c).length < 2 && !legalOn) { f.onload = null; return; }
+    f.onload = () => {
+      const d = f.contentDocument;
+      if (!d) return;
+      d.querySelectorAll('a.page-link').forEach((a) => {
+        a.onclick = (e) => { e.preventDefault(); const id = a.getAttribute('data-page'); if (id) { viewingLegal = null; setActivePage(id); } };
+      });
+      if (!legalOn) return;
+      d.querySelectorAll('a[data-legal]').forEach((a) => {
+        a.onclick = (e) => {
+          e.preventDefault();
+          const slug = a.getAttribute('data-legal');
+          if (!legalFiles[slug]) return;
+          viewingLegal = slug;
+          f.srcdoc = legalFiles[slug];
+        };
+      });
+      // A legal page is a dead end otherwise: the page bar has no entry for it
+      // and a single-page site's nav is all in-page anchors.
+      if (viewingLegal && d.body) {
+        const back = d.createElement('button');
+        back.type = 'button';
+        back.textContent = '\u2190 Back to your site';
+        back.setAttribute('style', 'position:fixed;left:16px;bottom:16px;z-index:9999;font:600 .8rem/1 system-ui,sans-serif;padding:10px 14px;border-radius:999px;border:1px solid rgba(0,0,0,.2);background:#111;color:#fff;cursor:pointer');
+        back.addEventListener('click', () => { viewingLegal = null; renderPreview(); });
+        d.body.appendChild(back);
+      }
+    };
   }
 
   function photoTargets(project) {
@@ -4003,7 +4142,9 @@ const App = (() => {
     const skipQuality = !!(options && options.skipQuality);
     const go = () => {
       const pages = Builder.pages(c);
-      if (pages.length > 1) downloadSiteZip(c);
+      // Legal pages are separate files, so an export that carries them is a
+      // folder, not one HTML file — even for a single-page site.
+      if (pages.length > 1 || exportSettings().legalPages === true) downloadSiteZip(c);
       else downloadHtml(c);
     };
     const audit = qualityReport(c);
@@ -4014,7 +4155,10 @@ const App = (() => {
     const p = projects.find((x) => x.id === id);
     if (!p) return;
     const skipQuality = !!(options && options.skipQuality);
-    const go = () => { if (Builder.pages(p).length > 1) downloadSiteZip(p); else downloadHtml(p); };
+    const go = () => {
+      if (Builder.pages(p).length > 1 || exportSettings().legalPages === true) downloadSiteZip(p);
+      else downloadHtml(p);
+    };
     const audit = qualityReport(p);
     if (!skipQuality && audit && audit.issues && audit.issues.some((issue) => issue.level !== 'info')) {
       currentId = p.id;
@@ -5275,6 +5419,8 @@ const App = (() => {
     if (SUPABASE.isConfigured() && SUPABASE.signedIn()) hydrateStreak();
     const c = current();
     const proj = lastAI ? projects.find((p) => p.id === lastAI.id) : null;
+    const chBtn = $('#aiChLookup');
+    if (chBtn) chBtn.onclick = () => companiesHouseLookup(current());
     const root = $('#aiRoot');
     root.innerHTML = `
       <div class="ai-card">
@@ -5288,6 +5434,7 @@ const App = (() => {
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
           <input id="aiName" placeholder="Business name (optional — e.g. “Rustica”) — or just say it in the prompt" autocomplete="off" spellcheck="false" style="flex:1;min-width:200px;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font:inherit;font-size:.85rem">
           <input id="aiArea" placeholder="Town / area served (optional — e.g. “Leeds”) — powers local SEO" autocomplete="off" spellcheck="false" style="flex:1;min-width:200px;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font:inherit;font-size:.85rem">
+          <button class="btn ghost small" id="aiChLookup" title="Look up the company on the UK register and pre-fill this brief" style="white-space:nowrap">🇬🇧 Companies House</button>
         </div>
         <div class="ai-upload">
           <div class="ai-upload-head">
@@ -6373,27 +6520,599 @@ const App = (() => {
   }
 
   // ---------------- database ----------------
+  const sourceName = (id) => (ONLINE.sources.find((s) => s.id === id) || {}).name || id;
+
+  function markSourceHealth(id, ok, note) {
+    onlineHealth.sources[id] = { ok: !!ok, at: Date.now(), note: String(note || '') };
+    // The grid is not rebuilt after a fetch, so paint the card's own badge here
+    // — waiting for the next full render of the view would leave the badge
+    // invisible exactly when it is being earned.
+    const card = $('.online-card[data-src="' + id + '"]');
+    const head = card && card.querySelector('h4');
+    if (!head) return;
+    const old = head.querySelector('.src-state');
+    if (old) old.remove();
+    head.insertAdjacentHTML('beforeend', sourceState(id));
+  }
+
+  // The badge on a single source's card, so the status sits next to the thing it
+  // describes rather than being inferred from a panel-wide word.
+  //
+  // A failing source also reports how many times in a row it has failed and when
+  // it will be tried again, because "unreachable" on its own invites the user to
+  // keep clicking a button that is already being retried on a widening schedule.
+  function sourceState(id) {
+    const h = onlineHealth.sources[id];
+    if (!h) return '';
+    const paced = typeof ONLINE.sourceHealth === 'function' ? ONLINE.sourceHealth(id) : null;
+    const secs = paced ? Math.ceil(paced.retryInMs / 1000) : 0;
+    const trouble = paced && paced.failures
+      ? ` — failed ${paced.failures}× in a row${paced.cooling ? `, retrying in ${secs}s` : ''}${paced.lastError ? ` (${paced.lastError})` : ''}`
+      : '';
+    // "Asked us to wait" is not the same as "unreachable", and saying so matters:
+    // one is the provider working correctly and telling us to slow down, the other
+    // may be the creator's own connection. The badge carries the countdown either
+    // way, because a button that looks broken is the wrong answer to a 429.
+    if (h.ok && paced && paced.rateLimited) {
+      return `<span class="src-state warn" title="${esc((paced.name || id) + ' answered with a rate limit — the next request is held for ' + secs + 's. Nothing is broken; the panel is simply asking less often.')}">● rate limited · ${secs}s</span>`;
+    }
+    return h.ok
+      ? `<span class="src-state ok" title="${esc(h.note || 'The last fetch answered')}">● live</span>`
+      : `<span class="src-state bad" title="${esc((h.note || 'The last fetch failed') + trouble)}">● unreachable</span>`;
+  }
+
   function updateOnlineStatus() {
     const el = $('#onlineStatus');
     if (!el) return;
-    const ok = onlineHealth.checked && onlineHealth.ok;
-    el.className = 'pill' + (!settings.onlineEnabled ? ' bad' : onlineHealth.checked ? (ok ? ' ok' : ' bad') : '');
-    el.textContent = !settings.onlineEnabled ? 'disabled'
-      : onlineHealth.checked ? (ok ? '● online' : '● offline')
-      : 'not checked';
+    if (!settings.onlineEnabled) {
+      el.className = 'pill bad'; el.textContent = 'disabled'; el.removeAttribute('title'); return;
+    }
+    const tried = Object.keys(onlineHealth.sources);
+    if (!tried.length) {
+      el.className = 'pill'; el.textContent = 'not checked'; el.removeAttribute('title'); return;
+    }
+    // Counts, not a verdict: "2 live · 1 unreachable" tells the creator which
+    // part of the panel to avoid, where "offline" tells them to check their
+    // router. The names go in the tooltip.
+    const down = tried.filter((id) => !onlineHealth.sources[id].ok);
+    const up = tried.length - down.length;
+    if (!down.length) { el.className = 'pill ok'; el.textContent = '● online'; }
+    else if (up) { el.className = 'pill warn'; el.textContent = '● ' + up + ' live · ' + down.length + ' unreachable'; }
+    else { el.className = 'pill bad'; el.textContent = '● ' + down.length + ' source' + (down.length === 1 ? '' : 's') + ' unreachable'; }
+    el.title = down.length ? 'Unreachable: ' + down.map(sourceName).join(', ') : 'Every source tried so far answered';
   }
   function renderDatabase() {
     updateOnlineStatus();
     renderOnlineGrid();
     renderDbList();
+    // Async and fire-and-forget: measuring the library walks the whole store, and
+    // the view must not wait on a walk to draw its tabs.
+    renderStorageCard();
+    renderHealthCard();
+    renderRetentionCard();
+  }
+
+  // ---------------- local library: what it weighs and keeping it ----------------
+  //
+  // The store reports keys and sizes; only this file knows what a key means, so
+  // the grouping lives here. Any key not listed falls into "other" rather than
+  // vanishing from the total, because a report that silently omits bytes is
+  // worse than one that admits it does not recognise them.
+  const LIBRARY_GROUPS = [
+    ['projects', 'Projects', LS.projects],
+    ['revisions', 'Autosave history', LS.revs],
+    ['assets', 'Assets', LS.assets],
+    ['presets', 'Section presets', LS.sectionPresets],
+    ['brand', 'Brand presets', LS.brandPresets],
+    ['briefs', 'Briefs', LS.briefs],
+    ['settings', 'Settings', LS.settings]
+  ];
+
+  function fmtBytes(n) {
+    const b = Number(n) || 0;
+    if (b < 1024) return b + ' B';
+    if (b < 1024 * 1024) return (b / 1024).toFixed(b < 10240 ? 1 : 0) + ' kB';
+    return (b / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  // Row counts come from the in-memory copies the app is already holding, not
+  // from re-parsing the stored JSON: same numbers, and they cost nothing.
+  const LIBRARY_COUNTS = {
+    projects: () => projects.length,
+    revisions: () => Object.keys(revs).reduce((n, id) => n + (Array.isArray(revs[id]) ? revs[id].length : 0), 0),
+    assets: () => assets.length,
+    presets: () => sectionPresets.length,
+    brand: () => brandPresets.length,
+    briefs: () => briefs.length
+  };
+
+  // One row per group that actually holds something, plus whatever is left.
+  function libraryRows(usage) {
+    const byKey = Object.create(null);
+    usage.entries.forEach((e) => { byKey[e.key] = e.bytes; });
+    const rows = [];
+    let claimed = 0;
+    LIBRARY_GROUPS.forEach(([id, label, key]) => {
+      const bytes = byKey[key];
+      if (!bytes) return;
+      let count = '';
+      if (LIBRARY_COUNTS[id]) {
+        try {
+          const n = LIBRARY_COUNTS[id]();
+          if (Number.isFinite(n)) count = n + ' item' + (n === 1 ? '' : 's');
+        } catch (e) { count = ''; }
+      }
+      rows.push({ id, label, key, bytes, count });
+      claimed += bytes;
+    });
+    // A report that silently drops bytes it does not recognise reads as a
+    // smaller library than exists, so the leftovers get their own row.
+    const other = usage.bytes - claimed;
+    if (other > 0) {
+      const names = usage.keys.filter((k) => !LIBRARY_GROUPS.some((g) => g[2] === k));
+      rows.push({ id: 'other', label: 'Other stored keys', key: '', bytes: other, count: names.length + ' key' + (names.length === 1 ? '' : 's') });
+    }
+    return rows;
+  }
+
+  async function renderStorageCard() {
+    const el = $('#storageCard');
+    const pill = $('#storageStatus');
+    if (!el) return;
+    if (typeof AppStore === 'undefined') return;
+
+    if (!bootStoreOK) {
+      if (pill) { pill.className = 'pill warn'; pill.textContent = 'localStorage fallback'; }
+      el.innerHTML = `<p class="storage-note">The local database could not be opened, so this workspace is running on the small localStorage fallback — projects and photos will hit its limit. Free some disk space (or check the browser’s site data settings) and reopen the studio.</p>`;
+      return;
+    }
+
+    const [usage, quota, persistence] = await Promise.all([
+      AppStore.usage(),
+      AppStore.quota(),
+      AppStore.persistence()
+    ]);
+    if (!el.isConnected && el.parentNode === null) return;
+
+    const rows = libraryRows(usage);
+    if (pill) {
+      pill.className = usage.error ? 'pill warn' : 'pill ok';
+      pill.textContent = usage.error ? 'measure failed' : fmtBytes(usage.bytes) + ' stored';
+      pill.title = usage.error
+        ? 'The library could not be measured: ' + usage.error
+        : usage.keys.length + ' stored key' + (usage.keys.length === 1 ? '' : 's') + ' in ' + (usage.dbName || 'IndexedDB');
+    }
+
+    const pending = AppStore.hasPending();
+    const err = usage.error || AppStore.lastError();
+    const quotaPct = quota && quota.quota ? Math.min(100, Math.round((quota.usage / quota.quota) * 100)) : 0;
+
+    el.innerHTML = `
+      <div class="storage-head">
+        <div><b>${fmtBytes(usage.bytes)}</b> across ${usage.keys.length} stored key${usage.keys.length === 1 ? '' : 's'}</div>
+        <div class="storage-sub">${usage.dbName ? esc(usage.dbName) + ' · IndexedDB' : 'IndexedDB'}${quota ? ` · ${fmtBytes(quota.usage)} of ${fmtBytes(quota.quota)} available to this app (${quotaPct}%)` : ''}</div>
+      </div>
+      ${quota ? `<div class="storage-bar" title="${quotaPct}% of the space the browser allows this app"><span style="width:${Math.max(2, quotaPct)}%"></span></div>` : ''}
+      <div class="storage-rows">
+        ${rows.map((r) => `<div class="storage-row"><span>${esc(r.label)}${r.count ? ` <em>${esc(r.count)}</em>` : ''}</span><b>${fmtBytes(r.bytes)}</b></div>`).join('') || '<div class="storage-row"><span>Nothing stored yet</span><b>0 B</b></div>'}
+      </div>
+      ${pending ? `<p class="storage-note warn">${AppStore.pendingKeys().length} change${AppStore.pendingKeys().length === 1 ? '' : 's'} still waiting to be written — they are not in this total yet.</p>` : ''}
+      ${err ? `<p class="storage-note warn">Last storage problem: ${esc(err)}</p>` : ''}
+      ${persistence.persisted
+        ? '<p class="storage-note">This library is protected from automatic cleanup, so the browser will not evict it when space runs short.</p>'
+        : persistence.supported
+          ? '<p class="storage-note warn">This library is currently evictable: a browser short on space may clear it without asking. Protect it — or keep a backup.</p>'
+          : '<p class="storage-note">This browser does not report eviction protection. Keep a backup; it is the only guarantee.</p>'}
+      <div class="storage-actions">
+        <button class="btn ghost small" data-lib-backup="1">Back up library</button>
+        <button class="btn ghost small" data-lib-restore="1">Restore…</button>
+        ${!persistence.persisted && persistence.supported ? '<button class="btn small" data-lib-protect="1">Protect from cleanup</button>' : ''}
+      </div>
+      <input type="file" id="libRestoreFile" accept="application/json,.json" hidden>
+    `;
+
+    const backupBtn = $('[data-lib-backup]');
+    if (backupBtn) backupBtn.onclick = () => backupLibrary(usage);
+    const protectBtn = $('[data-lib-protect]');
+    if (protectBtn) protectBtn.onclick = async () => {
+      protectBtn.disabled = true;
+      const res = await AppStore.requestPersistence();
+      renderStorageCard();
+      toast(res.persisted
+        ? 'This library is now protected from automatic cleanup 🛡️'
+        : 'The browser declined to protect it — keep a backup instead', !!res.persisted);
+    };
+    const picker = $('#libRestoreFile');
+    $('[data-lib-restore]').onclick = () => picker.click();
+    picker.onchange = () => { const f = picker.files && picker.files[0]; picker.value = ''; if (f) askRestoreLibrary(f); };
+  }
+
+  /*
+    ---------------- library health: formats and integrity ----------------
+
+    Two different questions that used to have no answer anywhere in the app:
+
+    1. What FORMAT is each stored value in, and did this build change it? The
+       `.v1` suffix on every key is a naming accident, not a version, so the
+       registry in data/schema.js is the first real answer to this.
+
+    2. Can those values still be READ? A blob that no longer parses looks exactly
+       like a healthy one from the outside: the byte count is right, the tab is
+       there, and the projects list is empty. That combination — full size, no
+       content — is the failure worth hunting, and it is why the check is a walk
+       over the real store rather than a claim.
+  */
+  // Named libraryAudit, not lastAudit: the copilot already owns a variable by
+  // that name for its own post-edit audit, and a second one shadowing it in the
+  // same scope is a whole class of confusing bug.
+  let libraryAudit = null;
+
+  // The container each key should hold, derived from the key vocabulary in
+  // data/library-merge.js so the two lists cannot drift apart.
+  function expectedShapes() {
+    const out = Object.create(null);
+    if (typeof LibraryMerge === 'undefined') return out;
+    Object.keys(LibraryMerge.KINDS).forEach((key) => {
+      const kind = LibraryMerge.KINDS[key].kind;
+      out[key] = kind === 'list' ? 'array' : 'object';
+    });
+    return out;
+  }
+
+  async function renderHealthCard() {
+    const el = $('#healthCard');
+    const pill = $('#healthStatus');
+    if (!el || typeof AppStore === 'undefined' || typeof StoreSchema === 'undefined') return;
+
+    if (!bootStoreOK) {
+      if (pill) { pill.className = 'pill warn'; pill.textContent = 'unknown'; }
+      el.innerHTML = '<p class="storage-note">Formats and integrity are checked through the local database, which could not be opened. Fix storage first — this card has nothing to read.</p>';
+      return;
+    }
+
+    const rows = Object.keys(StoreSchema.registry).map((key) => {
+      const entry = StoreSchema.registry[key];
+      const stored = (bootSchema && bootSchema.versions && bootSchema.versions[key]) || 1;
+      const current = entry.current || 1;
+      return { key, label: entry.label || key, stored, current, at: stored >= current };
+    });
+    const pending = rows.filter((r) => !r.at);
+    const ran = (bootSchema && bootSchema.ran) || [];
+    const failed = (bootSchema && bootSchema.failed) || [];
+
+    if (pill) {
+      if (failed.length) { pill.className = 'pill bad'; pill.textContent = failed.length + ' upgrade' + (failed.length === 1 ? '' : 's') + ' could not run'; }
+      else if (libraryAudit && libraryAudit.problems.length) { pill.className = 'pill bad'; pill.textContent = libraryAudit.problems.length + ' unreadable value' + (libraryAudit.problems.length === 1 ? '' : 's'); }
+      else if (pending.length) { pill.className = 'pill warn'; pill.textContent = pending.length + ' key' + (pending.length === 1 ? '' : 's') + ' behind'; }
+      else { pill.className = 'pill ok'; pill.textContent = 'formats current'; }
+    }
+
+    el.innerHTML = `
+      <div class="storage-head">
+        <div><b>${rows.filter((r) => r.at).length} of ${rows.length}</b> stored formats are current for this build</div>
+        <div class="storage-sub">Formats upgrade one key at a time, before the app reads anything. A value that cannot be converted is left exactly as it was and retried next launch.</div>
+      </div>
+      <div class="storage-rows">
+        ${rows.map((r) => `<div class="storage-row"><span>${esc(r.label)} <em>${esc(r.key)}</em></span><b style="color:${r.at ? 'inherit' : 'var(--warn, #c9a227)'}">v${r.stored}${r.at ? '' : ' → v' + r.current}</b></div>`).join('')}
+      </div>
+      ${ran.length ? `<div class="storage-note">Upgraded on this launch: ${ran.map((r) => `${esc(r.label)} v${r.from} → v${r.to}`).join(', ')}.</div>` : ''}
+      ${failed.length ? `<p class="storage-note warn">Could not upgrade: ${failed.map((f) => esc(f.label || f.key)).join(', ')}. Nothing was changed for those keys, and they will be retried on the next launch.</p>` : ''}
+      ${libraryAudit ? `
+        <div class="storage-rows">
+          ${libraryAudit.entries.map((e) => `<div class="storage-row"><span>${esc(e.key)} <em>${esc(e.verdict === 'ok' ? (e.shape + ', ' + e.items + ' item' + (e.items === 1 ? '' : 's')) : e.verdict)}</em></span><b>${fmtBytes(e.bytes)}</b></div>`).join('') || '<div class="storage-row"><span>Nothing stored yet</span><b>0 B</b></div>'}
+        </div>
+        ${libraryAudit.problems.length ? `<p class="storage-note warn">${libraryAudit.problems.length} value${libraryAudit.problems.length === 1 ? '' : 's'} could not be read: ${lastAudit.problems.map((p) => esc(p.key + ' (' + (p.hint || p.error || p.verdict) + ')')).join('; ')}.</p>` : '<p class="storage-note">Every stored value reads back as the shape this build expects.</p>'}
+        ${libraryAudit.advice ? `<p class="storage-note warn">${esc(libraryAudit.advice)}</p>` : ''}
+      ` : ''}
+      <div class="storage-actions">
+        <button class="btn ghost small" data-lib-audit="1">Check every stored value</button>
+        <button class="btn ghost small" data-lib-copyreport="1">Copy the report</button>
+      </div>
+      <input type="file" id="healthReportFile" hidden>
+    `;
+
+    const auditBtn = $('[data-lib-audit]');
+    if (auditBtn) auditBtn.onclick = async () => {
+      auditBtn.disabled = true; auditBtn.textContent = 'Walking the library…';
+      libraryAudit = await AppStore.audit(expectedShapes());
+      renderHealthCard();
+      toast(libraryAudit.problems.length
+        ? libraryAudit.problems.length + ' stored value' + (libraryAudit.problems.length === 1 ? '' : 's') + ' could not be read — see the report'
+        : 'Every stored value reads back correctly ✅', libraryAudit.problems.length === 0);
+    };
+    const copyBtn = $('[data-lib-copyreport]');
+    if (copyBtn) copyBtn.onclick = () => {
+      const report = [
+        'PallettAI library health report',
+        'Generated: ' + new Date().toISOString(),
+        'Now: v' + rows.map((r) => `${r.key}=v${r.stored}/${r.current}`).join(' '),
+        ran.length ? 'Upgraded this launch: ' + ran.map((r) => `${r.key} v${r.from}->v${r.to}`).join(', ') : 'Upgraded this launch: nothing',
+        failed.length ? 'Failed: ' + failed.map((f) => `${f.key}: ${f.error}`).join(', ') : 'Failed: nothing',
+        libraryAudit ? 'Values: ' + libraryAudit.entries.map((e) => `${e.key}=${e.verdict}(${e.bytes}B)`).join(' ') : 'Values: not checked yet',
+        libraryAudit && libraryAudit.problems.length ? 'Unreadable: ' + libraryAudit.problems.map((p) => `${p.key}: ${p.error || p.hint}`).join('; ') : ''
+      ].filter(Boolean).join('\n');
+      copyText(report, 'Health report copied 📋');
+    };
+  }
+
+  /*
+    ---------------- autosave history: retention ----------------
+
+    Autosave snapshots become the largest thing in the library and nothing has
+    ever pruned them: 12 per project up to a 24 MB ceiling, after which the next
+    snapshot is refused in silence. The panel shows what the history weighs and
+    offers a policy — age, count, byte budget — PREVIEWED before it applies.
+
+    The rule that makes this safe to hand to a creator: the newest snapshot of a
+    project is never dropped, whatever the policy says. It is the only restore
+    point for "I just broke it".
+  */
+  let retentionRules = (typeof RevsPolicy !== 'undefined') ? RevsPolicy.rules({}) : null;
+  let retentionPreset = 'default';
+
+  function revisionTotals() {
+    const ids = Object.keys(revs || {});
+    let snaps = 0, bytes = 0;
+    ids.forEach((id) => {
+      const list = Array.isArray(revs[id]) ? revs[id] : [];
+      list.forEach((r) => { snaps += 1; bytes += (r && typeof r.snap === 'string') ? r.snap.length : 0; });
+    });
+    return { projects: ids.length, snaps, bytes };
+  }
+
+  async function renderRetentionCard() {
+    const el = $('#retentionCard');
+    const pill = $('#retentionStatus');
+    if (!el) return;
+    if (typeof RevsPolicy === 'undefined') return;
+
+    const totals = revisionTotals();
+    const plan = RevsPolicy.plan(revs, retentionRules, Date.now());
+    const quota = typeof AppStore !== 'undefined' && bootStoreOK ? await AppStore.quota() : null;
+    const usage = typeof AppStore !== 'undefined' && bootStoreOK ? await AppStore.usage() : null;
+    const pressure = quota ? RevsPolicy.pressure(usage ? usage.bytes : 0, quota.quota) : null;
+
+    if (pill) {
+      pill.className = plan.drop.length ? 'pill warn' : 'pill';
+      pill.textContent = plan.drop.length
+        ? plan.drop.length + ' snapshot' + (plan.drop.length === 1 ? '' : 's') + ' to prune · frees ' + fmtBytes(plan.bytesFreed)
+        : totals.snaps + ' snapshot' + (totals.snaps === 1 ? '' : 's');
+    }
+
+    const byProject = Object.keys(revs || {})
+      .map((id) => {
+        const list = Array.isArray(revs[id]) ? revs[id] : [];
+        const p = (projects || []).find((x) => x.id === id);
+        return { id, name: p ? p.name : '(deleted project)', count: list.length, bytes: list.reduce((n, r) => n + ((r && typeof r.snap === 'string') ? r.snap.length : 0), 0) };
+      })
+      .sort((a, b) => b.bytes - a.bytes)
+      .slice(0, 6);
+
+    el.innerHTML = `
+      <div class="storage-head">
+        <div><b>${fmtBytes(totals.bytes)}</b> in ${totals.snaps} autosave snapshot${totals.snaps === 1 ? '' : 's'} across ${totals.projects} project${totals.projects === 1 ? '' : 's'}</div>
+        <div class="storage-sub">${pressure ? esc(pressure.advice) : 'Snapshots are what autosave restores from — the newest one per project is never pruned.'}</div>
+      </div>
+      <div class="storage-rows">
+        ${byProject.map((p) => `<div class="storage-row"><span>${esc(p.name)} <em>${p.count} snapshot${p.count === 1 ? '' : 's'}</em></span><b>${fmtBytes(p.bytes)}</b></div>`).join('') || '<div class="storage-row"><span>No history yet — it builds up as you edit</span><b>0 B</b></div>'}
+      </div>
+      <div class="storage-actions" style="flex-wrap:wrap">
+        ${RevsPolicy.PRESETS.map((p) => `<button class="btn ghost small${retentionPreset === p.id ? ' active' : ''}" data-revpreset="${esc(p.id)}" title="${esc(p.note)}">${esc(p.label)}</button>`).join('')}
+      </div>
+      <p class="storage-note">${esc((RevsPolicy.PRESETS.find((p) => p.id === retentionPreset) || {}).note || '')}</p>
+      ${plan.drop.length
+        ? `<p class="storage-note warn">Pruning now would remove <b>${plan.drop.length}</b> snapshot${plan.drop.length === 1 ? '' : 's'} and free <b>${fmtBytes(plan.bytesFreed)}</b>${plan.byWhy.age ? ` — ${plan.byWhy.age} past the age limit` : ''}${plan.byWhy.count ? `${plan.byWhy.age ? ',' : ' —'} ${plan.byWhy.count} past the per-project limit` : ''}${plan.byWhy.budget ? `${(plan.byWhy.age || plan.byWhy.count) ? ',' : ' —'} ${plan.byWhy.budget} to fit the byte budget` : ''}. The newest snapshot of every project stays.</p>
+           <div class="storage-actions"><button class="btn small" data-revprune="1">Prune and free ${fmtBytes(plan.bytesFreed)}</button><button class="btn ghost small" data-revwhy="1">How this is decided</button></div>`
+        : '<p class="storage-note">Nothing is over the current rules, so nothing would be removed. A tighter policy frees space; the newest snapshot of each project is always kept.</p>'}
+      <div class="storage-actions">
+        <button class="btn ghost small" data-revclearall="1">Clear all history…</button>
+      </div>
+    `;
+
+    $$('[data-revpreset]').forEach((b) => b.onclick = () => {
+      retentionPreset = b.dataset.revpreset;
+      const preset = RevsPolicy.PRESETS.find((p) => p.id === retentionPreset);
+      retentionRules = RevsPolicy.rules(preset ? preset.rules : {});
+      renderRetentionCard();
+    });
+    const whyBtn = $('[data-revwhy]');
+    if (whyBtn) whyBtn.onclick = () => openModal('How pruning decides', `
+      <p>Three limits, applied in this order, and the newest snapshot of every project is skipped by all of them:</p>
+      <div class="storage-rows">
+        <div class="storage-row"><span>Age</span><b>${retentionRules.maxAgeDays ? retentionRules.maxAgeDays + ' days' : 'no limit'}</b></div>
+        <div class="storage-row"><span>Per project</span><b>newest ${retentionRules.maxPerProject}</b></div>
+        <div class="storage-row"><span>Total budget</span><b>${retentionRules.budgetBytes ? fmtBytes(retentionRules.budgetBytes) : 'no limit'}</b></div>
+      </div>
+      <p class="storage-note">Order matters: age and count are decided per project, then the byte budget is applied newest-first across everything. A snapshot that is the last one left in its project is never dropped, so a library can exceed the budget rather than lose a project's only restore point.</p>
+      <p class="storage-note">Pruning writes to the same store the edit history lives in and cannot be undone — back the library up first if you are unsure. Snapshots are only ever autosave copies; the projects themselves are untouched.</p>
+    `);
+    const pruneBtn = $('[data-revprune]');
+    if (pruneBtn) pruneBtn.onclick = () => {
+      const fresh = RevsPolicy.plan(revs, retentionRules, Date.now());
+      if (!fresh.drop.length) return renderRetentionCard();
+      confirmModal('Prune autosave history?', `Removes ${fresh.drop.length} snapshot${fresh.drop.length === 1 ? '' : 's'} and frees about ${fmtBytes(fresh.bytesFreed)}. The newest snapshot of every project is kept. This cannot be undone.`, () => {
+        revs = RevsPolicy.apply(revs, fresh);
+        persistRevs();
+        renderRetentionCard();
+        renderStorageCard();
+        toast('Pruned ' + fresh.drop.length + ' snapshot' + (fresh.drop.length === 1 ? '' : 's') + ' 🧹', true);
+      }, 'Prune');
+    };
+    const clearBtn = $('[data-revclearall]');
+    if (clearBtn) clearBtn.onclick = () => {
+      const totals2 = revisionTotals();
+      if (!totals2.snaps) return toast('There is no history to clear');
+      confirmModal('Clear all autosave history?', `Deletes ${totals2.snaps} snapshot${totals2.snaps === 1 ? '' : 's'} (${fmtBytes(totals2.bytes)}) for every project. Your projects are not affected, but you will not be able to step back to an earlier version of any of them.`, () => {
+        revs = {};
+        persistRevs();
+        renderRetentionCard();
+        renderStorageCard();
+        toast('Autosave history cleared 🧹', true);
+      }, 'Clear it');
+    };
+  }
+
+  /*
+    One file with every stored key, as the exact string the store holds.
+
+    Raw strings rather than re-serialised objects on purpose: a backup's job is
+    to reproduce what was there, and re-encoding a value the app already failed
+    to parse is how a backup quietly loses what it was meant to save.
+  */
+  async function backupLibrary(usage) {
+    try {
+      const values = Object.create(null);
+      for (const key of usage.keys) {
+        const raw = await AppStore.get(key);
+        if (raw !== null) values[key] = raw;
+      }
+      const stamp = new Date().toISOString().slice(0, 10);
+      const payload = {
+        kind: 'pallettai-library-backup',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        studio: (typeof appVersion === 'function' ? appVersion() : ''),
+        bytes: usage.bytes,
+        values
+      };
+      const ok2 = downloadText('pallettai-library-' + stamp + '.json', JSON.stringify(payload), 'application/json');
+      toast(ok2 ? 'Library backed up 💾 (' + fmtBytes(usage.bytes) + ')' : 'Could not write the backup file', !!ok2);
+    } catch (e) {
+      toast('Backup failed: ' + ((e && e.message) || 'unknown error'), false);
+    }
+  }
+
+  /*
+    Opening a backup file.
+
+    This used to be one action: overwrite everything, reload. The common case for
+    a backup is not disaster recovery — it is a second machine, or a colleague's
+    copy, and the only honest thing to do there is ADD what is missing. So the file
+    is now inspected first (data/library-merge.js), compared against what is
+    actually stored, and offered as a merge OR a replace, per key.
+
+    Merging is the default because it is the direction that cannot lose work: it
+    adds what is missing and keeps the newer copy of anything both sides have. The
+    replace path is still there, still says plainly what it is about to remove,
+    and still reloads afterwards.
+  */
+  function askRestoreLibrary(file) {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const text = String(reader.result);
+      let current = {};
+      try {
+        const parsed = JSON.parse(text);
+        const keys = parsed && parsed.values && typeof parsed.values === 'object' ? Object.keys(parsed.values) : [];
+        for (const key of keys) {
+          if (bootStoreOK) current[key] = await AppStore.get(key);
+          else current[key] = localStorage.getItem(key);
+        }
+      } catch (e) { /* inspect() below reports the real problem */ }
+
+      const check = LibraryMerge.inspect(text, current);
+      if (!check.ok) return toast(check.error, false);
+      showRestoreModal(check, current);
+    };
+    reader.onerror = () => toast('Could not read that file', false);
+    reader.readAsText(file);
+  }
+
+  function showRestoreModal(check, current) {
+    const s = check.summary;
+    let mode = 'merge';
+    const selected = new Set(check.keys.map((k) => k.key));
+
+    const stateWord = (e) => e.state === 'new' ? 'new here' : (e.state === 'same' ? 'identical' : 'differs');
+    const countLine = (sum) => {
+      if (!sum || !sum.parsed) return 'unreadable';
+      if (sum.projects !== undefined) return sum.projects + ' project' + (sum.projects === 1 ? '' : 's') + ', ' + sum.items + ' snapshot' + (sum.items === 1 ? '' : 's');
+      return sum.items + ' ' + (sum.unit || 'item') + (sum.items === 1 ? '' : 's');
+    };
+
+    openModal('Restore or merge a backup', `
+      <p>Backup from <b>${esc(String(check.exportedAt || 'an unknown date').slice(0, 10))}</b>${check.studio ? ` · studio ${esc(check.studio)}` : ''} — ${check.keys.length} stored key${check.keys.length === 1 ? '' : 's'}, ${fmtBytes(s.bytes)}.</p>
+      <div class="storage-actions" style="margin-bottom:6px">
+        <button class="btn small active" id="modeMerge">Merge (keeps your work)</button>
+        <button class="btn ghost small" id="modeReplace">Replace everything</button>
+      </div>
+      <div class="storage-rows">
+        ${check.keys.map((e) => `
+          <label class="storage-row" style="cursor:pointer">
+            <span><input type="checkbox" data-rkey="${esc(e.key)}" checked> ${esc(e.label)} <em>${esc(stateWord(e))} · ${esc(countLine(e.incoming))}</em></span>
+            <b>${fmtBytes(e.bytes)}${e.state === 'differs' ? ` <em>now ${esc(countLine(e.current))}</em>` : ''}</b>
+          </label>`).join('')}
+      </div>
+      <div id="restoreSummary"></div>
+    `, true);
+
+    const paint = () => {
+      const plan = LibraryMerge.planMerge(check, current, { mode, only: Array.from(selected) });
+      const mergeBtn = $('#modeMerge');
+      const repBtn = $('#modeReplace');
+      if (mergeBtn && repBtn) {
+        mergeBtn.classList.toggle('active', mode === 'merge');
+        mergeBtn.classList.toggle('ghost', mode !== 'merge');
+        repBtn.classList.toggle('active', mode === 'replace');
+        repBtn.classList.toggle('ghost', mode !== 'replace');
+      }
+      const box = $('#restoreSummary');
+      if (!box) return;
+      if (!plan.ok) {
+        box.innerHTML = `<p class="storage-note warn">${esc(plan.error)}</p>` +
+          (plan.blocked.length ? `<p class="storage-note warn">${plan.blocked.map((b) => esc(b.label + ': ' + b.why)).join('<br>')}</p>` : '');
+        return;
+      }
+      box.innerHTML = `
+        <p class="storage-note">${mode === 'merge'
+          ? `Adds <b>${plan.added}</b> item${plan.added === 1 ? '' : 's'} that ${plan.added === 1 ? 'exists' : 'exist'} only in the backup${plan.updated ? `, and takes the newer copy of <b>${plan.updated}</b> that both sides have` : ''}. Nothing that exists only here is removed.`
+          : `<b style="color:var(--danger,#e5484d)">Replaces ${plan.writes.length} stored key${plan.writes.length === 1 ? '' : 's'} outright.</b>${plan.removedItems ? ` That removes about ${plan.removedItems} item${plan.removedItems === 1 ? '' : 's'} that are not in the backup.` : ''}`}</p>
+        ${plan.warnings.map((w) => `<p class="storage-note warn">${esc(w)}</p>`).join('')}
+        <div class="storage-rows">
+          ${plan.writes.map((w) => `<div class="storage-row"><span>${esc(w.label)} <em>${esc(w.action)}${w.added ? ' +' + w.added + (w.added === 1 ? ' item' : ' items') : ''}${w.note ? ' · ' + w.note : ''}</em></span><b>${w.grewBy === undefined ? fmtBytes(check.keys.find((k) => k.key === w.key).bytes) : (w.grewBy >= 0 ? 'grows ' : 'shrinks ') + fmtBytes(Math.abs(w.grewBy))}</b></div>`).join('')}
+          ${plan.skips.map((k) => `<div class="storage-row"><span>${esc(k.label)} <em>kept as is</em></span><b>—</b></div>`).join('')}
+        </div>
+        <div class="storage-actions"><button class="btn" id="restoreGo">${mode === 'merge' ? 'Merge into this library' : 'Replace and reload'}</button></div>
+      `;
+      const go = $('#restoreGo');
+      if (go) go.onclick = () => runRestore(plan, mode);
+    };
+
+    $('#modeMerge').onclick = () => { mode = 'merge'; paint(); };
+    $('#modeReplace').onclick = () => { mode = 'replace'; paint(); };
+    $$('[data-rkey]').forEach((cb) => cb.onchange = () => {
+      if (cb.checked) selected.add(cb.dataset.rkey); else selected.delete(cb.dataset.rkey);
+      paint();
+    });
+    paint();
+  }
+
+  async function runRestore(plan, mode) {
+    const go = $('#restoreGo');
+    if (go) { go.disabled = true; go.textContent = mode === 'merge' ? 'Merging…' : 'Replacing…'; }
+    try {
+      for (const write of plan.writes) await AppStore.put(write.key, write.raw);
+      const flushed = await AppStore.flush();
+      if (!flushed.ok) throw new Error('could not write ' + flushed.failed.join(', '));
+      closeModal();
+      if (mode === 'merge') {
+        toast('Merged ' + plan.writes.length + ' key' + (plan.writes.length === 1 ? '' : 's') + ' from the backup — reloading', true);
+      } else {
+        toast('Library replaced — reloading', true);
+      }
+      setTimeout(() => location.reload(), 600);
+    } catch (e) {
+      if (go) { go.disabled = false; go.textContent = mode === 'merge' ? 'Merge into this library' : 'Replace and reload'; }
+      toast((mode === 'merge' ? 'Merge' : 'Restore') + ' failed: ' + ((e && e.message) || 'unknown error'), false);
+    }
   }
 
   async function renderOnlineGrid() {
     const wrap = $('#onlineGrid');
     if (!wrap) return;
     const tpl = (s, actions, results) => `
-      <div class="online-card${s.tier ? ' pro-locked-src' : ''}">
-        <div class="src-top"><span class="tile-mark">${esc((s.name || '?').charAt(0))}</span><div><h4>${esc(s.name)}${s.tier ? ' <span class="pro-chip">Pro</span>' : ''}</h4><a class="src-url" href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url.replace(/^https?:\/\//, ''))}</a></div></div>
+      <div class="online-card${s.tier ? ' pro-locked-src' : ''}" data-src="${esc(s.id)}">
+        <div class="src-top"><span class="tile-mark">${esc((s.name || '?').charAt(0))}</span><div><h4>${esc(s.name)}${s.tier ? ' <span class="pro-chip">Pro</span>' : ''}${sourceState(s.id)}</h4><a class="src-url" href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url.replace(/^https?:\/\//, ''))}</a></div></div>
         <p>${esc(s.desc)}</p>
         <div class="src-actions">${actions}</div>
         <div class="src-results" id="res-${s.id}">${results || ''}</div>
@@ -6410,6 +7129,13 @@ const App = (() => {
             <button class="btn ghost small" data-fetch="pixabay">Search photos</button>
             <button class="btn ghost small" data-fetch="pixabay-wide">Wide shots</button>${needProject}`
           : `<span style="font-size:.72rem;color:var(--muted)">Pixabay photos need your free API key. </span><button class="btn ghost small" data-go-pixkey>Add in Settings</button>` },
+      // Companies House has a purpose-built lookup panel (number entry, the full
+      // register record, and both apply paths), reached from the library tools and
+      // from here. The card routes to it rather than reimplementing the record in
+      // a second renderer that would drift from the first.
+      companieshouse: { acts: ONLINE.companiesHouseKey
+          ? '<button class="btn ghost small" data-open-tool="ch">Look up a UK company</button>'
+          : `<span style="font-size:.72rem;color:var(--muted)">UK company lookups need your free Companies House key. </span><button class="btn ghost small" data-go-chkey>Add in Settings</button>` },
       randomuser: { acts: `<button class="btn ghost small" data-fetch="people">Fetch 6 people</button>${needProject}` },
       quotable: { acts: `<button class="btn ghost small" data-fetch="quotes">Fetch 5 quotes</button>${needProject}` },
       gfonts: { acts: `<button class="btn ghost small" data-fetch="fonts">Show all fonts</button>`, results: `<div class="src-results" id="res-gfonts" style="display:grid;grid-template-columns:1fr;gap:8px"></div>` },
@@ -6417,9 +7143,28 @@ const App = (() => {
       coingecko: { pro: true, acts: `${inp('inp-coins', 'bitcoin,ethereum,solana')}<button class="btn ghost small" data-fetch="coins">Fetch prices</button>` },
       github: { pro: true, acts: `${inp('inp-gh', 'GitHub username')}<button class="btn ghost small" data-fetch="github">Fetch profile</button>` },
       frankfurter: { pro: true, acts: `${inp('inp-fx', 'Base currency, e.g. GBP')}<button class="btn ghost small" data-fetch="fx">Fetch rates</button>` },
+      companieshouse: ONLINE.companiesHouseKey
+        ? { acts: `${inp('inp-ch', 'Company number, e.g. 09462154')}<button class="btn ghost small" data-fetch="ch">Look up company</button>` }
+        : { acts: `<span style="font-size:.72rem;color:var(--muted)">The UK company register needs a free registration key. </span><button class="btn ghost small" data-go-chkey>Add in Settings</button>` },
       coverr: { acts: `<input class="src-input" id="inp-coverr" placeholder="e.g. hero, drone, city" spellcheck="false" autocomplete="off" style="width:150px">
         <button class="btn ghost small" data-fetch="coverr">Fetch videos</button>
-        <span style="font-size:.72rem;color:var(--muted)">Free CC0 stock video for hero backgrounds.</span>` }
+        <span style="font-size:.72rem;color:var(--muted)">Free CC0 stock video for hero backgrounds.</span>` },
+      // Openverse was listed in the panel with no controls at all, so its card
+      // sat empty. The module behind it was complete; only the button was missing.
+      // Its results carry the licence record, so they are applied WITH their
+      // credit — see setImage's meta argument.
+      openverse: { acts: `${inp('inp-openverse', 'Topic, e.g. coffee shop')}<button class="btn ghost small" data-fetch="openverse">Search images</button>
+        <span style="font-size:.72rem;color:var(--muted)">Openly licensed — the credit travels with the image.</span>` },
+      iconify: { acts: `${inp('inp-icons', 'e.g. shopping cart, phone, scissors')}<button class="btn ghost small" data-fetch="icons">Search icons</button>
+        <span style="font-size:.72rem;color:var(--muted)">The SVG is inlined into the export, so nothing is fetched at runtime.</span>` },
+      holidays: { acts: `<input class="src-input" id="inp-hol-cc" value="GB" maxlength="3" style="width:64px" spellcheck="false" autocomplete="off" title="Two-letter country code" aria-label="Country code">
+        <input class="src-input" id="inp-hol-yr" inputmode="numeric" maxlength="4" placeholder="${new Date().getFullYear()}" style="width:84px" spellcheck="false" autocomplete="off" title="Year" aria-label="Year">
+        <button class="btn ghost small" data-fetch="holidays">Fetch dates</button>
+        <span style="font-size:.72rem;color:var(--muted)">Check the real dates before writing “closed for the holidays”.</span>` },
+      weather: { acts: `${inp('inp-weather', 'Town, UK postcode or 53.99,-1.54')}<button class="btn ghost small" data-fetch="weather">Check conditions</button>
+        <span style="font-size:.72rem;color:var(--muted)">Also resolves the place for the live forecast widget.</span>` },
+      themealdb: { acts: `${inp('inp-meals', 'Dish or ingredient, e.g. soup, curry')}<button class="btn ghost small" data-fetch="meals">Search dishes</button>
+        <span style="font-size:.72rem;color:var(--muted)">Menu and recipe content for food businesses.</span>` }
     };
 
     // A short, live hint under the Online sources heading so first-time users notice
@@ -6440,9 +7185,61 @@ const App = (() => {
     $$('[data-fetch]').forEach((b) => b.onclick = () => fetchSource(b.dataset.fetch));
     $$('[data-pro-upgrade]').forEach((b) => b.onclick = () => { openPricing(); toast('That online database is a Pro feature 🔒', false); });
     $$('[data-go-pixkey]').forEach((b) => b.onclick = () => { settingsTab = 'online'; switchView('settings'); toast('Paste your free Pixabay key below 🔑', true); });
+    $$('[data-go-chkey]').forEach((b) => b.onclick = () => { settingsTab = 'online'; switchView('settings'); toast('Paste your free Companies House key below 🔑', true); });
+    $$('[data-open-tool="ch"]').forEach((b) => b.onclick = () => companiesHouseLookup(current()));
   }
 
-  const RES_BOX = { picsum: 'picsum', 'picsum-wide': 'picsum', pixabay: 'pixabay', 'pixabay-wide': 'pixabay', coverr: 'coverr', people: 'randomuser', quotes: 'quotable', coins: 'coingecko', github: 'github', fx: 'frankfurter', wiki: 'wikipedia' };
+  const RES_BOX = { picsum: 'picsum', 'picsum-wide': 'picsum', pixabay: 'pixabay', 'pixabay-wide': 'pixabay', coverr: 'coverr', openverse: 'openverse', people: 'randomuser', quotes: 'quotable', coins: 'coingecko', github: 'github', fx: 'frankfurter', wiki: 'wikipedia', ch: 'companieshouse', icons: 'iconify', holidays: 'holidays', weather: 'weather', meals: 'themealdb' };
+
+  // The last payload each source returned, so a result button can reach the
+  // object behind the thumbnail — an image's licence travels outside its URL,
+  // and a data-attribute string cannot carry it.
+  const lastResults = Object.create(null);
+  // Payloads whose buttons need more than the rendered text: a holiday list is
+  // applied as a table of real dates, and a forecast is applied as a place name.
+  let lastHolidays = null;
+  let lastWeather = null;
+
+  // Dates from the sources are ISO (2026-01-01). Shown as the day a person would
+  // say it, in their own locale, because a guest reading "closed for the
+  // holidays" needs the weekday, not a sortable string.
+  function niceDate(iso) {
+    const d = new Date(String(iso) + 'T00:00:00');
+    if (!Number.isFinite(d.getTime())) return String(iso);
+    try { return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }); }
+    catch (e) { return String(iso); }
+  }
+
+  /*
+    Applying an icon.
+
+    The SVG is fetched and inlined as a data URL rather than hot-linked to the
+    Iconify API, which is the difference between an icon and a broken-image box
+    on a client's site the first time that API is slow. No credit is recorded:
+    Iconify's sets are open source and the licence lives with the artwork.
+  */
+  async function chooseIcon(name) {
+    if (!current()) return toast('Open a project first', false);
+    try {
+      const icon = await ONLINE.fetchIconSvg(name);
+      openModal('Use ' + name, `
+        <div style="display:flex;gap:14px;align-items:center;margin-bottom:10px">
+          <img src="${esc(icon.dataUrl)}" alt="" width="64" height="64" style="background:var(--surface);border-radius:10px;padding:8px">
+          <div><div><b>${esc(name)}</b></div><div class="sub">${icon.bytes} bytes of SVG, inlined into the export — the site carries its own icons and cannot break when someone else's API is slow or gone.</div></div>
+        </div>
+        <div class="storage-actions">
+          <button class="btn small" id="iconHero">Use as hero image</button>
+          <button class="btn ghost small" id="iconSec">Use in the selected section</button>
+          <button class="btn ghost small" id="iconCopy">Copy the SVG</button>
+        </div>
+      `);
+      $('#iconHero').onclick = () => { closeModal(); setImage('hero', icon.dataUrl, 'Iconify'); };
+      $('#iconSec').onclick = () => { closeModal(); setImage('section', icon.dataUrl, 'Iconify'); };
+      $('#iconCopy').onclick = () => copyText(icon.svg, 'SVG copied 📋');
+    } catch (e) {
+      toast('Could not fetch that icon: ' + ((e && e.message) || 'unknown error'), false);
+    }
+  }
 
   // Add a live-data widget section (crypto / github / fx) from the databases panel
   function addWidget(type, extra) {
@@ -6466,23 +7263,63 @@ const App = (() => {
     }
     if (what === 'coverr') {
       return '<p style="font-size:.85rem;color:var(--muted);padding:18px 4px">No Coverr clips for that term right now — try <b>hero</b>, <b>city</b>, <b>drone</b> or <b>nature</b>, or search a wider subject.</p>';
-    }      if (what === 'picsum' || what === 'picsum-wide') {
+    }
+    if (what === 'openverse') {
+      return '<p style="font-size:.85rem;color:var(--muted);padding:18px 4px">No Openverse images for that term — try a broader subject like <b>cafe</b>, <b>office</b> or <b>architecture</b>.</p>';
+    }
+    if (what === 'picsum' || what === 'picsum-wide') {
       return '<p style="font-size:.85rem;color:var(--muted);padding:18px 4px">No Picsum photos came back for this request. Try again in a moment or pick another source.</p>';
     }
     if (what === 'wiki') {
       return '<p style="font-size:.85rem;color:var(--muted);padding:18px 4px">No Wikipedia summary for that topic — try a broader subject, or search for something with a dedicated article.</p>';
+    }
+    if (what === 'icons') {
+      return '<p style="font-size:.85rem;color:var(--muted);padding:18px 4px">No icons matched that search. Try the plain noun — <b>phone</b>, <b>cart</b>, <b>star</b> — or a shorter word.</p>';
+    }
+    if (what === 'holidays') {
+      return '<p style="font-size:.85rem;color:var(--muted);padding:18px 4px">No holiday data for that country and year. Try a two-letter code — <b>GB</b>, <b>IE</b>, <b>US</b>, <b>FR</b>, <b>DE</b>, <b>ES</b>, <b>AU</b> or <b>CA</b> — and a year within a couple of years of today.</p>';
+    }
+    if (what === 'meals') {
+      return '<p style="font-size:.85rem;color:var(--muted);padding:18px 4px">No dishes for that term. Try a single ingredient like <b>chicken</b>, a dish like <b>curry</b>, or a category like <b>dessert</b>.</p>';
     }
     return '<p style="font-size:.85rem;color:var(--muted);padding:18px 4px">No results for that request. Try a different term or source.</p>';
   }
 
   async function fetchSource(what) {
     if (settings.onlineEnabled === false) return toast('Online databases are disabled in Settings');
+    const sid = RES_BOX[what] || what;
+    // A click is an explicit instruction, so it is never answered with "not
+    // retrying yet": the source's cooldown is lifted for this attempt, while any
+    // failure it records still widens the gap for the requests nobody asked for.
+    if (ONLINE && typeof ONLINE.allowSourceNow === 'function') ONLINE.allowSourceNow(sid);
     const btn = $(`[data-fetch="${what}"]`);
     const original = btn.textContent;
     btn.disabled = true; btn.textContent = 'Loading…';
     try {
       let items, html;
-      if (what === 'picsum' || what === 'picsum-wide') {
+      if (what === 'openverse') {
+        const q = ($('#inp-openverse').value || 'workspace').trim() || 'workspace';
+        items = await ONLINE.fetchOpenverseImages(q, 1, 12);
+        html = items.map((p) => {
+          const meta = p.meta || {};
+          // CC0 / public-domain images carry no attribution duty; everything
+          // else does, and the builder's footer only prints a credit line when
+          // meta.requiresAttribution is not false.
+          const needs = meta.requiresAttribution !== false;
+          return `
+          <div class="res-item" style="grid-column:span 2">
+            <img src="${esc(p.thumb)}" data-full="${esc(p.url)}" data-label="${esc(p.title)}" data-kind="image" loading="lazy" alt="${esc(p.title)}" style="height:96px">
+            <b>${esc(p.title)}</b>
+            <div>${esc(p.creator || meta.creator || 'Unknown creator')}</div>
+            <div class="src-lic${needs ? ' needs' : ''}">${esc(meta.license || 'Licence not supplied')}${needs ? ' · credit required' : ' · no credit needed'}</div>
+            <div class="res-actions">
+              <button class="icon-btn" data-img-hero="${esc(p.url)}" title="Set hero background">🚀</button>
+              <button class="icon-btn" data-img-sec="${esc(p.url)}" title="Set selected section image">🎯</button>
+              <button class="btn ghost small" data-ov-credit="${esc(meta.attribution || p.title)}">Copy credit</button>
+            </div>
+          </div>`;
+        }).join('');
+      } else if (what === 'picsum' || what === 'picsum-wide') {
         const w = what === 'picsum-wide' ? 1400 : 640;
         items = await ONLINE.fetchPhotos(8, w, what === 'picsum-wide' ? 800 : 480);
         html = items.map((p) => `
@@ -6538,9 +7375,21 @@ const App = (() => {
           </div>`;
         }).join('');
         $$('#res-gfonts [data-font-apply]').forEach((b) => b.onclick = () => applyFont(b.dataset.fontApply));
-        onlineHealth = { checked: true, ok: true };
+        // The list above came from DB.fonts, which proves nothing about the CDN,
+        // so the badge is earned by asking the CDN for the stylesheet the preview
+        // is about to use. Claiming "loaded from Google's CDN" off a local array
+        // is how this card read healthy while every font behind it failed.
+        let fontCdn = 0;
+        try {
+          fontCdn = (await ONLINE.checkFontCdn(list[0] ? list[0].id : 'archivo')).bytes;
+          markSourceHealth('gfonts', true, `Google Fonts answered with ${fontCdn} bytes of CSS`);
+        } catch (e) {
+          markSourceHealth('gfonts', false, 'Google Fonts CDN unreachable: ' + ((e && e.message) || 'request failed'));
+        }
         updateOnlineStatus();
-        toast('Fonts loaded from Google’s CDN 🔤', true);
+        toast(fontCdn
+          ? 'Fonts loaded from Google’s CDN 🔤'
+          : 'Font list shown, but Google’s CDN could not be reached — previews may not render', !!fontCdn);
         return;
       } else if (what === 'coverr') {
         const q = ($('#inp-coverr').value || 'hero').trim() || 'hero';
@@ -6615,7 +7464,7 @@ const App = (() => {
             </div>`;
           toast('Wikipedia summary fetched 📚', true);
         }
-        onlineHealth = { checked: true, ok: true };
+        markSourceHealth(sid, true);
         updateOnlineStatus();
         $$('[data-widget]').forEach((b) => b.onclick = () => addWidget(b.dataset.widget, b.dataset.extra));
         $$('[data-q-about]').forEach((b) => b.onclick = () => {
@@ -6636,15 +7485,110 @@ const App = (() => {
         });
         return;
       }
+      if (what === 'ch') {
+        const num = ($('#inp-ch') && $('#inp-ch').value || '').trim();
+        const rec = await ONLINE.fetchCompany(num);
+        const sic = (rec.sic || []).map((code) => ONLINE.sicToBusinessType(code)).filter(Boolean);
+        const boxCh = resBox(what);
+        boxCh.innerHTML = `
+          <div class="res-item" style="grid-column:span 1">
+            <b>${esc(rec.name)}</b>
+            <div style="color:var(--muted);font-size:.8rem">№ ${esc(rec.number)} · ${esc(rec.status || 'status unknown')}${rec.createdAt ? ' · since ' + esc(rec.createdAt.slice(0, 4)) : ''}</div>
+            <div style="font-size:.85rem;margin:4px 0">${esc(rec.address || 'No registered address published')}</div>
+            ${rec.sic.length ? `<div class="sub">Industry (SIC ${esc(rec.sic.join(', '))})${sic.length ? ' → ' + esc(sic.join(', ')) : ''}</div>` : ''}
+          </div>
+          <div style="display:flex;gap:8px;margin:8px 0 2px">
+            <button class="btn ghost small" data-ch-ai="${esc(rec.number)}">Use in AI Studio</button>
+          </div>`;
+        markSourceHealth(sid, true);
+        updateOnlineStatus();
+        boxCh.querySelectorAll('[data-ch-ai]').forEach((b) => b.onclick = () => { companiesHouseLookup(current(), b.dataset.chAi); });
+        toast('Company found on the register 🇬🇧', true);
+        return;
+      }
+      if (what === 'icons') {
+        const q = ($('#inp-icons').value || 'star').trim() || 'star';
+        items = await ONLINE.searchIcons(q, 24);
+        html = items.length
+          ? `<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;width:100%">` +
+            items.map((ic) => `<button class="icon-cell" data-icon="${esc(ic.name)}" title="${esc(ic.name)}" aria-label="${esc(ic.name)}" style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:9px 4px;cursor:pointer"><img src="${esc(ic.thumb)}" alt="" width="26" height="26" loading="lazy" style="display:block;margin:0 auto"><span style="display:block;font-size:.6rem;color:var(--muted);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ic.icon)}</span></button>`).join('') +
+            `</div><p class="storage-note" style="width:100%">${items.length} icon${items.length === 1 ? '' : 's'} — pick one to inline it as an image or copy the SVG.</p>`
+          : '';
+      }
+      if (what === 'holidays') {
+        const cc = ($('#inp-hol-cc').value || 'GB').trim().toUpperCase();
+        const yr = ($('#inp-hol-yr').value || '').trim();
+        const data = await ONLINE.fetchHolidays(cc, yr ? Number(yr) : undefined);
+        lastHolidays = data;
+        items = data.list;
+        const next = new Set(data.upcoming.map((h) => h.id));
+        html = items.length
+          ? `<div style="width:100%"><div class="storage-rows">` +
+            items.map((h) => `<div class="storage-row"><span>${esc(niceDate(h.date))}${next.has(h.id) ? ' <span class="pill ok">next</span>' : ''} <em>${esc(h.name)}</em></span><b>${h.nationwide ? 'nationwide' : esc(h.counties.length + ' areas')}</b></div>`).join('') +
+            `</div><div class="storage-actions"><button class="btn small" data-hol-table="1">Add a closures table</button><button class="btn ghost small" data-hol-copy="1">Copy the dates</button></div>` +
+            `<p class="storage-note">${data.list.length} public holidays in ${esc(data.country)} for ${data.year}, from ${esc(data.source)}. Some are regional — the right-hand column says which, so check them against your own opening hours.</p></div>`
+          : '';
+      }
+      if (what === 'weather') {
+        const q = ($('#inp-weather').value || '').trim();
+        const w = await ONLINE.fetchWeather(q);
+        lastWeather = w;
+        items = [w];
+        html = `<div style="width:100%">
+          <div class="storage-head">
+            <div><b>${Math.round(w.now.temp)}°C</b> ${esc(w.now.emoji + ' ' + w.now.label)} in ${esc(w.place)}${w.country ? ', ' + esc(w.country) : ''}</div>
+            <div class="storage-sub">Feels like ${Math.round(w.now.feels)}°C · wind ${Math.round(w.now.wind)} km/h · humidity ${Math.round(w.now.humidity)}% · ${w.latitude.toFixed(3)}, ${w.longitude.toFixed(3)}</div>
+          </div>
+          <div class="storage-rows">${w.days.map((d) => `<div class="storage-row"><span>${esc(niceDate(d.date))}</span><b>${esc(d.emoji)} ${Math.round(d.max)}° / ${Math.round(d.min)}°</b></div>`).join('')}</div>
+          <div class="storage-actions"><button class="btn small" data-w-widget="1">Add the live forecast widget</button><button class="btn ghost small" data-w-copy="1">Copy a “today” line</button></div>
+          <p class="storage-note">The widget stays live in the export — it looks the forecast up itself. This panel used ${esc(w.source)}, and resolved “${esc(q || w.place)}” to coordinates, which is why the place below is one the widget can find too.</p>
+        </div>`;
+      }
+      if (what === 'meals') {
+        const q = ($('#inp-meals').value || 'soup').trim() || 'soup';
+        items = await ONLINE.fetchMeals(q, 9);
+        html = items.length
+          ? `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:100%">` +
+            items.map((m) => `<div class="res-item" style="background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden">
+              <img src="${esc(m.thumb)}" alt="" loading="lazy" style="width:100%;height:96px;object-fit:cover;display:block">
+              <div style="padding:8px">
+                <div style="font-weight:600;font-size:.82rem">${esc(m.name)}</div>
+                <div style="color:var(--muted);font-size:.72rem">${esc([m.category, m.area].filter(Boolean).join(' · ') || m.source)}</div>
+                <div class="res-actions" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+                  <button class="btn ghost small" data-img-hero="${esc(m.thumb)}">🚀 Hero</button>
+                  <button class="btn ghost small" data-img-sec="${esc(m.thumb)}">🎯 Section</button>
+                  <button class="btn ghost small" data-meal-copy="${esc(m.id)}">📋 Copy</button>
+                </div>
+              </div>
+            </div>`).join('') +
+            `</div><p class="storage-note" style="width:100%">${items.length} dish${items.length === 1 ? '' : 'es'} from TheMealDB — photos and details are free to use, no attribution required.</p>`
+          : '';
+      }
       const box = resBox(what);
       if (!box) throw new Error('missing container for ' + what);
       box.innerHTML = html || emptyResultsHtml(what);
-      onlineHealth = { checked: true, ok: true };
+      // Keep the payload the buttons were rendered from: a licence record is not
+      // part of a URL, so an Openverse credit can only be applied from the row.
+      lastResults[what] = items || [];
+      markSourceHealth(sid, true);
       updateOnlineStatus();
       bindResults(what);
-      toast(what.startsWith('picsum') ? 'Photos fetched 🖼️' : what.startsWith('pixabay') ? 'Pixabay photos fetched 🔎' : what === 'people' ? 'People fetched 🧑‍💼' : 'Quotes fetched 💬', true);
+      toast(what.startsWith('picsum') ? 'Photos fetched 🖼️'
+        : what.startsWith('pixabay') ? 'Pixabay photos fetched 🔎'
+        : what === 'people' ? 'People fetched 🧑‍💼'
+        : what === 'icons' ? (items.length + ' icons found 🧩')
+        : what === 'holidays' ? (items.length + ' dates found 📅')
+        : what === 'weather' ? 'Conditions fetched 🌤️'
+        : what === 'meals' ? (items.length + ' dishes found 🍽️')
+        : 'Quotes fetched 💬', true);
     } catch (err) {
-      onlineHealth = { checked: true, ok: false };
+      // Only this source is marked down. The quotes fallback below still fills
+      // the card with local quotes, so the badge says "unreachable" beside
+      // usable content rather than the panel claiming the whole studio is offline.
+      const heldBack = err && err.code === 'source_cooling_down';
+      markSourceHealth(sid, false, heldBack
+        ? `held back after ${ONLINE.sourceHealth(sid).failures} failed attempts — retrying in ${Math.ceil((err.retryInMs || 0) / 1000)}s`
+        : (err && err.message) || 'request failed');
       updateOnlineStatus();
       if (what === 'quotes') {
         // graceful fallback: local quotes
@@ -6656,7 +7600,9 @@ const App = (() => {
             <div class="res-actions"><button class="btn ghost small" data-q-cta="${esc(q.text)}" data-q-auth="${esc(q.extra)}">📣 CTA</button><button class="btn ghost small" data-q-t="${esc(q.text)}" data-q-auth="${esc(q.extra)}">💬 Testimonial</button></div>
           </div>`).join('');
         bindResults('quotes');
-        toast('Online unreachable — used offline fallback quotes', true);
+        toast(heldBack
+          ? 'Quotes source is taking a break after failures — using offline quotes'
+          : 'Online unreachable — used offline fallback quotes', true);
       } else {
         toast('Offline: could not reach ' + what + '. Check your connection.', false);
       }
@@ -6691,6 +7637,87 @@ const App = (() => {
         toast('Coverr video set as hero background 🎬', true);
       });
     }
+    // Scoped to this source's own result box, unlike the picture branches above
+    // which bind every [data-img-hero] on the page to whatever was fetched last.
+    if (what === 'openverse') {
+      const list = lastResults.openverse || [];
+      const rowFor = (url) => list.find((x) => x.url === url) || null;
+      $$('#res-openverse [data-img-hero]').forEach((b) => b.onclick = () => {
+        const row = rowFor(b.dataset.imgHero);
+        setImage('hero', b.dataset.imgHero, 'Openverse', row && row.meta);
+      });
+      $$('#res-openverse [data-img-sec]').forEach((b) => b.onclick = () => {
+        const row = rowFor(b.dataset.imgSec);
+        setImage('section', b.dataset.imgSec, 'Openverse', row && row.meta);
+      });
+      $$('#res-openverse [data-ov-credit]').forEach((b) => b.onclick = () => {
+        const line = b.dataset.ovCredit || '';
+        if (!line) return;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(line).then(() => toast('Credit copied 📋', true), () => toast('Could not copy the credit', false));
+        } else toast('Could not copy the credit', false);
+      });
+      $$('#res-openverse img').forEach((img) => img.onclick = () => { img.style.outline = '2px solid var(--accent)'; toast('Use 🚀 (hero) or 🎯 (selected section) — the credit follows automatically', true); });
+    }
+    if (what === 'icons') {
+      $$('#res-iconify [data-icon]').forEach((b) => b.onclick = () => chooseIcon(b.dataset.icon));
+    }
+    if (what === 'holidays' && lastHolidays) {
+      const tbl = $('#res-holidays [data-hol-table]');
+      if (tbl) tbl.onclick = () => {
+        const c = current();
+        if (!c) return toast('Open a project first', false);
+        // addWidget() owns the Pro check, the insertion point and the view
+        // switch; the rows are filled in afterwards so the section arrives with
+        // the dates already in it rather than as an empty table to type into.
+        addWidget('table', '');
+        const sec = c.site.sections[selectedSec];
+        if (!sec) return;
+        sec.title = 'Dates we are closed — ' + lastHolidays.year;
+        sec.subtitle = 'Public holidays in ' + lastHolidays.country + ', from the official register.';
+        sec.cols = ['Date', 'Closed for'];
+        sec.rows = lastHolidays.list.map((h) => [niceDate(h.date), h.name]);
+        touch(c);
+        toast('Closures table added 📅', true);
+      };
+      const copy = $('#res-holidays [data-hol-copy]');
+      if (copy) copy.onclick = () => copyText(lastHolidays.list.map((h) => h.date + ' — ' + h.name).join('\n'), 'Dates copied 📋');
+    }
+    if (what === 'weather' && lastWeather) {
+      const btn = $('#res-weather [data-w-widget]');
+      if (btn) btn.onclick = () => {
+        // The exported widget looks a city up by name, so a postcode or a bare
+        // coordinate pair would be added and then never resolve. Refusing is the
+        // honest outcome; the countdown/table paths are not affected.
+        if (!/^[A-Za-z][A-Za-z .'\-]{1,60}$/.test(lastWeather.place)) {
+          return toast('The live widget looks a town up by name — type a town (not a postcode or coordinates) to add it', false);
+        }
+        addWidget('weather', lastWeather.place);
+      };
+      const copy = $('#res-weather [data-w-copy]');
+      if (copy) copy.onclick = () => copyText(
+        lastWeather.place + ': ' + lastWeather.now.label + ', ' + Math.round(lastWeather.now.temp) + '°C (feels like ' + Math.round(lastWeather.now.feels) + '°C). ' +
+        lastWeather.days.map((d) => niceDate(d.date) + ' ' + d.label.toLowerCase() + ' ' + Math.round(d.max) + '°/' + Math.round(d.min) + '°').join('; '),
+        'Forecast line copied 📋'
+      );
+    }
+    if (what === 'meals') {
+      const list = lastResults.meals || [];
+      const rowFor = (url) => list.find((x) => x.thumb === url) || null;
+      $$('#res-themealdb [data-img-hero]').forEach((b) => b.onclick = () => setImage('hero', b.dataset.imgHero, 'TheMealDB'));
+      $$('#res-themealdb [data-img-sec]').forEach((b) => b.onclick = () => setImage('section', b.dataset.imgSec, 'TheMealDB'));
+      $$('#res-themealdb [data-meal-copy]').forEach((b) => b.onclick = () => {
+        const m = list.find((x) => x.id === b.dataset.mealCopy) || rowFor(b.dataset.mealCopy);
+        if (!m) return;
+        copyText([
+          m.name + (m.category ? ' — ' + m.category : '') + (m.area ? ' (' + m.area + ')' : ''),
+          m.ingredients.length ? 'Ingredients: ' + m.ingredients.join(', ') : '',
+          m.instructions ? '\n' + m.instructions.slice(0, 900) : '',
+          m.video ? '\nVideo: ' + m.video : '',
+          'Source: TheMealDB (free to use)'
+        ].filter(Boolean).join('\n'), 'Dish details copied 📋');
+      });
+    }
     if (what === 'wikimedia' || what === 'wiki') {
       $$('[data-img-hero]').forEach((b) => b.onclick = () => setImage('hero', b.dataset.imgHero, b.dataset.source || 'Wikimedia'));
       $$('[data-img-sec]').forEach((b) => b.onclick = () => setImage('section', b.dataset.imgSec, b.dataset.source || 'Wikimedia'));
@@ -6711,19 +7738,56 @@ const App = (() => {
     }
   }
 
-  function setImage(kind, url, source) {
+  /*
+    Keep only the fields the exported credit footer reads (builder.js
+    imageCreditsHTML): stringified, trimmed and length-capped. This mirrors
+    cleanImageMeta in modules/ai.js on purpose — two routes can put an Openverse
+    photo into a project, and the client's live site must not carry a different
+    credit depending on which one was used.
+  */
+  function cleanImageMeta(meta) {
+    if (!meta || typeof meta !== 'object') return null;
+    const text = (value, max) => String(value == null ? '' : value).trim().slice(0, max);
+    const out = {
+      source: text(meta.source || 'Openverse', 80),
+      sourceUrl: text(meta.sourceUrl || '', 1200),
+      creator: text(meta.creator || meta.author || '', 240),
+      creatorUrl: text(meta.creatorUrl || '', 1200),
+      license: text(meta.license || '', 160),
+      licenseId: text(meta.licenseId || '', 80),
+      licenseVersion: text(meta.licenseVersion || '', 40),
+      licenseUrl: text(meta.licenseUrl || '', 1200),
+      attribution: text(meta.attribution || '', 900),
+      requiresAttribution: meta.requiresAttribution !== false,
+      title: text(meta.title || '', 300),
+      id: text(meta.id || '', 180)
+    };
+    return Object.keys(out).some((k) => out[k] !== '' && out[k] !== false) ? out : null;
+  }
+
+  function setImage(kind, url, source, meta) {
     const c = current();
     if (!c) return toast('Open a project first');
+    // The licence record replaces the previous one outright. Carrying a stale
+    // credit across would print the wrong creator's name on the client's site,
+    // which is worse than printing none.
+    const place = (sec) => {
+      sec.image = url;
+      sec.imageSource = source;
+      sec.imageMeta = cleanImageMeta(meta);
+    };
+    const credited = !!(meta && meta.requiresAttribution !== false);
+    const tail = credited ? ' — credit saved for the footer' : '';
     if (kind === 'hero') {
       const hero = c.site.sections.find((s) => s.type === 'hero');
       if (!hero) return toast('No hero section in this project');
-      hero.image = url; hero.imageSource = source; touch(c);
-      toast('Hero background updated 🖼️', true);
+      place(hero); touch(c);
+      toast(`Hero background updated 🖼️${tail}`, true);
     } else {
       const s = selectedSec != null ? c.site.sections[selectedSec] : null;
       if (!s) return toast('Select a section first (right panel)');
-      s.image = url; s.imageSource = source; touch(c);
-      toast(`${DB.sectionTypes[s.type] ? DB.sectionTypes[s.type].name : 'Section'} image updated 🎯`, true);
+      place(s); touch(c);
+      toast(`${DB.sectionTypes[s.type] ? DB.sectionTypes[s.type].name : 'Section'} image updated 🎯${tail}`, true);
     }
   }
 
@@ -7133,6 +8197,10 @@ const App = (() => {
       fetchDicebear(c);
     } else if (it.kind === 'chat' && id === 'tawk') {
       configureChat(c);
+    } else if (it.kind === 'whatsapp' && id === 'whatsapp') {
+      configureWhatsApp(c);
+    } else if (it.kind === 'tool' && id === 'companieshouse') {
+      companiesHouseLookup(c);
     }
   }
 
@@ -7184,6 +8252,101 @@ const App = (() => {
     };
     const rm = $('#tawkRemove');
     if (rm) rm.onclick = () => { delete c.site.chatWidget; touch(c); closeModal(); toast('Chat widget removed'); };
+  }
+
+  // WhatsApp click-to-chat: a site-level setting like the chat widget, not a
+  // section. The builder turns it into a floating button plus nav/footer deep
+  // links on the exported site; here we only validate the number.
+  function configureWhatsApp(c) {
+    if (!c) return toast('Open a project first');
+    const w = c.site.whatsapp || {};
+    openModal('🟢 WhatsApp — click to chat', `
+      <p style="color:var(--muted)">Adds a floating “Chat on WhatsApp” button plus deep links to the exported site (and previews). Visitors open a chat with this number — no WhatsApp account or widget code needed on your side.</p>
+      <div class="field"><label>WhatsApp number</label><input id="waNum" placeholder="e.g. 447700900123 (country code, digits only)" value="${esc(w.number || '')}" inputmode="numeric" spellcheck="false" autocomplete="off"></div>
+      <div class="field"><label>Button label (optional)</label><input id="waLabel" placeholder="Chat on WhatsApp" value="${esc(w.label || '')}"></div>
+      <div class="field"><label>Prefilled first message (optional)</label><input id="waMsg" placeholder="e.g. Hi! I found you online — I'd like a quote" value="${esc(w.message || '')}"></div>
+      <div style="display:flex;gap:10px;margin-top:14px">
+        <button class="btn primary small" id="waSave">Save WhatsApp</button>
+        ${c.site.whatsapp ? '<button class="btn danger small" id="waRemove">Remove</button>' : ''}
+      </div>`);
+    $('#waSave').onclick = () => {
+      const raw = $('#waNum').value;
+      const digits = String(raw).replace(/[^0-9]/g, '');
+      if (digits.length < 8 || digits.length > 15) return toast('That doesn’t look like a phone number in international format (e.g. 447700900123)', false);
+      c.site.whatsapp = {
+        number: digits,
+        label: String($('#waLabel').value || '').trim().slice(0, 40),
+        message: String($('#waMsg').value || '').trim().slice(0, 120)
+      };
+      touch(c);
+      closeModal();
+      toast('WhatsApp button added to the site 🟢', true);
+    };
+    const rm = $('#waRemove');
+    if (rm) rm.onclick = () => { delete c.site.whatsapp; touch(c); closeModal(); toast('WhatsApp button removed'); };
+  }
+
+  // Companies House lookup — pulls the registered record, shows it, and offers
+  // to pre-fill either the AI brief or the open project's contact details.
+  async function companiesHouseLookup(c, prefill) {
+    const w = c && typeof c.site === 'object' ? c : null;
+    openModal('🇬🇧 Companies House lookup', `
+      <p style="color:var(--muted)">Type a UK company number to pull the registered name, address and industry from the official register.${ONLINE.companiesHouseKey ? '' : ' You need a free registration key — <a href="https://find-and-update.company-information.service.gov.uk/register/api-key-application" target="_blank" rel="noopener">register here</a>, then add it in Settings ▸ Online data.'}</p>
+      <div class="field"><label>Company number</label><input id="chNum" placeholder="e.g. 09462154 or SC123456" spellcheck="false" autocomplete="off" style="font-family:monospace;text-transform:uppercase"></div>
+      <div id="chResult" style="margin:10px 0"></div>
+      <div style="display:flex;gap:10px;margin-top:8px">
+        <button class="btn primary small" id="chGo">Look up company</button>
+        <button class="btn ghost small" id="chClose">Close</button>
+      </div>`);
+    $('#chClose').onclick = closeModal;
+    $('#chGo').onclick = async () => {
+      const num = String($('#chNum').value || '').trim();
+      const out = $('#chResult');
+      if (!num) { out.innerHTML = '<span style="color:var(--danger)">Type a company number first.</span>'; return; }
+      out.innerHTML = '<span style="color:var(--muted)">Checking the register…</span>';
+      try {
+        const rec = await ONLINE.fetchCompany(num);
+        const sic = (rec.sic || []).map((code) => ONLINE.sicToBusinessType(code)).filter(Boolean);
+        out.innerHTML = `
+          <div class="res-item" style="grid-column:span 1">
+            <b>${esc(rec.name)}</b>
+            <div style="color:var(--muted);font-size:.8rem">№ ${esc(rec.number)} · ${esc(rec.status || 'status unknown')}${rec.createdAt ? ' · since ' + esc(rec.createdAt.slice(0, 4)) : ''}</div>
+            <div style="font-size:.85rem;margin:4px 0">${esc(rec.address || 'No registered address published')}</div>
+            ${rec.sic.length ? `<div class="sub">Industry (SIC ${esc(rec.sic.join(', '))})${sic.length ? ' → ' + esc(sic.join(', ')) : ''}</div>` : ''}
+          </div>
+          <div style="display:flex;gap:8px;margin:8px 0 2px;flex-wrap:wrap">
+            <button class="btn ghost small" id="chToAi">Use in AI Studio</button>
+            <button class="btn ghost small" id="chToSite" ${w ? '' : 'disabled'}>Apply to open project</button>
+          </div>`;
+        $('#chToAi').onclick = () => {
+          switchView('ai');
+          const setV = (id, v) => { const el = $('#' + id); if (el && v) el.value = v; };
+          setV('aiName', rec.name);
+          setV('aiArea', rec.locality || rec.postcode);
+          if (sic.length) { const pk = $('#aiPack'); if (pk && pk.querySelector(`option[value="${sic[0]}"]`)) pk.value = sic[0]; }
+          closeModal();
+          toast('Brief pre-filled from Companies House — add a few words about the business and generate ✨', true);
+        };
+        $('#chToSite').onclick = () => {
+          if (!w) return;
+          c.site.name = rec.name || c.site.name;
+          if (rec.address) c.site.address = rec.address;
+          if (rec.createdAt) c.site.companyNumber = rec.number;
+          touch(c);
+          closeModal();
+          toast('Contact details applied to the project ✓', true);
+        };
+      } catch (err) {
+        out.innerHTML = '<span style="color:var(--danger)">' + esc((err && err.message) || 'The lookup failed — check the number and your key.') + '</span>';
+        if (err && err.code === 'no_key') {
+          out.innerHTML += '<div style="margin-top:6px"><button class="btn ghost small" id="chGoKey">Add key in Settings</button></div>';
+          const g = $('#chGoKey');
+          if (g) g.onclick = () => { closeModal(); switchView('settings'); const t = document.querySelector('[data-settings-tab="online"]'); if (t) t.click(); };
+        }
+      }
+    };
+    // Re-entry from the Database panel carries the number so nobody retypes it.
+    if (prefill) { $('#chNum').value = String(prefill).toUpperCase(); $('#chGo').click(); }
   }
 
   function saveSectionAsPreset(idx){
@@ -7651,6 +8814,8 @@ const App = (() => {
           <label class="switch"><input type="checkbox" id="setFontsOn" ${s.onlineEnabled === false ? '' : 'checked'}><span class="slider"></span></label></div>
         <div class="set-row"><div><label>Cookie consent banner</label><div class="set-desc">Shows a GDPR-style accept banner on exported sites.</div></div>
           <label class="switch"><input type="checkbox" id="setCookies" ${s.cookieBanner ? 'checked' : ''}><span class="slider"></span></label></div>
+        <div class="set-row"><div><label>Legal pages</label><div class="set-desc">Adds Privacy, Cookie and Terms pages, written from what this site actually does — analytics, forms, shop, embeds, chat and booking. A starting point to have reviewed, not legal advice.</div></div>
+          <label class="switch"><input type="checkbox" id="setLegal" ${s.legalPages ? 'checked' : ''}><span class="slider"></span></label></div>
         <div class="set-row"><div><label>Analytics provider</label></div>
           <select id="setAnalyticsProvider"><option value="ga4" ${s.analyticsProvider !== 'plausible' ? 'selected' : ''}>Google Analytics 4</option><option value="plausible" ${s.analyticsProvider === 'plausible' ? 'selected' : ''}>Plausible</option></select></div>
         <div class="set-row"><div><label>Analytics ID</label><div class="set-desc">e.g. G-XXXXXXXXXX or your-plausible-domain</div></div><input type="text" id="setAnalyticsId" value="${esc(s.analyticsId || '')}" placeholder="leave empty to disable"></div>
@@ -7666,6 +8831,8 @@ const App = (() => {
           <label class="switch"><input type="checkbox" id="setOnline" ${s.onlineEnabled === false ? '' : 'checked'}><span class="slider"></span></label></div>
         <div class="set-row"><div><label>Pixabay API key</label><div class="set-desc">Once your free API key is entered, topic photo search is enabled in Database ▸ Online sources. Stored only on this device. <a href="https://pixabay.com/api/docs/" target="_blank" rel="noopener">Get a Pixabay API key</a></div></div>
           <input type="text" id="setPixabayKey" value="${esc(s.pixabayKey || '')}" placeholder="e.g. 12345678-abcdef…" spellcheck="false" autocomplete="off"></div>
+        <div class="set-row"><div><label>Companies House API key</label><div class="set-desc">Free one-time registration — enables UK company lookups in Database ▸ Online sources. Stored only on this device. <a href="https://find-and-update.company-information.service.gov.uk/register/api-key-application" target="_blank" rel="noopener">Register for a key</a></div></div>
+          <input type="text" id="setCompaniesHouseKey" value="${esc(s.companiesHouseKey || '')}" placeholder="e.g. a1b2c3d4-e5f6-…" spellcheck="false" autocomplete="off"></div>
         <div class="set-row"><div><label>Request timeout (ms)</label></div><input type="number" id="setTimeout" value="${s.onlineTimeoutMs}" min="2000" max="30000" step="500"></div>
         <div class="set-row"><div><label>Clear fetched data cache</label><div class="set-desc">Forget previously fetched photos, people and quotes.</div></div>
           <button class="btn ghost small" id="btnClearCache">Clear cache</button></div>
@@ -7744,6 +8911,7 @@ const App = (() => {
     on('#setMeta', 'change', (e) => { settings.exportMeta = e.target.checked; saveSettings(); schedulePreview(); });
     on('#setFontsOn', 'change', (e) => { settings.onlineEnabled = e.target.checked; saveSettings(); schedulePreview(); });
     on('#setCookies', 'change', (e) => { settings.cookieBanner = e.target.checked; saveSettings(); schedulePreview(); });
+    on('#setLegal', 'change', (e) => { settings.legalPages = e.target.checked; saveSettings(); schedulePreview(); });
     on('#setAnalyticsProvider', 'change', (e) => { settings.analyticsProvider = e.target.value; saveSettings(); schedulePreview(); });
     on('#setAnalyticsId', 'input', (e) => { settings.analyticsId = e.target.value.trim(); saveSettings(); schedulePreview(); });
     on('#setMinify', 'change', (e) => { settings.minify = e.target.checked; saveSettings(); schedulePreview(); });
@@ -7754,6 +8922,11 @@ const App = (() => {
       saveSettings();
       // Purging the pixabay cache avoids stale results from a previously saved key.
       try { ONLINE.clearCache(); } catch (err) {}
+    });
+    on('#setCompaniesHouseKey', 'input', (e) => {
+      settings.companiesHouseKey = e.target.value.trim();
+      saveSettings();
+      renderDatabase();
     });
     on('#setTimeout', 'change', (e) => { settings.onlineTimeoutMs = +e.target.value || 9000; saveSettings(); });
     on('#btnClearCache', 'click', () => { ONLINE.clearCache(); toast('Online cache cleared 🧹', true); });
@@ -9508,7 +10681,22 @@ const App = (() => {
   // are semantic instead (stale / to check / current) and read from the counts.
   function careAlert(r) {
     return r.counts.error ? 'bad' : r.counts.warn ? 'warn' : 'ok';
-  }  // Shared by Site Care (its review date) and the schedule editor. A bare
+  }
+
+  // What the sweep row says was found. Notes are counted here, because the
+  // report below this list shows a "1 note" badge and the row used to read
+  // "nothing flagged" beside it — the same screen disagreeing with itself about
+  // the same site. Kept as one function so the wording has one owner and can be
+  // run by the view suite rather than pattern-matched.
+  function careFlag(r) {
+    const c = (r && r.counts) || {};
+    if (c.error) return c.error + ' stale';
+    if (c.warn) return c.warn + ' to check';
+    if (c.info) return c.info + ' note' + (c.info === 1 ? '' : 's');
+    return 'nothing flagged';
+  }
+
+  // Shared by Site Care (its review date) and the schedule editor. A bare
   // yyyy-mm-dd parsed by Date() is UTC midnight, which lands on the PREVIOUS day
   // west of Greenwich — so it is built from parts, as SiteCare itself does.
   //
@@ -9564,7 +10752,7 @@ const App = (() => {
     const sweep = rows.map((x) => {
       const r = x.r;
       const tone = qualityColor(r.letter);
-      const flag = r.counts.error ? r.counts.error + ' stale' : (r.counts.warn ? r.counts.warn + ' to check' : 'nothing flagged');
+      const flag = careFlag(r);
       return `
       <button class="care-row${x.p.id === careSel ? ' active' : ''}" data-care="${esc(x.p.id)}">
         <span class="care-grade" style="--tone:${esc(tone)}">${esc(r.letter)}</span>
@@ -9943,6 +11131,17 @@ const App = (() => {
     initialized = true;
     // Boot against IndexedDB; falls back to localStorage if unavailable.
     bootStoreOK = (typeof AppStore !== 'undefined') ? await AppStore.init() : false;
+    // Upgrades run BEFORE any hydration, because hydration is what READS the
+    // values — converting afterwards would leave this session on the old shape
+    // and the next one on the new. A failed migration writes nothing (see
+    // data/schema.js), so a library it cannot convert is still the library that
+    // was there a moment ago.
+    if (bootStoreOK && typeof StoreSchema !== 'undefined') {
+      try { bootSchema = await StoreSchema.runLibrary(AppStore); }
+      catch (e) {
+        bootSchema = { ok: false, ran: [], failed: [{ key: '', label: 'the library', error: (e && e.message) || 'the upgrade could not run' }], versions: {} };
+      }
+    }
     await loadProjects();
     await hydrateRevs();
     loadSettings();

@@ -189,9 +189,41 @@ ok('a clean site gives the view something to say', clean.letter === 'A+' && clea
 // ---------------------------------------------------------------- 4. one rule
 console.log('\n== 4. The letter-to-colour rule still has one owner ==');
 
-const graders = (appJs.match(/\?\s*'#22c55e'\s*:\s*letter === 'C'\s*\?\s*'#eab308'\s*:\s*'#ef4444'/g) || []);
-ok('the grade colour expression is defined exactly once', graders.length === 1, graders.length + ' copies found');
+// The first version of this check matched the rule spelled with the variable
+// name `letter` — and the Site health modal had two copies that used
+// `audit.letter` and `care.letter`, so the suite that exists to guarantee one
+// owner could not see them. Measured instead by the RULE: any single line that
+// carries all three grade colours is a copy of it, whatever the variable is
+// called.
+// Quoted standalone, so the gradient on the review card — which names all three
+// inside `linear-gradient(...)` — is not mistaken for a fourth copy.
+const gradeLines = appJs.split('\n').filter((l) => /'#22c55e'/.test(l) && /'#eab308'/.test(l) && /'#ef4444'/.test(l));
+ok('the grade colour rule is defined exactly once', gradeLines.length === 1,
+  gradeLines.length + ' copies: ' + gradeLines.map((l) => l.trim().slice(0, 70)).join('  |  '));
 ok('and it is the one qualityColor() returns', /function qualityColor\(letter\)[\s\S]{0,160}?letter === 'C'/.test(appJs));
+// Everything that shows a grade has to ask that one function, not re-derive it.
+ok('the Site health modal asks qualityColor for the launch grade', /const gColor = qualityColor\(audit\.letter\)/.test(appJs));
+ok('and for the Site Care grade', /const careColor = care \? qualityColor\(care\.letter\)/.test(appJs));
+ok('neither modal grade maps letters itself', !/includes\(audit\.letter\)|includes\(care\.letter\)/.test(appJs) || !/'#eab308'/.test(appJs.split('\n').filter((l) => /includes\((audit|care)\.letter\)/.test(l)).join('\n')));
+
+// The bands themselves, run rather than read: B is a pass, C is a caution, and
+// anything below is a fail. A helper that returned one colour would satisfy
+// every text check above.
+const qualityFn = (() => {
+  const from = appJs.indexOf('function qualityColor(letter)');
+  const to = appJs.indexOf('\n  }', from);
+  if (from < 0 || to < 0) return null;
+  // `to` points at the newline before the closing brace, so the brace itself has
+  // to come along or the slice is a function with no end.
+  try { return new Function(appJs.slice(from, to + 4) + '\nreturn qualityColor;')(); } catch (e) { return null; }
+})();
+ok('qualityColor can be lifted out and run', typeof qualityFn === 'function');
+if (typeof qualityFn === 'function') {
+  ok('A+ is green', qualityFn('A+') === '#22c55e', qualityFn('A+'));
+  ok('B is green', qualityFn('B') === '#22c55e', qualityFn('B'));
+  ok('C is amber', qualityFn('C') === '#eab308', qualityFn('C'));
+  ok('D and F are red', qualityFn('D') === '#ef4444' && qualityFn('F') === '#ef4444', qualityFn('D') + '/' + qualityFn('F'));
+}
 ok('the view calls qualityColor for its tiles', /const tone = qualityColor\(r\.letter\)/.test(appJs));
 ok('the view no longer maps letters itself', !/function careTone\(/.test(appJs));
 ok('the tiles take the colour as --tone', /class="care-grade" style="--tone:/.test(appJs) && /class="care-dial" style="--tone:/.test(appJs));
@@ -240,6 +272,38 @@ if (dateFns) {
     updatedStamp({ updatedAt: 'garbage' }));
   ok('and it is present, with the date, when there is one',
     /\u00b7 updated /.test(updatedStamp({ updatedAt: ms })), updatedStamp({ updatedAt: ms }));
+}
+
+// ---------------------------------------------------------------- 6. the row's verdict
+console.log('\n== 6. What a sweep row claims, against what the report shows ==');
+
+// Read on screen: a site whose only finding was a missing alt attribute showed
+// "1 note" in the report badge directly below a row that said "nothing
+// flagged". Notes are still findings and the row has to admit them, so the
+// wording lives in one function and is RUN here rather than pattern-matched —
+// the same lesson as the date helpers above.
+const flagFn = (() => {
+  const from = appJs.indexOf('function careFlag(r)');
+  const to = appJs.indexOf('// Shared by Site Care', from);
+  if (from < 0 || to < 0 || to < from) return null;
+  try { return new Function(appJs.slice(from, to) + '\nreturn { careFlag: careFlag };')().careFlag; } catch (e) { return null; }
+})();
+ok('the row-flag helper can be lifted out and run', typeof flagFn === 'function');
+ok('and the row actually uses it', /const flag = careFlag\(r\);/.test(appJs), 'the row decides the wording itself again');
+ok('no second copy of the wording exists', !/const flag = r\.counts\.error/.test(appJs));
+
+if (typeof flagFn === 'function') {
+  const at = (error, warn, info) => flagFn({ counts: { error: error, warn: warn, info: info } });
+  ok('errors outrank warnings', at(4, 8, 1) === '4 stale', at(4, 8, 1));
+  ok('warnings are named as such', at(0, 1, 0) === '1 to check', at(0, 1, 0));
+  ok('a single note is reported, not hidden', at(0, 0, 1) === '1 note', at(0, 0, 1));
+  ok('and so are several', at(0, 0, 3) === '3 notes', at(0, 0, 3));
+  ok('only a genuinely clean site says nothing flagged', at(0, 0, 0) === 'nothing flagged', at(0, 0, 0));
+  ok('a missing report does not throw', flagFn(null) === 'nothing flagged' && flagFn({}) === 'nothing flagged');
+  // The row and the note badge in the report read the SAME field, so a rename
+  // of one cannot leave the two halves of the screen disagreeing again.
+  ok('the row counts notes from the same field the badge prints', /c\.info \+ ' note'/.test(String(flagFn)), 'the row derives its own count');
+  ok('and the report badge prints counts.info', /counts\.info\} note/.test(appJs));
 }
 
 console.log('\n' + (failed === 0 ? 'SITE CARE VIEW PASSED' : 'SITE CARE VIEW FAILED: ' + failed));

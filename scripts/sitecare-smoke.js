@@ -123,6 +123,40 @@ console.log('\n3. Dates that have been and gone');
 
   const thisYear = SiteCare.audit(proj([{ id: 's', type: 'pricing', title: 'From £249, valid 2026' }]), { now: NOW });
   ok('this year\'s price is left alone', !thisYear.findings.some((f) => f.area === 'stale'), messages(thisYear));
+
+  // A year is only a stale PRICE when the same sentence states a figure. The
+  // word list this check used to match — price, offer, valid, from — is ordinary
+  // English far more often than it is money, and both of these were reported as
+  // old offers on a real project read in the browser:
+  //
+  //   "Book before 2025-12-20 for the Christmas price."     the year was read
+  //                                                          out of the date
+  //                                                          that had already
+  //                                                          been reported, so
+  //                                                          one line of copy
+  //                                                          produced two warn-
+  //                                                          ings and lost 10
+  //                                                          points
+  //   "We have been trading since 2024 from our workshop."   'from' is a
+  //                                                          preposition here
+  const prose = SiteCare.audit(proj([{ id: 's', type: 'about', text: 'Book before 2025-12-20 for the Christmas price.' }]), { now: NOW });
+  ok('the word "price" beside a date is not a stale price', !prose.findings.some((f) => f.area === 'stale'), messages(prose));
+  ok('and that one sentence yields exactly one finding', prose.findings.length === 1, messages(prose));
+  ok('the date itself is still caught', prose.findings.some((f) => f.area === 'expired'), messages(prose));
+
+  const since = SiteCare.audit(proj([{ id: 's', type: 'about', text: 'We have been trading since 2024 from our workshop in Digbeth.' }]), { now: NOW });
+  ok('the word "from" on its own is not money', !since.findings.some((f) => f.area === 'stale'), messages(since));
+
+  // The figures that DO mean money still have to fire, including the ones with
+  // no currency symbol in them.
+  const figure = SiteCare.audit(proj([{ id: 's', type: 'pricing', title: 'A full set is £249 during 2024' }]), { now: NOW });
+  ok('a currency figure beside a past year is still caught', figure.findings.some((f) => f.area === 'stale'), messages(figure));
+  const written = SiteCare.audit(proj([{ id: 's', type: 'pricing', title: 'Two hundred pounds in 2024' }]), { now: NOW });
+  ok('a written amount still counts as money', written.findings.some((f) => f.area === 'stale'), messages(written));
+  const datedPrice = SiteCare.audit(proj([{ id: 's', type: 'pricing', text: 'Our 2024-01-01 list: a full set is £249' }]), { now: NOW });
+  ok('a figure beside a date is reported as the date, not as a stale year',
+    datedPrice.findings.filter((f) => f.area === 'stale').length === 0 && datedPrice.findings.some((f) => f.area === 'expired'),
+    messages(datedPrice));
 }
 
 // ---- 4. structure ---------------------------------------------------------
@@ -211,6 +245,9 @@ console.log('\n6. Scoring and the clock');
   ok('one error is graded A, not A+', dirty.letter === 'A', dirty.letter);
   ok('an erroring site is stale', dirty.stale === true);
   ok('the summary counts the problems', /1 unfinished item/.test(dirty.summary), dirty.summary);
+  // "8 worth checking" left the count dangling; the noun is always there now.
+  const many = SiteCare.audit(proj([{ id: 'a', type: 'hero', title: 'Lorem ipsum' }, { id: 'b', type: 'pricing', title: 'Prices' }]), { now: NOW });
+  ok('a count always comes with its noun', /1 item worth checking/.test(many.summary) && !/\b1 worth checking/.test(many.summary), many.summary);
 
   const two = SiteCare.audit(proj([
     { id: 'a', type: 'hero', title: 'Lorem ipsum' },
@@ -230,6 +267,51 @@ console.log('\n6. Scoring and the clock');
   ok('the report is JSON-serialisable for the export', (() => { try { JSON.parse(JSON.stringify(dirty)); return true; } catch (e) { return false; } })());
   ok('every finding carries a fix', dirty.findings.every((f) => typeof f.fix === 'string' && f.fix.length > 0));
   ok('every finding is addressable to a section', dirty.findings.every((f) => f.where && f.where.sectionType));
+}
+
+// ---- 7. the verdict matches the worst finding ------------------------------
+// Read on screen, not in a test: a site at 98/100 with one missing alt
+// attribute was told "This site is not ready to hand over: 1 note." — which is
+// the crying-wolf failure this module's own header warns against, and it does
+// not even parse as a sentence. The strong line belongs to a site that is
+// actually unfinished, and only to one.
+console.log('\n7. What the summary claims, against what was found');
+{
+  const notesOnly = SiteCare.audit(proj([
+    { id: 'a', type: 'hero', title: 'Bespoke kitchens, built to last', subtitle: 'Get a fixed quote in a day.' },
+    { id: 'b', type: 'about', title: 'Our workshop', image: 'data:image/png;base64,AAA' }
+  ]), { now: NOW });
+  ok('a notes-only site has no errors and no warnings',
+    notesOnly.counts.error === 0 && notesOnly.counts.warn === 0 && notesOnly.counts.info === 1, JSON.stringify(notesOnly.counts));
+  ok('it is NOT told it is not ready to hand over', !/not ready to hand over/.test(notesOnly.summary), notesOnly.summary);
+  ok('and the summary says what it is', /Nothing unfinished/.test(notesOnly.summary) && /1 note/.test(notesOnly.summary), notesOnly.summary);
+
+  const warnOnly = SiteCare.audit(proj([
+    { id: 'a', type: 'hero', title: 'Bespoke kitchens, built to last', subtitle: 'Get a fixed quote in a day.' },
+    { id: 'b', type: 'pricing', title: 'Our prices' }
+  ]), { now: NOW });
+  ok('a warnings-only site has no errors', warnOnly.counts.error === 0 && warnOnly.counts.warn >= 1, JSON.stringify(warnOnly.counts));
+  ok('it is not told it is not ready either', !/not ready to hand over/.test(warnOnly.summary), warnOnly.summary);
+  ok('but it is still told to look before handing over', /worth a look before you hand over/.test(warnOnly.summary), warnOnly.summary);
+  ok('and the number it reports is the one it found', warnOnly.summary.indexOf(String(warnOnly.counts.warn) + ' item worth checking') !== -1, warnOnly.summary);
+
+  // The strong verdict is not retired — a site with real unfinished copy keeps
+  // it, and says how much.
+  const errors = SiteCare.audit(proj([{ id: 'a', type: 'hero', title: 'Lorem ipsum' }]), { now: NOW });
+  ok('a site with errors keeps the plain verdict', /This site is not ready to hand over: 1 unfinished item\./.test(errors.summary), errors.summary);
+
+  // Every summary that flags something ends with the review date, in the stable
+  // format the engine owns; the view renders its own friendly copy of it as a
+  // badge. A clean report keeps the long form instead — it has no clock to set.
+  const untouched = SiteCare.audit(proj([
+    { id: 'a', type: 'hero', title: 'Bespoke kitchens, built to last', subtitle: 'Get a fixed quote in a day.' },
+    { id: 'b', type: 'contact', title: 'Talk to us', text: 'studio@northwindjoinery.co.uk' }
+  ]), { now: NOW });
+  [notesOnly, warnOnly, errors].forEach((rep, i) => {
+    ok('summary ' + i + ' ends with a review date', / Next review \d{4}-\d{2}-\d{2}\.$/.test(rep.summary), rep.summary);
+  });
+  ok('a clean summary does not claim a verdict it does not have',
+    /^Nothing has gone stale\./.test(untouched.summary), untouched.summary);
 }
 
 console.log('\n' + (failed === 0 ? 'SITE CARE PASSED' : 'SITE CARE FAILED: ' + failed));

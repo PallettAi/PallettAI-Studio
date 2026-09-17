@@ -19,13 +19,28 @@
     widgets actually use — no bare `https:` fallback. Before adding a new
     online widget, add its host here or the preview breaks (test in web
     mode: `npm run web`).
+  - A source has TWO hosts, and allowing only one is the mistake this file
+    had already made: the endpoint the panel fetches (connect-src) and the
+    CDN its pictures come back on (img-src). Pixabay answers from
+    pixabay.com and serves photos from cdn.pixabay.com; Coverr answers from
+    coverr.co and serves clip stills from cdn.coverr.co; RandomUser serves
+    avatars from randomuser.me, which was in connect-src and missing from
+    img-src, so every fetched face rendered as a broken image. Coverr's API
+    was missing from connect-src outright, so the video source failed
+    silently and always reported "no clips".
+    scripts/online-sources-smoke.js now fails the release gate if a URL the
+    sources fetch is missing from connect-src, or a known result host from
+    img-src, and if a source is listed in the panel with no way to run it.
   - fastly.picsum.photos is listed in img-src because picsum serves a 302 to
     its CDN: `picsum.photos/seed/x/W/H` answers with
     `fastly.picsum.photos/id/N/W/H.jpg`. The browser applies img-src to the
     FINAL url after the redirect, so allowing only the first host blocked
     every placeholder image the app generates. The /v2/list API returns JSON
     directly from picsum.photos with no redirect, so connect-src needs no
-    equivalent. connect-src hosts: picsum, randomuser, quotable,
+    equivalent. connect-src hosts: picsum, randomuser, quotable (via its
+    community mirror — api.quotable.io stopped renewing its certificate in
+    September 2024, so no browser can reach it any more), coverr (clip API;
+    its stills come from cdn.coverr.co in img-src),
     coingecko, github, frankfurter, wikipedia, open-meteo, geocoding-open-
     meteo, iconify, mymemory, pollinations (image+text), commons wikimedia,
     openverse, pixabay, allorigins (CORS proxy), netlify, neocities, plus
@@ -56,7 +71,7 @@
     <video src> to a coverr.co/s3/mp4/... clip. Non-Coverr video URLs are
     not rendered as <video> by the builder, so they need no allowance here.
 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://plausible.io https://www.googletagmanager.com https://embed.tawk.to; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https://picsum.photos https://fastly.picsum.photos https://i.pravatar.cc https://api.dicebear.com https://api.iconify.design https://image.pollinations.ai https://loremflickr.com https://upload.wikimedia.org; font-src 'self' data: https://fonts.gstatic.com; media-src 'self' data: blob: https://coverr.co; connect-src 'self' https://picsum.photos https://randomuser.me https://api.quotable.io https://api.coingecko.com https://api.github.com https://api.frankfurter.app https://en.wikipedia.org https://api.open-meteo.com https://geocoding-api.open-meteo.com https://api.iconify.design https://api.mymemory.translated.net https://image.pollinations.ai https://text.pollinations.ai https://commons.wikimedia.org https://api.openverse.org https://pixabay.com https://api.allorigins.win https://api.netlify.com https://neocities.org https://*.supabase.co; frame-src 'self' https://www.google.com https://maps.google.com https://player.vimeo.com https://www.youtube.com https://open.spotify.com https://calendly.com https://coverr.co https:; object-src 'none'; base-uri 'self'; form-action 'self' https:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://plausible.io https://www.googletagmanager.com https://embed.tawk.to; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https://picsum.photos https://fastly.picsum.photos https://i.pravatar.cc https://api.dicebear.com https://api.iconify.design https://image.pollinations.ai https://loremflickr.com https://upload.wikimedia.org https://randomuser.me https://cdn.pixabay.com https://api.openverse.org https://cdn.coverr.co https://avatars.githubusercontent.com https://www.themealdb.com; font-src 'self' data: https://fonts.gstatic.com; media-src 'self' data: blob: https://coverr.co; connect-src 'self' https://fonts.googleapis.com https://date.nager.at https://api.postcodes.io https://www.themealdb.com https://api.company-information.service.gov.uk https://picsum.photos https://randomuser.me https://api.coingecko.com https://api.github.com https://api.frankfurter.app https://api.quotable.kurokeita.dev https://coverr.co https://en.wikipedia.org https://api.open-meteo.com https://geocoding-api.open-meteo.com https://api.iconify.design https://api.mymemory.translated.net https://image.pollinations.ai https://text.pollinations.ai https://commons.wikimedia.org https://api.openverse.org https://pixabay.com https://api.allorigins.win https://api.netlify.com https://neocities.org https://api.company-information.service.gov.uk https://*.supabase.co; frame-src 'self' https://www.google.com https://maps.google.com https://player.vimeo.com https://www.youtube.com https://open.spotify.com https://calendly.com https://coverr.co https:; object-src 'none'; base-uri 'self'; form-action 'self' https:">
 <!-- Favicon: the same P/A monogram as the sidebar brand mark, on a navy tile so
      it stays legible against both light and dark browser chrome. This replaced a
      pre-rebrand violet icon that was still shipping. -->
@@ -182,7 +197,22 @@
       </div>
       <h3 class="view-h">Online sources <span class="pill" id="onlineStatus"></span></h3>
       <div class="online-grid" id="onlineGrid"></div>
-      <h3 class="view-h">Local library</h3>
+      <h3 class="view-h">Local library <span class="pill" id="storageStatus"></span></h3>
+      <!-- Filled by renderStorageCard(): what the local database weighs, how
+           much room the browser gives it, whether it is protected from
+           automatic eviction, and a backup/restore pair. -->
+      <div class="storage-card" id="storageCard"></div>
+      <h3 class="view-h">Library health <span class="pill" id="healthStatus"></span></h3>
+      <!-- Filled by renderHealthCard(): the stored format version of every key,
+           what this build would upgrade, and an integrity walk that says whether
+           the values can actually be READ — a full-size blob that no longer
+           parses looks completely healthy from the outside. -->
+      <div class="storage-card" id="healthCard"></div>
+      <h3 class="view-h">Autosave history <span class="pill" id="retentionStatus"></span></h3>
+      <!-- Filled by renderRetentionCard(): what autosave snapshots weigh and a
+           retention plan (age, count, byte budget) that is previewed before it
+           applies. The newest snapshot of every project is never dropped. -->
+      <div class="storage-card" id="retentionCard"></div>
       <div class="db-tabs" id="dbTabs">
         <button class="db-tab active" data-tab="sections">Sections</button>
         <button class="db-tab" data-tab="palettes">Palettes</button>
@@ -292,6 +322,7 @@
 <script src="data/ogcard.js"></script>
 <script src="data/tokens.js"></script>
 <script src="data/notfound.js"></script>
+<script src="data/legal.js"></script>
 <script src="data/readability.js"></script>
 <script src="data/links.js"></script>
 <script src="data/manifest.js"></script>
@@ -307,6 +338,9 @@
 <script src="modules/zip.js"></script>
 <script src="modules/gpuimage.js"></script>
 <script src="modules/store.js"></script>
+<script src="data/schema.js"></script>
+<script src="data/revs-policy.js"></script>
+<script src="data/library-merge.js"></script>
 <script src="vendor/qrcode.js"></script>
 <script src="app.js"></script>
 </body>

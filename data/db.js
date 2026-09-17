@@ -143,6 +143,8 @@ const DB = {
     { id: 'booking', name: 'Online Booking', icon: '📅', kind: 'section', sectionType: 'booking', desc: 'A purpose-built appointment block for Calendly, Cal.com, TidyCal and other booking links — no API key.', action: 'Add booking section' },
     { id: 'dicebear', name: 'DiceBear Avatars', icon: '🧑‍🎨', kind: 'tool', desc: 'Generate unlimited illustrated avatars from a name — free & keyless. Perfect for testimonials.', action: 'Fetch 8 avatars' },
     { id: 'tawk', name: 'Tawk.to Live Chat', icon: '💬', kind: 'chat', desc: 'Drop a free live-chat widget on your site. Create a property at tawk.to first, then paste its ID.', action: 'Configure chat widget' },
+    { id: 'whatsapp', name: 'WhatsApp Chat', icon: '🟢', kind: 'whatsapp', desc: 'A floating “Chat on WhatsApp” button plus wa.me deep links on the exported site. Paste the business number — no account, no widget, no tracking.', action: 'Set WhatsApp number' },
+    { id: 'companieshouse', name: 'Companies House (UK)', icon: '🇬🇧', kind: 'tool', desc: 'Type a UK company number to pull the registered name, address and industry from the official register, then pre-fill the AI brief. Free — needs a one-time registration key.', action: 'Look up a company' },
     { id: 'crypto', name: 'CoinGecko Crypto', icon: '🪙', kind: 'section', sectionType: 'crypto', tier: 'pro', desc: 'Live prices for 12,000+ coins — free & keyless. Type coin ids (e.g. bitcoin,ethereum) in the section editor.', action: 'Add crypto ticker' },
     { id: 'github', name: 'GitHub Stats', icon: '🐙', kind: 'section', sectionType: 'github', tier: 'pro', desc: 'Live profile card and recent repos for any GitHub user — free & keyless. Type a username in the section editor.', action: 'Add GitHub stats' },
     { id: 'fx', name: 'FX Rates (ECB)', icon: '💱', kind: 'section', sectionType: 'fx', tier: 'pro', desc: 'Daily exchange rates for 30+ currencies, straight from the European Central Bank via Frankfurter — free & keyless.', action: 'Add FX widget' }
@@ -165,132 +167,182 @@ const DB = {
   templates: [
     {
       id: 'launchpad', name: 'Launchpad', icon: '🚀', tag: 'Startup', palette: 'midnight', font: 'spacegrotesk',
-      desc: 'A bold SaaS landing page: hero, features, stats, pricing, social proof, contact.',
+      // A template carries its own proportions as well as its own colours. Every
+      // starter used to inherit the same radius, rhythm and container width from
+      // Studio's settings, which is the other half of why they all read alike.
+      heroLayout: 'split',
+      design: { containerWidth: 1160, radius: 18, spacing: 92 },
+      desc: 'A bold SaaS landing page: split hero, bento features, live stats band, stacked pricing, social proof, contact.',
       sections: [
-        { type: 'hero', animation: 'zoom-in' },
-        { type: 'features', animation: 'fade-up', items: [
+        { type: 'hero', layout: 'split', animation: 'zoom-in' },
+        { type: 'features', layout: 'bento', animation: 'fade-up', items: [
           { icon: '⚡', title: 'Lightning Fast', text: 'Blazing performance on every device with a buttery-smooth experience.' },
           { icon: '🔒', title: 'Secure by Design', text: 'Bank-grade encryption and privacy controls built in from day one.' },
           { icon: '🧩', title: 'Plays Well Together', text: 'Integrates with the tools your team already loves and uses daily.' }
         ] },
-        { type: 'stats', animation: 'fade-up', items: [
+        { type: 'stats', layout: 'band', animation: 'fade-up', items: [
           { title: 'Active Users', text: '48K+' }, { title: 'Uptime', text: '99.99%' }, { title: 'Countries', text: '120+' }, { title: 'Avg. Speed', text: '0.8s' }
         ] },
-        { type: 'pricing', animation: 'fade-up', items: [
+        { type: 'pricing', layout: 'stacked', animation: 'fade-up', items: [
           { icon: '🌱', title: 'Starter', text: '£9 /mo', tag: '', extra: '1 project · 5k visitors · Email support' },
           { icon: '⚡', title: 'Pro', text: '£29 /mo', tag: 'Popular', extra: '10 projects · Unlimited visitors · Priority support' },
           { icon: '🏢', title: 'Scale', text: '£79 /mo', tag: '', extra: 'Unlimited projects · SLA · Dedicated manager' }
         ] },
-        { type: 'testimonials', animation: 'fade-up', items: [
+        { type: 'testimonials', layout: 'masonry', animation: 'fade-up', items: [
           { title: 'Maya Chen', text: 'We doubled conversion in six weeks. The launchpad template paid for itself in days.', extra: 'CEO, Nortide' },
           { title: 'Leo Fischer', text: 'Beautiful, fast, and the suites let us upgrade without rebuilding anything.', extra: 'Founder, Draftline' },
           { title: 'Ava Okafor', text: 'Finally a builder that ships sites clients actually love to show off.', extra: 'Designer, Studio Kala' }
         ] },
-        { type: 'cta', animation: 'bounce-in', title: 'Ready to launch?', text: 'Start your free trial today — no credit card required.' },
-        { type: 'contact', animation: 'fade-up' }
+        { type: 'logos', layout: 'grid', animation: 'fade-up', title: 'Trusted by teams shipping weekly', items: [
+          { icon: '◆', title: 'Nortide' }, { icon: '◆', title: 'Draftline' }, { icon: '◆', title: 'Kite Studio' },
+          { icon: '◆', title: 'Solace' }, { icon: '◆', title: 'Wildfire' }, { icon: '◆', title: 'Terra' }
+        ] },
+        { type: 'cta', layout: 'splash', animation: 'bounce-in', title: 'Ready to launch?', text: 'Start your free trial today — no credit card required.' },
+        { type: 'contact', layout: 'overlap', animation: 'fade-up' }
       ]
     },
     {
       id: 'lumina', name: 'Lumina', icon: '🌟', tag: 'Agency', palette: 'aurora', font: 'sora',
-      desc: 'A luminous agency portfolio: hero, work showcase, gallery, testimonials, contact.',
+      heroLayout: 'aurora',
+      design: { containerWidth: 1280, radius: 24, spacing: 104 },
+      desc: 'A luminous agency portfolio: aurora hero, timeline story, mosaic work, client wall, featured quote, contact.',
       sections: [
-        { type: 'hero', animation: 'fade-in' },
-        { type: 'about', animation: 'slide-left' },
-        { type: 'gallery', animation: 'fade-up', items: [
+        { type: 'hero', layout: 'aurora', animation: 'fade-in' },
+        { type: 'about', layout: 'timeline', animation: 'slide-left' },
+        { type: 'gallery', layout: 'mosaic', animation: 'fade-up', items: [
           { text: 'Brand identity for Solace', extra: 'Branding' }, { text: 'App design — Drift', extra: 'Product' },
           { text: 'Campaign — Wildfire', extra: 'Marketing' }, { text: 'Editorial — Northwind', extra: 'Print' },
           { text: 'Website — Kite Studio', extra: 'Web' }, { text: 'Packaging — Terra', extra: 'Packaging' }
         ] },
-        { type: 'testimonials', animation: 'fade-up', items: [
+        { type: 'logos', layout: 'grid', animation: 'fade-up', title: 'Some of the brands we have built for', items: [
+          { icon: '◆', title: 'Solace' }, { icon: '◆', title: 'Drift' }, { icon: '◆', title: 'Wildfire' },
+          { icon: '◆', title: 'Northwind' }, { icon: '◆', title: 'Kite Studio' }, { icon: '◆', title: 'Terra' }
+        ] },
+        { type: 'testimonials', layout: 'featured', animation: 'fade-up', items: [
           { title: 'Sofia Reyes', text: 'Lumina gave our brand a voice clients instantly remember.', extra: 'CMO, Solace' },
           { title: 'Daniel Kim', text: 'The animations feel alive without being distracting. Perfect balance.', extra: 'Director, Kite Studio' },
           { title: 'Hana Yoshida', text: 'Our new site won two awards in its first month live.', extra: 'Founder, Terra' }
         ] },
-        { type: 'cta', animation: 'fade-up', title: 'Let’s make something luminous', text: 'Tell us about your project — we reply within 24 hours.' },
-        { type: 'contact', animation: 'fade-up' }
+        { type: 'cta', layout: 'email', animation: 'fade-up', title: 'Let’s make something luminous', text: 'Tell us about your project — we reply within 24 hours.' },
+        { type: 'contact', layout: 'split', animation: 'fade-up' }
       ]
     },
     {
       id: 'bloom', name: 'Bloom', icon: '🌸', tag: 'Small Business', palette: 'candy', font: 'poppins',
-      desc: 'A warm, friendly site for local businesses: story, services, work, contact.',
+      heroLayout: 'minimal',
+      design: { containerWidth: 1080, radius: 26, spacing: 84 },
+      desc: 'A warm local-business site: minimal hero, floating story, divided services, orderable collection, work, reviews.',
       sections: [
-        { type: 'hero', animation: 'bounce-in' },
-        { type: 'about', animation: 'slide-right' },
-        { type: 'features', animation: 'fade-up', items: [
+        { type: 'hero', layout: 'minimal', animation: 'bounce-in' },
+        { type: 'about', layout: 'floating', animation: 'slide-right' },
+        { type: 'features', layout: 'strip', animation: 'fade-up', items: [
           { icon: '💐', title: 'Custom Arrangements', text: 'Every order designed by hand with the freshest seasonal blooms.' },
           { icon: '🚚', title: 'Same-Day Delivery', text: 'In the city by 2pm? On your doorstep before dinner.' },
           { icon: '💳', title: 'Easy Booking', text: 'Order online in minutes. Weddings planned end-to-end.' }
         ] },
+        { type: 'collection', layout: 'slider', animation: 'fade-up', title: 'Order for collection', subtitle: 'Choose a size and we will have it ready', items: [
+          { title: 'Market Posy', text: 'Seasonal stems in a kraft wrap — ready to drop off on the way home.', extra: 'From £18', tag: 'Bestseller' },
+          { title: 'Long Stem Dozen', text: 'Twelve stems of the best variety in the shop this week.', extra: 'From £32' },
+          { title: 'The Celebration', text: 'A generous hand-tied bunch with foliage and a card.', extra: 'From £45', tag: 'Popular' },
+          { title: 'Weekly Subscription', text: 'Fresh flowers every Friday, chosen and delivered by us.', extra: 'From £20', tag: 'New' }
+        ] },
         { type: 'gallery', animation: 'fade-up' },
-        { type: 'testimonials', animation: 'fade-up', items: [
+        { type: 'testimonials', layout: 'masonry', animation: 'fade-up', items: [
           { title: 'Emma Larsen', text: 'The wedding flowers were beyond anything we imagined. Thank you!', extra: 'Wedding client' },
           { title: 'Tom Bisset', text: 'Weekly bouquet subscription is the highlight of my Mondays.', extra: 'Subscriber' },
           { title: 'Priya Nair', text: 'Beautiful, fresh, and delivered with a smile every single time.', extra: 'Local customer' }
         ] },
-        { type: 'contact', animation: 'fade-up' }
+        { type: 'contact', layout: 'split', animation: 'fade-up' }
       ]
     },
     {
       id: 'meridian', name: 'Meridian', icon: '🎨', tag: 'Portfolio', palette: 'noir', font: 'playfair',
-      desc: 'A dramatic one-page portfolio: cinematic hero, work grid, story, contact.',
+      // Deliberately the widest container, the sharpest corners and the most
+      // air of the set: a gallery site should look nothing like a SaaS page.
+      heroLayout: 'centered', navStyle: 'transparent', themeToggle: false,
+      design: { containerWidth: 1320, radius: 8, spacing: 120 },
+      desc: 'A dramatic one-page portfolio: full-bleed hero under a transparent nav, mosaic work wall, story, contact.',
       sections: [
         { type: 'hero', animation: 'zoom-in' },
-        { type: 'gallery', animation: 'fade-up', items: [
+        { type: 'gallery', layout: 'mosaic', animation: 'fade-up', items: [
           { text: 'Selected work 01', extra: '2025' }, { text: 'Selected work 02', extra: '2024' },
           { text: 'Selected work 03', extra: '2024' }, { text: 'Selected work 04', extra: '2023' }
         ] },
-        { type: 'about', animation: 'slide-left' },
-        { type: 'cta', animation: 'fade-up', title: 'Have a project in mind?', text: 'Commissions open for this season.' },
-        { type: 'contact', animation: 'fade-up' }
+        { type: 'about', layout: 'timeline', animation: 'slide-left' },
+        { type: 'cta', layout: 'splash', animation: 'fade-up', title: 'Have a project in mind?', text: 'Commissions open for this season.' },
+        { type: 'contact', layout: 'minimal', animation: 'fade-up' }
       ]
     },
     {
       id: 'forge', name: 'Forge', icon: '⚙️', tag: 'Product', palette: 'ocean', font: 'inter',
-      desc: 'A conversion-focused product page: problem, features, proof, pricing, FAQ.',
+      // No dark-mode switch and a terminal hero: a developer-tool product page
+      // should not arrive looking like a marketing brochure.
+      heroLayout: 'terminal', themeToggle: false,
+      design: { containerWidth: 1200, radius: 14, spacing: 88 },
+      desc: 'A conversion-focused product page: terminal hero, numbered features, live ticker, plan comparison, FAQ.',
       sections: [
-        { type: 'hero', animation: 'fade-up' },
-        { type: 'features', animation: 'fade-up', items: [
+        { type: 'hero', layout: 'terminal', animation: 'fade-up' },
+        { type: 'features', layout: 'numbered', animation: 'fade-up', items: [
           { icon: '🗄️', title: 'Unlimited Storage', text: 'Keep every file, version, and backup without ever worrying about space.' },
           { icon: '🤝', title: 'Team Workspaces', text: 'Shared spaces with granular permissions and audit logs.' },
           { icon: '🛠️', title: 'Automations', text: 'Turn repetitive work into one-click flows your whole team uses.' },
           { icon: '📈', title: 'Deep Analytics', text: 'Understand usage, growth, and churn in real time.' }
         ] },
-        { type: 'stats', animation: 'fade-up', items: [
+        { type: 'stats', layout: 'ticker', animation: 'fade-up', items: [
           { title: 'Customers', text: '9,400+' }, { title: 'Reviews', text: '4.9★' }, { title: 'Support', text: '24/7' }, { title: 'Apps', text: '60+' }
         ] },
-        { type: 'pricing', animation: 'fade-up' },
-        { type: 'faq', animation: 'fade-up', items: [
+        { type: 'pricing', layout: 'toggle', animation: 'fade-up' },
+        { type: 'table', layout: 'compare', animation: 'fade-up', title: 'Every plan, side by side',
+          subtitle: 'The details people ask about before they upgrade',
+          cols: ['', 'Starter', 'Pro', 'Scale'],
+          rows: [
+            ['Projects', '3', 'Unlimited', 'Unlimited'],
+            ['Team members', '3', '25', 'Unlimited'],
+            ['Storage', '2 GB', '500 GB', '5 TB'],
+            ['Audit log', '—', '90 days', 'Unlimited'],
+            ['Support', 'Email', 'Priority', 'SLA + manager']
+          ] },
+        { type: 'faq', layout: 'columns', animation: 'fade-up', items: [
           { title: 'How does the free plan work?', text: 'The free plan includes 2 GB storage and up to 3 members — no credit card required.' },
           { title: 'Can I cancel anytime?', text: 'Yes. Cancel in one click from your billing settings; you keep your data for 30 days.' },
           { title: 'Is my data encrypted?', text: 'All data is encrypted in transit and at rest with AES-256.' },
           { title: 'Do you offer student discounts?', text: 'Students and educators get 50% off any paid plan with a valid .edu email.' }
         ] },
-        { type: 'cta', animation: 'bounce-in', title: 'Build something that lasts', text: 'Join 9,400+ teams forging their future with Forge.' },
-        { type: 'contact', animation: 'fade-up' }
+        { type: 'cta', layout: 'email', animation: 'bounce-in', title: 'Build something that lasts', text: 'Join 9,400+ teams forging their future with Forge.' },
+        { type: 'contact', layout: 'split', animation: 'fade-up' }
       ]
     },
     {
       id: 'voyage', name: 'Voyage', icon: '🧭', tag: 'Travel & Food', palette: 'sunset', font: 'dmserif',
-      desc: 'A wanderlust site for travel or hospitality: journey, highlights, reviews, FAQ.',
+      heroLayout: 'split',
+      design: { containerWidth: 1240, radius: 30, spacing: 104 },
+      desc: 'A wanderlust site for travel or hospitality: split hero, journey gallery, tour collection, reviews, FAQ.',
       sections: [
-        { type: 'hero', animation: 'slide-right' },
+        { type: 'hero', layout: 'split', animation: 'slide-right' },
         { type: 'about', animation: 'slide-left' },
-        { type: 'gallery', animation: 'fade-up', items: [
+        { type: 'gallery', layout: 'mosaic', animation: 'fade-up', items: [
           { text: 'Coastal trails', extra: 'Day 1' }, { text: 'Old town sunrise', extra: 'Day 2' },
           { text: 'Harbour evening', extra: 'Day 3' }, { text: 'Mountain ridge', extra: 'Day 4' },
           { text: 'Market colors', extra: 'Day 5' }, { text: 'Beach farewell', extra: 'Day 6' }
         ] },
-        { type: 'testimonials', animation: 'fade-up', items: [
+        { type: 'collection', layout: 'marquee', animation: 'fade-up', title: 'Tours running this season', subtitle: 'Small groups, local guides, no coach parties', items: [
+          { title: 'Six Days on the Coast Path', text: 'Cliff walks, harbour towns and one very good seafood shack.', extra: 'Walking', tag: 'From £890' },
+          { title: 'Market & Kitchen Weekend', text: 'Two mornings with the traders, one afternoon in a professional kitchen.', extra: 'Food', tag: 'From £420' },
+          { title: 'Old Town by Night', text: 'An evening route through the lanes with a historian who grew up there.', extra: 'City', tag: 'From £65' },
+          { title: 'Ridge and Valley', text: 'Three days of high ground with luggage moved for you.', extra: 'Walking', tag: 'From £540' },
+          { title: 'Harvest Long Weekend', text: 'Vineyards, a family farm and the pressing week in full swing.', extra: 'Food', tag: 'From £610' }
+        ] },
+        { type: 'testimonials', layout: 'featured', animation: 'fade-up', items: [
           { title: 'Jonas Weber', text: 'Every itinerary detail was handled. We just showed up and enjoyed.', extra: 'Traveller' },
           { title: 'Clara Mbeki', text: 'The guides felt like old friends showing us their hometown.', extra: 'Traveller' },
           { title: 'Arun Patel', text: 'Best food tour of my life. Booked again for next spring.', extra: 'Foodie' }
         ] },
-        { type: 'faq', animation: 'fade-up', items: [
+        { type: 'faq', layout: 'columns', animation: 'fade-up', items: [
           { title: 'What is your cancellation policy?', text: 'Free cancellation up to 14 days before departure, full refund within 7 days.' },
           { title: 'Are tours suitable for families?', text: 'Absolutely — we have dedicated family routes and child-friendly guides.' },
           { title: 'Do you offer private tours?', text: 'Yes, private tours are available for groups of any size. Contact us for a quote.' }
         ] },
-        { type: 'contact', animation: 'fade-up' }
+        { type: 'contact', layout: 'overlap', animation: 'fade-up' }
       ]
     },
     {
@@ -303,15 +355,21 @@ const DB = {
     },
     {
       id: 'ceremony', name: 'Ceremony', icon: '💍', tag: 'Wedding · Pro', palette: 'blush', font: 'cormorant',
-      desc: 'A romantic wedding & events site: couple story, gallery, timeline, registry, RSVP.',
+      heroLayout: 'aurora',
+      design: { containerWidth: 1120, radius: 28, spacing: 110 },
+      desc: 'A romantic wedding & events site: aurora hero, couple story, mosaic gallery, RSVP countdown, timeline, registry.',
       sections: [
-        { type: 'hero', animation: 'zoom-in' },
+        { type: 'hero', layout: 'aurora', animation: 'zoom-in' },
         { type: 'about', animation: 'slide-left', title: 'Our story', text: 'Two cities, one chance meeting, and a thousand little reasons since. Here we are — planning the party of a lifetime and we would love you to be part of it.', subtitle: 'The wedding of Amelia & James' },
         { type: 'features', animation: 'fade-up', items: [
           { icon: '💒', title: 'The Ceremony', text: 'The Old Chapel, St Mary’s — 2pm sharp. Follow the garden path to the west lawn.' },
           { icon: '🥂', title: 'The Reception', text: 'Canapés in the orangery, dinner under the marquee, dancing until the candles burn low.' },
           { icon: '📸', title: 'Captured', text: 'Our photographer will be everywhere and nowhere — tag away with #AmeliaWedsJames.' }
         ] },
+        { type: 'countdown', layout: 'panel', animation: 'zoom-in', title: 'RSVP by 1 June', subtitle: 'Please reply so we can confirm numbers with the venue.',
+          // Computed rather than fixed: a hard-coded date would go stale, and Site
+          // Care would (rightly) report every wedding site as out of date.
+          extra: new Date(Date.now() + 60 * 864e5).toISOString().slice(0, 19) },
         { type: 'gallery', animation: 'fade-up', items: [
           { text: 'The proposal', extra: 'Lake Como' }, { text: 'Engagement', extra: 'Autumn' },
           { text: 'Save the date', extra: 'Card design' }, { text: 'Venue walkthrough', extra: 'Chapel' },
@@ -320,60 +378,88 @@ const DB = {
         { type: 'stats', animation: 'fade-up', items: [
           { title: 'Guests', text: '120' }, { title: 'Toasts', text: '3' }, { title: 'First dance', text: '1' }, { title: 'Party hours', text: '7+' }
         ] },
-        { type: 'testimonials', animation: 'fade-up', items: [
+        { type: 'testimonials', layout: 'featured', animation: 'fade-up', items: [
           { title: 'Emma & Tom', text: 'Amelia & James planned our day start to finish — calm, warm, and flawlessly run.', extra: 'Married 2024' },
           { title: 'Grace Liu', text: 'The flowers were the single most photographed thing at our wedding.', extra: 'Bride, 2023' }
         ] },
-        { type: 'faq', animation: 'fade-up', items: [
+        { type: 'faq', layout: 'columns', animation: 'fade-up', items: [
           { title: 'When should I RSVP by?', text: 'Please let us know by 1 June so we can confirm numbers with the venue.' },
           { title: 'Is there parking?', text: 'Yes — the chapel has a private car park, and a shuttle runs from the village at 1pm.' },
           { title: 'Can I bring a plus one?', text: 'Your invitation states the number of seats reserved for you. If in doubt, drop us a line.' }
         ] },
-        { type: 'cta', animation: 'fade-up', title: 'Join us on the big day', text: 'RSVP by 1 June — we can’t wait to celebrate with you.' },
-        { type: 'contact', animation: 'fade-up' }
+        { type: 'cta', layout: 'email', animation: 'fade-up', title: 'Join us on the big day', text: 'RSVP by 1 June — we can’t wait to celebrate with you.' },
+        { type: 'contact', layout: 'cards', animation: 'fade-up' }
       ]
     },
     {
       id: 'hearth', name: 'Hearth', icon: '☕', tag: 'Café & Bakery', palette: 'terracotta', font: 'poppins',
-      desc: 'A neighbourhood café & bakery: seasonal menu, opening hours, gallery, reviews, order online.',
+      heroLayout: 'split',
+      design: { containerWidth: 1100, radius: 22, spacing: 80 },
+      desc: 'A neighbourhood café & bakery: split hero, floating story, divided counters, a real price menu, gallery, reviews.',
       sections: [
-        { type: 'hero', animation: 'bounce-in' },
-        { type: 'about', animation: 'slide-right', title: 'Slow mornings, honest baking', text: 'Hearth started with one sourdough starter and a very patient landlord. Today we bake everything in-house — bread at dawn, pastries twice daily, and a lunch menu that follows the seasons.', subtitle: 'Baking since 2016' },
-        { type: 'features', animation: 'fade-up', items: [
+        { type: 'hero', layout: 'split', animation: 'bounce-in' },
+        { type: 'about', layout: 'floating', animation: 'slide-right', title: 'Slow mornings, honest baking', text: 'Hearth started with one sourdough starter and a very patient landlord. Today we bake everything in-house — bread at dawn, pastries twice daily, and a lunch menu that follows the seasons.', subtitle: 'Baking since 2016' },
+        { type: 'features', layout: 'strip', animation: 'fade-up', items: [
           { icon: '🥐', title: 'Bakery Counter', text: 'Croissants, cruffins and daily specials baked from our own leaven.' },
           { icon: '☕', title: 'House Roast', text: 'Single-origin beans from a family roastery 40 miles away, dialled in daily.' },
           { icon: '🥗', title: 'Kitchen Menu', text: 'Brunch till 3pm — eggs any way, big salads, and the best sandwiches in town.' }
         ] },
-        { type: 'gallery', animation: 'fade-up' },
-        { type: 'testimonials', animation: 'fade-up', items: [
+        { type: 'table', animation: 'fade-up', title: 'The counter, today', subtitle: 'Everything is baked here — ask what came out of the oven last',
+          cols: ['Counter', 'What it is', 'Price'],
+          rows: [
+            ['Sourdough loaf', '24-hour ferment, stone-milled flour', '£5.40'],
+            ['Cardamom bun', 'Hand-rolled, twice a day at 8am and 1pm', '£3.60'],
+            ['Breakfast sandwich', 'Our own focaccia, dry-cured bacon, herb aioli', '£7.50'],
+            ['Seasonal salad', 'Whatever the market had this morning', '£9.00'],
+            ['Filter coffee', 'Single-origin, changed fortnightly', '£3.20']
+          ] },
+        { type: 'gallery', layout: 'mosaic', animation: 'fade-up', items: [
+          { text: 'The morning bake', extra: '6am' }, { text: 'Cardamom buns', extra: 'Counter' },
+          { text: 'The courtyard', extra: 'Seating' }, { text: 'Sourdough cooling', extra: 'Rack' },
+          { text: 'Slow lunch', extra: 'Menu' }, { text: 'The roaster', extra: 'Beans' }
+        ] },
+        { type: 'testimonials', layout: 'masonry', animation: 'fade-up', items: [
           { title: 'Rosa Lindqvist', text: 'The cardamom buns are a religious experience. I have tried to replicate them at home. I cannot.', extra: 'Local regular' },
           { title: 'Dev Sharma', text: 'Quiet enough to work, warm enough to linger, and the flat white never misses.', extra: 'Remote worker' },
           { title: 'Mia Okonkwo', text: 'We ordered the party box for the office — gone in eleven minutes.', extra: 'Office manager' }
         ] },
-        { type: 'faq', animation: 'fade-up', items: [
+        { type: 'faq', layout: 'columns', animation: 'fade-up', items: [
           { title: 'Do you take bookings?', text: 'Walk-ins welcome all day. Tables for six or more can be reserved for weekends.' },
           { title: 'Is there vegan baking?', text: 'Every day — ask at the counter and we’ll talk you through the cabinet.' },
           { title: 'Can you cater events?', text: 'We do party boxes, celebration cakes and office drops. Order 48 hours ahead.' }
         ] },
-        { type: 'cta', animation: 'bounce-in', title: 'Fresh batch out at 8am', text: 'Follow us for the daily special — or just come and smell the bread.' },
-        { type: 'contact', animation: 'fade-up' }
+        { type: 'cta', layout: 'splash', animation: 'bounce-in', title: 'Fresh batch out at 8am', text: 'Follow us for the daily special — or just come and smell the bread.' },
+        { type: 'contact', layout: 'cards', animation: 'fade-up' }
       ]
     },
     {
       id: 'apex', name: 'Apex', icon: '🏋️', tag: 'Fitness Studio', palette: 'emerald', font: 'oswald',
-      desc: 'A high-energy fitness studio: classes, trainers, membership, schedule, results.',
+      // A full-bleed photo hero with the nav sitting over it — the one thing every
+      // gym site does, and nothing else in the set does this way.
+      heroLayout: 'centered', navStyle: 'transparent',
+      design: { containerWidth: 1220, radius: 12, spacing: 96 },
+      desc: 'A high-energy fitness studio: full-bleed hero, live numbers, bento classes, timetable, membership tiers, results.',
       sections: [
         { type: 'hero', animation: 'fade-up' },
-        { type: 'stats', animation: 'fade-up', items: [
+        { type: 'stats', layout: 'band', animation: 'fade-up', items: [
           { title: 'Members', text: '1,200+' }, { title: 'Weekly classes', text: '80' }, { title: 'Avg. rating', text: '4.9★' }, { title: 'Trainers', text: '14' }
         ] },
-        { type: 'features', animation: 'fade-up', items: [
+        { type: 'features', layout: 'bento', animation: 'fade-up', items: [
           { icon: '🔥', title: 'HIIT & Conditioning', text: 'Forty-five minutes, zero mercy, community atmosphere. Every hour, every day.' },
           { icon: '🏋️', title: 'Strength Club', text: 'Coach-led barbell work for every level — technique first, weight second.' },
           { icon: '🧘', title: 'Mobility & Recovery', text: 'Sweat less, move better. Stretch, roll and reset twice a week.' },
           { icon: '🥗', title: 'Nutrition Coaching', text: 'Meal plans and check-ins with our in-house nutritionist, included in membership.' }
         ] },
-        { type: 'pricing', animation: 'fade-up', items: [
+        { type: 'table', animation: 'fade-up', title: 'This week in the studio', subtitle: 'Book on the app — drop-ins welcome if a space is free',
+          cols: ['Time', 'Class', 'Studio', 'Coach'],
+          rows: [
+            ['06:15', 'Conditioning', 'Floor 1', 'Dan Abara'],
+            ['07:00', 'Strength Club', 'Rack room', 'Eve Morrow'],
+            ['12:30', 'Express HIIT', 'Floor 1', 'Dan Abara'],
+            ['18:00', 'Strength Club', 'Rack room', 'Eve Morrow'],
+            ['19:15', 'Mobility & Reset', 'Studio 2', 'Priya Anand']
+          ] },
+        { type: 'pricing', layout: 'stacked', animation: 'fade-up', items: [
           { icon: '🎟️', title: 'Drop-in', text: '£12', tag: '', extra: 'Single session · all classes · towel hire' },
           { icon: '📅', title: 'Monthly', text: '£49 /mo', tag: 'Popular', extra: 'Unlimited classes · app booking · guest pass' },
           { icon: '🏆', title: 'Annual', text: '£449 /yr', tag: '', extra: 'Two months free · freeze anytime · PT discount' }
@@ -383,125 +469,165 @@ const DB = {
           { title: 'Priya Anand', text: 'The coaches know everyone’s name and every modification. It never feels like a chain gym.', extra: 'Member' },
           { title: 'Jon Bell', text: 'Signed up for a month. That was eleven months ago.', extra: 'Member' }
         ] },
-        { type: 'cta', animation: 'bounce-in', title: 'Your first class is on us', text: 'Book a free session — no membership, no pressure, just show up.' },
-        { type: 'contact', animation: 'fade-up' }
+        { type: 'cta', layout: 'splash', animation: 'bounce-in', title: 'Your first class is on us', text: 'Book a free session — no membership, no pressure, just show up.' },
+        { type: 'contact', layout: 'cards', animation: 'fade-up' }
       ]
     },
     {
       id: 'harbor', name: 'Harbor', icon: '🤝', tag: 'Nonprofit & Cause', palette: 'ocean', font: 'montserrat',
-      desc: 'A cause-driven nonprofit site: mission, impact numbers, programmes, stories, donate.',
+      heroLayout: 'split',
+      design: { containerWidth: 1200, radius: 16, spacing: 100 },
+      desc: 'A cause-driven nonprofit site: mission, impact numbers, numbered programmes, where the money goes, stories, donate.',
       sections: [
-        { type: 'hero', animation: 'fade-up' },
+        { type: 'hero', layout: 'split', animation: 'fade-up' },
         { type: 'about', animation: 'slide-left', title: 'Every child deserves a safe harbour', text: 'Harbor supports families facing homelessness with housing, mentoring and the practical help to get back on their feet. Since 2012 we’ve helped 4,300 families — and the work only grows with you.', subtitle: 'Our mission' },
-        { type: 'stats', animation: 'fade-up', items: [
+        { type: 'stats', layout: 'band', animation: 'fade-up', items: [
           { title: 'Families housed', text: '4,300' }, { title: 'Volunteers', text: '900+' }, { title: 'Local partners', text: '37' }, { title: 'Funds to programmes', text: '92%' }
         ] },
-        { type: 'features', animation: 'fade-up', items: [
+        { type: 'features', layout: 'numbered', animation: 'fade-up', items: [
           { icon: '🏠', title: 'Emergency Housing', text: 'Safe, furnished rooms within 48 hours — never a night on the street.' },
           { icon: '🎓', title: 'Mentoring & Skills', text: 'Twelve-month mentor pairings and job-readiness workshops for parents.' },
           { icon: '📦', title: 'Family Essentials', text: 'Food, clothing, school kits and household basics while families rebuild.' }
         ] },
-        { type: 'testimonials', animation: 'fade-up', items: [
+        { type: 'table', layout: 'compare', animation: 'fade-up', title: 'Where your money goes', subtitle: 'Independently audited · last full year',
+          cols: ['', 'Share', 'What that means'],
+          rows: [
+            ['Programmes', '92%', 'Housing, mentoring and family essentials'],
+            ['Fundraising', '5%', 'Events, appeals and donor care'],
+            ['Administration', '3%', 'Audit, insurance and the small staff team']
+          ] },
+        { type: 'testimonials', layout: 'masonry', animation: 'fade-up', items: [
           { title: 'Tanya, former guest', text: 'They gave us keys to a home, not just a room. Two years on, we have our own place.', extra: 'Programme graduate' },
           { title: 'Marcus Reed', text: 'Volunteering here changed how I think about my city.', extra: 'Volunteer' },
           { title: 'Helen Achebe', text: 'A transparent charity that tells you exactly where every pound goes.', extra: 'Monthly donor' }
         ] },
-        { type: 'cta', animation: 'bounce-in', title: 'Give a family a safe harbour', text: '£25 covers a family’s essentials for a week. Every gift, however small, changes a story.' },
-        { type: 'contact', animation: 'fade-up' }
+        { type: 'cta', layout: 'splash', animation: 'bounce-in', title: 'Give a family a safe harbour', text: '£25 covers a family’s essentials for a week. Every gift, however small, changes a story.' },
+        { type: 'contact', layout: 'split', animation: 'fade-up' }
       ]
     },
     {
       id: 'chambers', name: 'Chambers', icon: '⚖️', tag: 'Legal', palette: 'stone', font: 'sourceserif',
-      desc: 'A trusted law firm site: practice areas, team, results, process, consultations.',
+      // A firm will not print a switch that lets clients flip the site dark, and
+      // the near-square corners say the same thing the typography does.
+      heroLayout: 'minimal', themeToggle: false,
+      design: { containerWidth: 1120, radius: 4, spacing: 92 },
+      desc: 'A trusted law firm site: quiet hero, results, numbered practice areas, a fee guide, testimonials, FAQ.',
       sections: [
-        { type: 'hero', animation: 'fade-up' },
+        { type: 'hero', layout: 'minimal', animation: 'fade-up' },
         { type: 'stats', animation: 'fade-up', items: [
           { title: 'Cases won', text: '2,400+' }, { title: 'Years' , text: '38' }, { title: 'Practice areas', text: '9' }, { title: 'Client rating', text: '4.9★' }
         ] },
-        { type: 'features', animation: 'fade-up', items: [
+        { type: 'features', layout: 'numbered', animation: 'fade-up', items: [
           { icon: '🏠', title: 'Property & Conveyancing', text: 'Residential sales and purchases handled end-to-end by a dedicated solicitor.' },
           { icon: '👥', title: 'Family Law', text: 'Divorce, mediation and children matters — clear advice when it matters most.' },
           { icon: '💼', title: 'Business & Contracts', text: 'Formation, shareholder agreements, disputes and day-to-day commercial advice.' },
           { icon: '📝', title: 'Wills & Estates', text: 'Will drafting, lasting powers of attorney and probate with compassion and care.' }
         ] },
-        { type: 'testimonials', animation: 'fade-up', items: [
+        { type: 'testimonials', layout: 'masonry', animation: 'fade-up', items: [
           { title: 'L. Hargreaves', text: 'Calm, straight-talking and worth every penny. They made the hardest year easier.', extra: 'Family law client' },
           { title: 'N. Ostrowski', text: 'Our purchase completed in nine weeks, exactly as promised, no surprises.', extra: 'Conveyancing client' },
           { title: 'R. Fontaine', text: 'They have handled our company contracts for a decade. Reliable beyond doubt.', extra: 'Business client' }
         ] },
-        { type: 'faq', animation: 'fade-up', items: [
+        { type: 'table', layout: 'compare', animation: 'fade-up', title: 'Fee guide', subtitle: 'Fixed fees quoted before we start — no hourly surprises',
+          cols: ['Matter', 'Fee', 'Typical timescale'],
+          rows: [
+            ['Freehold sale', '£895 + disbursements', '8–12 weeks'],
+            ['Freehold purchase', '£1,050 + disbursements', '8–14 weeks'],
+            ['Single will', '£240', '1 week'],
+            ['Lasting power of attorney', '£390 each', '2–3 weeks'],
+            ['Uncontested divorce', '£750 + court fee', '4–6 months']
+          ] },
+        { type: 'faq', layout: 'columns', animation: 'fade-up', items: [
           { title: 'What does a first consultation cost?', text: 'The first 30-minute consultation is free for new clients, in person or by video.' },
           { title: 'Do you offer fixed fees?', text: 'Yes — conveyancing, wills and many family matters are quoted up front as fixed fees.' },
           { title: 'Are you regulated?', text: 'We are authorised and regulated by the Solicitors Regulation Authority.' }
         ] },
         { type: 'cta', animation: 'fade-up', title: 'Advice you can act on', text: 'Book a free 30-minute consultation with the right solicitor for your matter.' },
-        { type: 'contact', animation: 'fade-up' }
+        { type: 'contact', layout: 'minimal', animation: 'fade-up' }
       ]
     },
     {
       id: 'airwaves', name: 'Airwaves', icon: '🎙️', tag: 'Podcast & Creator', palette: 'midnight', font: 'spacegrotesk',
-      desc: 'A podcast & creator hub: episode list, listening links, host bio, subscribe.',
+      heroLayout: 'split',
+      design: { containerWidth: 1080, radius: 24, spacing: 88 },
+      desc: 'A podcast & creator hub: split hero, the latest episodes first, listening numbers, host bio, subscribe.',
       sections: [
-        { type: 'hero', animation: 'zoom-in' },
-        { type: 'stats', animation: 'fade-up', items: [
-          { title: 'Episodes', text: '210' }, { title: 'Monthly listens', text: '86K' }, { title: 'Countries', text: '41' }, { title: 'Avg. rating', text: '4.8★' }
-        ] },
+        { type: 'hero', layout: 'split', animation: 'zoom-in' },
         { type: 'blog', animation: 'fade-up', items: [
           { icon: 'EP 210', title: 'The quiet power of saying no', text: 'We talk boundaries with author Maya Lind — why protecting your focus is the highest-leverage skill in a noisy world.', extra: 'Released this week · 54 min' },
           { icon: 'EP 209', title: 'Building in public, honestly', text: 'Founder Dev Sharma on shipping ugly early, sharing numbers monthly, and why transparency compounds.', extra: 'Listeners’ favourite · 47 min' },
           { icon: 'EP 208', title: 'The economics of creativity', text: 'How three working artists actually make a living — commissions, licenses and the long tail.', extra: 'Season 4 opener · 61 min' }
         ] },
+        // The episodes come first because that is what a listener came for; the
+        // reach figures were sitting between the hero and the thing they clicked.
+        { type: 'stats', layout: 'ticker', animation: 'fade-up', items: [
+          { title: 'Episodes', text: '210' }, { title: 'Monthly listens', text: '86K' }, { title: 'Countries', text: '41' }, { title: 'Avg. rating', text: '4.8★' }
+        ] },
         { type: 'about', animation: 'slide-left', title: 'Two hosts, one mic', text: 'Airwaves is a weekly conversation about work, creativity and modern life. New episodes every Thursday — wherever you get your podcasts.', subtitle: 'Hosted by Sam & Ria' },
-        { type: 'testimonials', animation: 'fade-up', items: [
+        { type: 'testimonials', layout: 'masonry', animation: 'fade-up', items: [
           { title: 'Listener review', text: 'The only podcast I actually schedule into my week. Feels like brilliant friends talking.', extra: '★★★★★' },
           { title: 'Listener review', text: 'Genuinely useful ideas, not just hot takes. The notes page is a goldmine.', extra: '★★★★★' }
         ] },
         { type: 'cta', animation: 'bounce-in', title: 'New episodes every Thursday', text: 'Subscribe free on your favourite app — never miss an episode.' },
-        { type: 'contact', animation: 'fade-up' }
+        { type: 'contact', layout: 'split', animation: 'fade-up' }
       ]
     },
     {
       id: 'gala', name: 'Gala', icon: '🥂', tag: 'Events & Parties', palette: 'candy', font: 'playfair',
-      desc: 'An event planning & entertainment brand: event types, gallery, timeline, booking.',
+      heroLayout: 'centered', navStyle: 'transparent',
+      design: { containerWidth: 1260, radius: 28, spacing: 104 },
+      desc: 'An event planning & entertainment brand: full-bleed hero, next-event countdown, bento event types, mosaic gallery, packages, reviews.',
       sections: [
         { type: 'hero', animation: 'zoom-in' },
-        { type: 'features', animation: 'fade-up', items: [
+        { type: 'countdown', layout: 'panel', animation: 'zoom-in', title: 'Next big night', subtitle: 'Our annual summer gala — tickets on sale now.', extra: new Date(Date.now() + 45 * 864e5).toISOString().slice(0, 19) },
+        { type: 'features', layout: 'bento', animation: 'fade-up', items: [
           { icon: '🎂', title: 'Private Parties', text: 'Milestone birthdays, anniversaries and the parties people talk about for years.' },
           { icon: '🎪', title: 'Corporate Events', text: 'Launches, team days and conferences — on brief, on budget, on time.' },
           { icon: '💍', title: 'Weddings & Engagements', text: 'Full planning or day-of coordination with a team that loves the details.' }
         ] },
-        { type: 'gallery', animation: 'fade-up', items: [
+        { type: 'gallery', layout: 'mosaic', animation: 'fade-up', items: [
           { text: 'Rooftop launch', extra: 'Corporate' }, { text: 'Winter gala', extra: 'Charity' },
           { text: 'Sofia turns 40', extra: 'Private' }, { text: 'Marquee wedding', extra: 'Wedding' },
           { text: 'Festival stage', extra: 'Live event' }, { text: 'Product reveal', extra: 'Brand' }
         ] },
-        { type: 'countdown', animation: 'zoom-in', title: 'Next big night', subtitle: 'Our annual summer gala — tickets on sale now.', extra: new Date(Date.now() + 45 * 864e5).toISOString().slice(0, 19) },
+        { type: 'pricing', layout: 'stacked', animation: 'fade-up', title: 'Planning packages', subtitle: 'Priced per event — travel included within 50 miles', items: [
+          { icon: '📋', title: 'Day-of coordination', text: '£850', tag: '', extra: 'We take over three weeks out · supplier liaison · on-the-day running' },
+          { icon: '🎯', title: 'Full planning', text: '£2,400', tag: 'Most booked', extra: 'Concept to clear-up · budget management · venue sourcing · guest list' },
+          { icon: '✨', title: 'Design & styling', text: 'From £1,600', tag: '', extra: 'Look and feel · florals · lighting · set dressing · install and strike' }
+        ] },
         { type: 'testimonials', animation: 'fade-up', items: [
           { title: 'Claire Dennison', text: 'They ran our 200-guest charity gala like a dream. Raised a record amount.', extra: 'Charity trustee' },
           { title: 'Mike & Sarah', text: 'The wedding was flawless — we were guests at our own party, exactly as promised.', extra: 'Wedding clients' },
           { title: 'Ana Ruiz', text: 'From the napkin sketch to the confetti cannon, every detail was covered.', extra: 'Product launch' }
         ] },
-        { type: 'cta', animation: 'bounce-in', title: 'Let’s throw something unforgettable', text: 'Tell us about your event — we’ll call you back within one working day.' },
-        { type: 'contact', animation: 'fade-up' }
+        { type: 'cta', layout: 'splash', animation: 'bounce-in', title: 'Let’s throw something unforgettable', text: 'Tell us about your event — we’ll call you back within one working day.' },
+        { type: 'contact', layout: 'overlap', animation: 'fade-up' }
       ]
     },
     {
       id: 'atelier', name: 'Atelier', icon: '🎨', tag: 'Portfolio & Studio', palette: 'sunset', font: 'bebas',
-      desc: 'A bold creative portfolio: selected work, services, recognitions, commission.',
+      // Letterpress instincts: sharp corners, wide margins, big type, no dark mode.
+      heroLayout: 'minimal', themeToggle: false,
+      design: { containerWidth: 1180, radius: 6, spacing: 116 },
+      desc: 'A bold creative portfolio: work wall first, services, recognition, client wall, commission.',
       sections: [
-        { type: 'hero', animation: 'fade-in' },
+        { type: 'hero', layout: 'minimal', animation: 'fade-in' },
         { type: 'gallery', animation: 'fade-up', items: [
           { text: 'Wildfire campaign', extra: 'Brand · 2025' }, { text: 'Kinfolk identity', extra: 'Brand · 2025' },
           { text: 'Northwind editorial', extra: 'Print · 2024' }, { text: 'Solace packaging', extra: 'Packaging · 2024' },
           { text: 'Drift app', extra: 'Product · 2024' }, { text: 'Terra site', extra: 'Web · 2023' }
         ] },
-        { type: 'features', animation: 'fade-up', items: [
+        { type: 'features', layout: 'numbered', animation: 'fade-up', items: [
           { icon: '🎯', title: 'Brand Identity', text: 'Naming, logo, voice and the system that keeps it all consistent.' },
           { icon: '🖥️', title: 'Web & Digital', text: 'Marketing sites and product design that ship fast and age well.' },
           { icon: '📖', title: 'Editorial & Print', text: 'Magazines, books and packaging for brands that care about paper.' }
         ] },
-        { type: 'stats', animation: 'fade-up', items: [
+        { type: 'stats', layout: 'band', animation: 'fade-up', items: [
           { title: 'Projects', text: '300+' }, { title: 'Awards', text: '12' }, { title: 'Happy clients', text: '180+' }, { title: 'Years', text: '9' }
+        ] },
+        { type: 'logos', layout: 'grid', animation: 'fade-up', title: 'Clients, in their own words', items: [
+          { icon: '◆', title: 'Kinfolk' }, { icon: '◆', title: 'Wildfire' }, { icon: '◆', title: 'Drift' },
+          { icon: '◆', title: 'Northwind' }, { icon: '◆', title: 'Solace' }, { icon: '◆', title: 'Terra' }
         ] },
         { type: 'testimonials', animation: 'fade-up', items: [
           { title: 'Lena Fischer', text: 'The rebrand paid for itself in the first quarter. Sharp, fast, unforgettable.', extra: 'Founder, Kinfolk' },
@@ -509,16 +635,26 @@ const DB = {
           { title: 'June Park', text: 'Every deadline hit, every detail considered. Hire them before we do again.', extra: 'Head of brand, Drift' }
         ] },
         { type: 'cta', animation: 'fade-up', title: 'Commissions open for Q3', text: 'Tell us about your project — we take on four new clients a season.' },
-        { type: 'contact', animation: 'fade-up' }
+        { type: 'contact', layout: 'minimal', animation: 'fade-up' }
       ]
     },
     {
       id: 'estate', name: 'Estate', icon: '🏡', tag: 'Real Estate · Pro', palette: 'stone', font: 'playfair',
-      desc: 'A property agency site: featured listings, neighbourhoods, agents, valuations.',
+      heroLayout: 'split',
+      design: { containerWidth: 1240, radius: 10, spacing: 96 },
+      desc: 'A property agency site: searchable listings, featured homes, mosaic gallery, local story, fee comparison, valuations.',
       sections: [
-        { type: 'hero', animation: 'fade-up' },
+        { type: 'hero', layout: 'split', animation: 'fade-up' },
         { type: 'stats', animation: 'fade-up', items: [
           { title: 'Homes sold', text: '1,900+' }, { title: 'Average days to sell', text: '23' }, { title: 'Local agents', text: '18' }, { title: 'Client rating', text: '4.9★' }
+        ] },
+        { type: 'collection', animation: 'fade-up', title: 'On the market now', subtitle: 'Filter by area, bedrooms or price — updated the day a listing goes live', items: [
+          { title: 'Maple Grove House', text: 'A double-fronted Victorian with the original tile path and a 0.4-acre garden.', extra: '4 bed · £525,000', tag: 'New listing' },
+          { title: 'Harbour View Flat', text: 'Seventeenth floor, west-facing balcony, chain-free.', extra: '2 bed · £340,000' },
+          { title: 'Willow Cottage', text: 'Character cottage with outbuildings and a workshop.', extra: '3 bed · £685,000' },
+          { title: 'The Old Mill', text: 'Riverside conversion with an annexe and fishing rights.', extra: '5 bed · £890,000', tag: 'Rare find' },
+          { title: 'Briar Lane', text: 'A 1930s semi with scope to extend at the back.', extra: '3 bed · £475,000' },
+          { title: 'Kingsmead', text: 'Detached family home on the private road.', extra: '6 bed · £1.2M' }
         ] },
         { type: 'shop', animation: 'fade-up', items: [
           { icon: '🏡', title: 'Maple Grove House', text: '£525,000', extra: '4 bed · 2 bath · 0.4 acre · New listing' },
@@ -537,37 +673,44 @@ const DB = {
           { title: 'Dimitri Kovač', text: 'As first-time buyers we had a hundred questions. They answered every one patiently.', extra: 'Buyers' },
           { title: 'Sandra Osei', text: 'The valuation was spot on and the marketing was beautiful.', extra: 'Landlord' }
         ] },
-        { type: 'cta', animation: 'fade-up', title: 'Thinking of selling?', text: 'Book a free, no-obligation valuation — £0 fees if we don’t sell.' },
-        { type: 'contact', animation: 'fade-up' }
+        { type: 'cta', layout: 'email', animation: 'fade-up', title: 'Thinking of selling?', text: 'Book a free, no-obligation valuation — £0 fees if we don’t sell.' },
+        { type: 'contact', layout: 'cards', animation: 'fade-up' }
       ]
     },
     {
       id: 'aperture', name: 'Aperture', icon: '📸', tag: 'Photography · Pro', palette: 'noir', font: 'dmserif',
-      desc: 'A photography studio portfolio: galleries by genre, about, bookings, prints.',
+      heroLayout: 'centered', themeToggle: false,
+      design: { containerWidth: 1160, radius: 16, spacing: 112 },
+      desc: 'A photography studio portfolio: genre index, printed prices, featured review, booking FAQ.',
       sections: [
         { type: 'hero', animation: 'zoom-in' },
-        { type: 'gallery', animation: 'fade-up', items: [
+        { type: 'gallery', layout: 'mosaic', animation: 'fade-up', items: [
           { text: 'Weddings', extra: 'Collections' }, { text: 'Portraits', extra: 'Studio' },
           { text: 'Editorial', extra: 'Magazine' }, { text: 'Landscape', extra: 'Fine art' },
           { text: 'Events', extra: 'Documentary' }, { text: 'Personal work', extra: 'Film' }
         ] },
-        { type: 'features', animation: 'fade-up', items: [
+        { type: 'features', layout: 'numbered', animation: 'fade-up', items: [
           { icon: '💍', title: 'Weddings', text: 'One photographer, two cameras, full day — delivered as a private online gallery within three weeks.' },
           { icon: '🧑‍🎨', title: 'Portraits & Brands', text: 'Studio or on location, for people, products and the faces behind companies.' },
           { icon: '🖼️', title: 'Fine Art Prints', text: 'Limited edition archival prints, signed and numbered, shipped worldwide.' }
         ] },
-        { type: 'testimonials', animation: 'fade-up', items: [
+        { type: 'pricing', layout: 'stacked', animation: 'fade-up', title: 'Sessions and collections', subtitle: 'Fixed quotes, no hidden extra hours', items: [
+          { icon: '🧑‍🎨', title: 'Portrait session', text: '£250', tag: '', extra: '90 minutes · studio or location · 25 edited frames' },
+          { icon: '💍', title: 'Wedding collection', text: 'From £1,400', tag: 'Most booked', extra: 'Full day · two cameras · private gallery in three weeks' },
+          { icon: '🖼️', title: 'Fine art print', text: 'From £180', tag: '', extra: 'Archival, signed and numbered · worldwide shipping' }
+        ] },
+        { type: 'testimonials', layout: 'featured', animation: 'fade-up', items: [
           { title: 'Kate & Jordan', text: 'He caught moments we didn’t even know happened. We cried laughing at the gallery.', extra: 'Wedding clients' },
           { title: 'Studio Nova', text: 'Campaign shots that made our whole look book. Booking again next season.', extra: 'Brand client' },
           { title: 'Marco Ellis', text: 'The print quality is museum-grade. My wall has never looked better.', extra: 'Print collector' }
         ] },
-        { type: 'faq', animation: 'fade-up', items: [
+        { type: 'faq', layout: 'columns', animation: 'fade-up', items: [
           { title: 'How far ahead should we book?', text: 'Weddings book out 6–12 months. Portrait sessions usually have space within three weeks.' },
           { title: 'Do you travel?', text: 'Yes — destination weddings and shoots are welcome. Travel is quoted up front.' },
           { title: 'What do you charge?', text: 'Portrait sessions start at £250. Wedding collections start at £1,400. Every quote is fixed.' }
         ] },
-        { type: 'cta', animation: 'fade-up', title: 'Let’s make something worth framing', text: 'Check availability and book your session — hello@ is the fastest way.' },
-        { type: 'contact', animation: 'fade-up' }
+        { type: 'cta', layout: 'email', animation: 'fade-up', title: 'Let’s make something worth framing', text: 'Check availability and book your session — hello@ is the fastest way.' },
+        { type: 'contact', layout: 'minimal', animation: 'fade-up' }
       ]
     }
   ],
@@ -905,7 +1048,10 @@ DB.layoutsFor = (type) => {
     ],
     contact: [
       { id: '', name: 'Classic split' },
-      { id: 'split', name: 'Gradient info panel' }
+      { id: 'split', name: 'Gradient info panel' },
+      { id: 'cards', name: 'Contact tiles — details as cards' },
+      { id: 'minimal', name: 'Minimal line — no card, one column' },
+      { id: 'overlap', name: 'Overlapping panel — form over gradient' }
     ],
     booking: [
       { id: '', name: 'Booking panel — provider embed' },
@@ -1227,6 +1373,39 @@ DB.layouts = [
       extra: 'Prefer email? hello@pallettai.org · Mon–Fri, 9–5 UK time'
     },
     thumb: '<div class="lt-thumb" style="grid-template-columns:1.1fr .9fr;gap:5px;align-items:stretch"><div style="display:flex;flex-direction:column;gap:4px;background:var(--grad);border-radius:7px;padding:7px"><span style="height:6px;border-radius:3px;background:rgba(255,255,255,.95);width:60%"></span><span style="height:4px;border-radius:2px;background:rgba(255,255,255,.6);width:90%"></span><span style="height:4px;border-radius:2px;background:rgba(255,255,255,.6);width:75%"></span><span style="height:12px;border-radius:4px;background:rgba(255,255,255,.9);width:55%;margin-top:2px"></span></div><div style="display:flex;flex-direction:column;gap:4px"><span style="height:9px;border-radius:4px;background:var(--surface2);border:1px solid var(--border)"></span><span style="height:9px;border-radius:4px;background:var(--surface2);border:1px solid var(--border)"></span><span style="height:18px;border-radius:5px;background:var(--surface2);border:1px solid var(--border)"></span></div></div>'
+  },
+  {
+    id: 'contact-cards', name: 'Contact Tiles', icon: '🧱', type: 'contact', tag: '',
+    desc: 'Your details as three clickable cards with the form wide beneath — a directory, not a bullet list.',
+    preset: {
+      type: 'contact', layout: 'cards', animation: 'fade-up',
+      title: 'Three ways to reach us',
+      subtitle: 'Email, phone or drop in — whatever suits you. We answer every one.',
+      extra: 'We reply within one business day.'
+    },
+    thumb: '<div class="lt-thumb" style="grid-template-columns:1fr;gap:5px"><div style="display:flex;flex-direction:column;gap:3px;align-items:center"><span style="height:5px;border-radius:3px;background:var(--text);opacity:.5;width:52%"></span><span style="height:3px;border-radius:2px;background:var(--surface2);width:34%"></span></div><div style="display:flex;gap:5px"><span style="flex:1;height:20px;border-radius:6px;background:var(--surface2);border:1px solid var(--border)"></span><span style="flex:1;height:20px;border-radius:6px;background:var(--surface2);border:1px solid var(--border)"></span><span style="flex:1;height:20px;border-radius:6px;background:var(--surface2);border:1px solid var(--border)"></span></div><div style="display:flex;gap:5px"><span style="flex:1;height:8px;border-radius:4px;background:var(--surface2);border:1px solid var(--border)"></span><span style="flex:1;height:8px;border-radius:4px;background:var(--surface2);border:1px solid var(--border)"></span></div><span style="height:14px;border-radius:4px;background:var(--surface2);border:1px solid var(--border)"></span></div>'
+  },
+  {
+    id: 'contact-minimal', name: 'Direct Line', icon: '➰', type: 'contact', tag: '',
+    desc: 'One centred column, no card and no borders — barely-there inputs and your details on a single line.',
+    preset: {
+      type: 'contact', layout: 'minimal', animation: 'fade-up',
+      title: 'Say hello',
+      subtitle: 'One line is enough — we will write back the same day.',
+      extra: 'No forms lost in a queue. This lands in a real inbox.'
+    },
+    thumb: '<div class="lt-thumb" style="grid-template-columns:1fr;gap:6px;align-content:center;padding:8px"><span style="height:6px;border-radius:3px;background:var(--text);opacity:.5;width:44%;margin:0 auto"></span><span style="height:4px;border-radius:2px;background:var(--surface2);width:30%;margin:0 auto"></span><div style="display:flex;gap:4px;justify-content:center"><span style="height:4px;border-radius:2px;background:var(--surface2);width:22%"></span><span style="height:4px;border-radius:2px;background:var(--surface2);width:14%"></span><span style="height:4px;border-radius:2px;background:var(--surface2);width:18%"></span></div><span style="height:1px;background:var(--border)"></span><span style="height:1px;background:var(--border)"></span><span style="height:1px;background:var(--border)"></span></div>'
+  },
+  {
+    id: 'contact-overlap', name: 'Overlapping Panel', icon: '🃏', type: 'contact', tag: '',
+    desc: 'A tall gradient panel with the form card riding over its edge — depth without another section.',
+    preset: {
+      type: 'contact', layout: 'overlap', animation: 'fade-up',
+      title: 'Start the conversation',
+      subtitle: 'Tell us what you need and we will come back with a straight answer.',
+      extra: 'Typical reply time: under one working day.'
+    },
+    thumb: '<div class="lt-thumb" style="grid-template-columns:1fr;gap:0;position:relative;min-height:66px"><div style="position:absolute;left:0;top:4px;bottom:4px;width:52%;background:var(--grad);border-radius:7px"></div><div style="position:absolute;left:40%;top:10px;right:0;bottom:10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 18px rgba(0,0,0,.18)"></div></div>'
   },
   {
     id: 'cta-email', name: 'Email Capture', icon: '📮', type: 'cta', tag: '',
