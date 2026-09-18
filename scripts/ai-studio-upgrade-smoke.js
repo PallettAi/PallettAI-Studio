@@ -14,7 +14,7 @@ function fail(msg) { failed++; console.error('  ✗ ' + msg); }
 function assert(cond, msg) { cond ? pass(msg) : fail(msg); }
 
 console.log('== Scripts load before ai.js ==');
-const order = ['data/ai-brief.js', 'data/ai-followup.js', 'data/ai-translate.js', 'data/ai-niches-extra.js', 'data/ai-fingerprint.js', 'data/ai-photos.js', 'data/ai-compose.js', 'modules/ai.js'];
+const order = ['data/ai-brief.js', 'data/ai-followup.js', 'data/ai-translate.js', 'data/ai-niches-extra.js', 'data/ai-fingerprint.js', 'data/ai-photos.js', 'data/ai-compose.js', 'data/ai-kernel.js', 'data/ai-critique.js', 'modules/ai.js'];
 let last = -1;
 order.forEach((src) => {
   const i = html.indexOf('src="' + src + '"');

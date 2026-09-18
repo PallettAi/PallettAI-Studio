@@ -25,15 +25,24 @@
   as an argument, so the behaviour below is asserted in tests
   rather than described in a comment.
 
-  The rule that matters most:
+  Two rules that matter most:
 
-    The newest revision of a project is NEVER dropped — not by
-    age, not by count, not by the byte budget. It is the only
-    restore point for "I just broke it", and a retention policy
-    whose worst case is losing that is worse than no policy.
+    1. A NAMED revision (a milestone — see Milestones) is never
+       dropped, by any rule. Its name is a decision somebody
+       made about a version a client may have approved, and a
+       retention policy that deletes those is deleting the one
+       thing here that cannot be recreated by editing again.
+    2. The newest revision of a project is NEVER dropped — not
+       by age, not by count, not by the byte budget. It is the
+       only restore point for "I just broke it", and a policy
+       whose worst case is losing that is worse than no policy.
 
-  Everything else is disposable by design: older snapshots of
+  Everything else is disposable by design: unnamed snapshots of
   the same project, kept down to whichever limit binds first.
+
+  Both guarantees are why the byte budget can end up exceeded.
+  A budget is a target; these two are promises, and this file
+  prefers breaking the target.
   ============================================================ */
 
 const MB = 1024 * 1024;
@@ -52,13 +61,24 @@ const DEFAULTS = {
   budgetBytes: 24 * MB
 };
 
-// Named rule sets for the panel. `0` means "no limit of that kind".
+/*
+  Named rule sets for the panel. `0` means "no limit of that kind".
+
+  Every note ends by naming the guarantee, including the aggressive ones: this
+  is the screen somebody reads before letting the app delete their history, and
+  "frees the most space" without "your named milestones are kept" is how a
+  creator talks themselves out of a policy that was safe all along.
+*/
+const KEPT = ' Named milestones are kept.';
 const PRESETS = [
-  { id: 'default', label: 'Defaults', note: 'Nothing goes until a project passes 12 snapshots, 90 days or 24 MB.', rules: Object.assign({}, DEFAULTS) },
-  { id: 'tidy', label: 'Tidy', note: 'A month of history, at most 8 snapshots per project, 8 MB overall.', rules: { maxPerProject: 8, maxAgeDays: 30, budgetBytes: 8 * MB } },
-  { id: 'tight', label: 'Keep a week', note: 'The last 7 days and 3 snapshots per project, 2 MB overall.', rules: { maxPerProject: 3, maxAgeDays: 7, budgetBytes: 2 * MB } },
-  { id: 'minimum', label: 'Keep one per project', note: 'Only the newest snapshot of each project. Frees the most space; you lose the ability to step back further.', rules: { maxPerProject: 1, maxAgeDays: 0, budgetBytes: 0 } }
+  { id: 'default', label: 'Defaults', note: 'Nothing goes until a project passes 12 snapshots, 90 days or 24 MB.' + KEPT, rules: Object.assign({}, DEFAULTS) },
+  { id: 'tidy', label: 'Tidy', note: 'A month of history, at most 8 snapshots per project, 8 MB overall.' + KEPT, rules: { maxPerProject: 8, maxAgeDays: 30, budgetBytes: 8 * MB } },
+  { id: 'tight', label: 'Keep a week', note: 'The last 7 days and 3 snapshots per project, 2 MB overall.' + KEPT, rules: { maxPerProject: 3, maxAgeDays: 7, budgetBytes: 2 * MB } },
+  { id: 'minimum', label: 'Keep one per project', note: 'Only the newest snapshot of each project. Frees the most space; you lose the ability to step back further.' + KEPT, rules: { maxPerProject: 1, maxAgeDays: 0, budgetBytes: 0 } }
 ];
+
+// The field that makes a revision a milestone. Mirrors Milestones.FIELD.
+const FIELD = 'pin';
 
 function rules(options) {
   const o = options || {};
@@ -80,6 +100,20 @@ function timeOf(rev) {
 }
 
 /*
+  Is this revision a named milestone?
+
+  The property name is owned by data/milestones.js (Milestones.FIELD), and this
+  is a deliberate second reading of it rather than an import: these two files
+  load as classic scripts in an order neither controls, and a policy that
+  silently stopped honouring the guarantee because a load order changed would be
+  the worst possible failure. The suite pins the two together instead, so they
+  can only disagree loudly.
+*/
+function pinnedOf(rev) {
+  return !!(rev && typeof rev[FIELD] === 'string' && rev[FIELD].trim());
+}
+
+/*
   What would be dropped, and what would stay.
 
   Returns the plan rather than performing it: the panel shows the numbers and
@@ -92,55 +126,79 @@ function plan(revs, options, now) {
   const source = revs && typeof revs === 'object' ? revs : {};
 
   const drop = [];
-  const keep = {};
   const projects = [];
   let bytesBefore = 0;
+  // What the milestones cost, and what the guarantee actually bought. Reported
+  // rather than assumed: "4 milestones kept" is a fact, and "we would have
+  // deleted 2 of them" is the fact that makes the feature worth having.
+  const milestones = { kept: 0, savedByAge: 0, savedByCount: 0, savedByBudget: 0 };
 
   // Pass 1 — per project, newest first. Age and count are decided here because
   // both are about one project's own timeline.
+  //
+  // Rows are kept with their ORIGINAL index, because pass 2 drops by index too
+  // and a second pass over a compacted list is how a prune deletes the wrong
+  // snapshot: index 1 of what survived is not index 1 of what was stored.
+  const keptById = {};
   Object.keys(source).forEach((id) => {
     const list = Array.isArray(source[id]) ? source[id] : [];
-    const kept = [];
+    const rows = [];
+    let unnamed = 0; // how much of the rolling window is spent on disposable snapshots
     list.forEach((rev, index) => {
       const bytes = bytesOf(rev);
       bytesBefore += bytes;
       if (!rev || typeof rev !== 'object') { drop.push({ id, index, t: 0, bytes, why: 'empty' }); return; }
       const t = timeOf(rev);
-      const why = (index > 0 && cutoff && t && t < cutoff) ? 'age'
-        : (kept.length >= r.maxPerProject ? 'count' : '');
-      if (why) drop.push({ id, index, t, bytes, why });
-      else kept.push({ rev, index, t, bytes });
+      const pinned = pinnedOf(rev);
+      const tooOld = !!(index > 0 && cutoff && t && t < cutoff);
+      const overCount = unnamed >= r.maxPerProject;
+      // A named milestone is not part of the rolling window at all: age and
+      // count are rules about snapshots nobody chose to keep.
+      const why = pinned ? '' : (tooOld ? 'age' : (overCount ? 'count' : ''));
+      if (why) { drop.push({ id, index, t, bytes, why }); return; }
+      if (pinned) {
+        milestones.kept += 1;
+        // Would the rule this row was just exempted from have removed it?
+        if (tooOld) milestones.savedByAge += 1;
+        // The old count rule measured position in the surviving list, so a
+        // pinned row past the cap in its own list is exactly what it took out.
+        if (index >= r.maxPerProject) milestones.savedByCount += 1;
+      } else unnamed += 1;
+      rows.push({ rev, index, t, bytes, pinned });
     });
-    if (kept.length) keep[id] = kept.map((k) => k.rev);
-    projects.push({ id, before: list.length, after: kept.length });
+    if (rows.length) keptById[id] = rows;
+    projects.push({ id, before: list.length, after: rows.length });
   });
 
-  // Pass 2 — the global byte budget, newest first across everything. A snapshot
-  // that is the last one left in its project is skipped rather than dropped:
-  // the cap may be exceeded before the guarantee is broken.
+  // Pass 2 — the global byte budget, newest first across everything. Two kinds
+  // of row are skipped rather than dropped: a milestone, and the last snapshot
+  // left in its project. The cap may be exceeded before either promise breaks.
   if (r.budgetBytes > 0) {
     const flat = [];
-    Object.keys(keep).forEach((id) => { keep[id].forEach((rev, i) => flat.push({ id, rev, i })); });
-    flat.sort((a, b) => timeOf(b.rev) - timeOf(a.rev));
+    Object.keys(keptById).forEach((id) => { keptById[id].forEach((row) => flat.push({ id, row })); });
+    flat.sort((a, b) => b.row.t - a.row.t);
     let total = 0;
-    const dropped = Object.create(null);
-    flat.forEach((row) => {
-      const bytes = bytesOf(row.rev);
-      const survivors = keep[row.id].length - (dropped[row.id] || 0);
-      if (total + bytes > r.budgetBytes && survivors > 1) {
-        dropped[row.id] = (dropped[row.id] || 0) + 1;
-        drop.push({ id: row.id, index: row.i, t: timeOf(row.rev), bytes, why: 'budget' });
+    const gone = new Set();
+    flat.forEach(({ id, row }) => {
+      const survivors = keptById[id].reduce((n, x) => n + (gone.has(x) ? 0 : 1), 0);
+      const overBudget = total + row.bytes > r.budgetBytes && survivors > 1;
+      if (overBudget && !row.pinned) {
+        gone.add(row);
+        drop.push({ id, index: row.index, t: row.t, bytes: row.bytes, why: 'budget' });
         return;
       }
-      total += bytes;
+      if (overBudget && row.pinned) milestones.savedByBudget += 1;
+      total += row.bytes;
     });
-    if (Object.keys(dropped).length) {
-      Object.keys(keep).forEach((id) => {
-        const gone = dropped[id] || 0;
-        if (gone) keep[id] = keep[id].slice(0, Math.max(1, keep[id].length - gone));
-      });
+    if (gone.size) {
+      Object.keys(keptById).forEach((id) => { keptById[id] = keptById[id].filter((row) => !gone.has(row)); });
     }
   }
+
+  // Materialised once, after both passes, so what the plan says it keeps is
+  // exactly what `apply` writes.
+  const keep = {};
+  Object.keys(keptById).forEach((id) => { if (keptById[id].length) keep[id] = keptById[id].map((row) => row.rev); });
 
   const byWhy = { age: 0, count: 0, budget: 0, empty: 0 };
   let bytesFreed = 0;
@@ -160,6 +218,7 @@ function plan(revs, options, now) {
     projects,
     byWhy,
     counts,
+    milestones,
     bytesBefore,
     bytesAfter: Math.max(0, bytesBefore - bytesFreed),
     bytesFreed
@@ -208,7 +267,7 @@ function pressure(usageBytes, quotaBytes) {
   return { used, quota, pct, level: 'ok', advice: 'There is plenty of room left.' };
 }
 
-const RevsPolicy = { DEFAULTS, PRESETS, MB, rules, plan, apply, dropOrder, pressure, bytesOf, timeOf };
+const RevsPolicy = { DEFAULTS, PRESETS, MB, FIELD, rules, plan, apply, dropOrder, pressure, bytesOf, timeOf, pinnedOf };
 
 if (typeof window !== 'undefined') window.RevsPolicy = RevsPolicy;
 if (typeof module !== 'undefined' && module.exports) module.exports = RevsPolicy;

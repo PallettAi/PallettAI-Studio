@@ -9,6 +9,20 @@ const App = (() => {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   const uid = () => Math.random().toString(36).slice(2, 10);
+  // Each fresh generation gets a new design seed. The generator remains
+  // deterministic when callers provide an explicit salt (which keeps smoke
+  // tests, imports and remixes reproducible), but two clicks on “Create” for
+  // the same brief must not silently return the same website.
+  const generationSalt = () => {
+    try {
+      if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+        const bytes = new Uint32Array(2);
+        crypto.getRandomValues(bytes);
+        return (bytes[0] ^ bytes[1]) >>> 0;
+      }
+    } catch (e) { /* fall through to the local entropy source */ }
+    return (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
+  };
   // platform-aware shortcut label (⌘ on macOS, Ctrl elsewhere)
   const KBD = (typeof window !== 'undefined' && window.pallettai && window.pallettai.platform === 'darwin') ? '⌘' : 'Ctrl+';
   const uiIcon = (name) => (typeof ICONS !== 'undefined' && ICONS.svg) ? ICONS.svg(name) : '';
@@ -137,7 +151,7 @@ const App = (() => {
     scheduleRevision(current());
     // an edit/save counts as today's qualifying action for the streak claim
     if (SUPABASE.isConfigured() && SUPABASE.signedIn()) noteStreakAction('edit');
-    scheduleVaultPush(current());
+    scheduleVaultPush();
     // Defer a full dashboard rebuild out of the typing/save hot path. The dashboard
     // re-renders on view switch / explicit refresh already; rebuilding it on every
     // autosave is redundant work while the user is deep in the designer.
@@ -248,6 +262,11 @@ const App = (() => {
   // from the ⏱ button in the designer toolbar.
   const revTimers = {};
   const REV_BUDGET = 24 * 1024 * 1024; // global cap across all projects
+  // data/milestones.js owns the rule that a NAMED snapshot is never pruned.
+  // Read through this alias and guarded rather than assumed: a build missing
+  // the script still has to roll snapshots over, and the plain cap is exactly
+  // what shipped before milestones existed — it just protects nothing extra.
+  const Mile = (typeof Milestones !== 'undefined') ? Milestones : null;
   let revs = {}; // in-memory view — callers read it synchronously
   const BRAND_PRESET_LIMIT = 12;
   let brandPresets = [];
@@ -303,6 +322,14 @@ const App = (() => {
     p.fontDisplay = String(raw.fontDisplay || '').trim().slice(0, 100);
     p.customFonts = cleanBrandFonts(raw.customFonts);
     p.logo = String(raw.logo || '');
+    const rawCon = raw.constitution && typeof raw.constitution === 'object' && !Array.isArray(raw.constitution) ? raw.constitution : null;
+    p.constitution = rawCon ? {
+      mood: String(rawCon.mood || '').slice(0, 80),
+      button: String(rawCon.button || '').slice(0, 80),
+      shadows: String(rawCon.shadows || '').slice(0, 80),
+      forbidden: Array.isArray(rawCon.forbidden) ? rawCon.forbidden.map((x) => String(x || '').slice(0, 100)).filter(Boolean).slice(0, 8) : [],
+      preferred: Array.isArray(rawCon.preferred) ? rawCon.preferred.map((x) => String(x || '').slice(0, 100)).filter(Boolean).slice(0, 8) : []
+    } : null;
     const d = raw.design && typeof raw.design === 'object' && !Array.isArray(raw.design) ? raw.design : {};
     p.design = {
       containerWidth: brandNumber(d.containerWidth, 1140, 960, 1680),
@@ -365,20 +392,20 @@ const App = (() => {
     const list = (revs[c.id] || []).filter((r) => r && r.snap);
     if (list[0] && list[0].snap === snap) return;
     list.unshift({ t: Date.now(), snap });
-    if (list.length > 12) list.length = 12;
-    revs[c.id] = list;
-    // soft global prune: newest first, generous budget across all projects
-    const all = [];
-    Object.keys(revs).forEach((id) => revs[id].forEach((r) => all.push({ id, t: r.t, snap: r.snap })));
-    all.sort((a, b) => b.t - a.t);
-    const kept = {};
-    let total = 0;
-    all.forEach((r) => {
-      if (total + r.snap.length > REV_BUDGET) return;
-      total += r.snap.length;
-      (kept[r.id] = kept[r.id] || []).push({ t: r.t, snap: r.snap });
-    });
-    revs = kept;
+    /*
+      The rollover keeps 12 UNNAMED snapshots. Named ones sit outside it, which
+      is the only reading under which "never pruned" means anything: sharing the
+      same twelve slots would mean each new autosave traded one milestone away,
+      and a client sign-off would expire about ten edits later.
+
+      Past that, the same two promises the retention policy makes are kept here,
+      because this is the other place that deletes history. The old inline prune
+      could drop a small project's only snapshot while keeping a large one's — it
+      decided purely on the global sort, so which project lost its restore point
+      depended on byte sizes elsewhere in the library.
+    */
+    revs[c.id] = Mile ? Mile.rollover(list, Mile.ROLLOVER).list : list.slice(0, 12);
+    if (Mile) revs = Mile.trimToBudget(revs, REV_BUDGET).revs;
     dataVersion++;
     persistRevs();
   }
@@ -435,6 +462,13 @@ const App = (() => {
       fontDisplay: s.fontDisplay || '',
       customFonts: cleanBrandFonts(s.customFonts),
       logo: s.logo || '',
+      constitution: s.constitution && typeof s.constitution === 'object' ? {
+        mood: String(s.constitution.mood || '').slice(0, 80),
+        button: String(s.constitution.button || '').slice(0, 80),
+        shadows: String(s.constitution.shadows || '').slice(0, 80),
+        forbidden: Array.isArray(s.constitution.forbidden) ? s.constitution.forbidden.slice(0, 8) : [],
+        preferred: Array.isArray(s.constitution.preferred) ? s.constitution.preferred.slice(0, 8) : []
+      } : (s.kernel && s.kernel.constitution ? s.kernel.constitution : null),
       design: {
         containerWidth: brandNumber(d.containerWidth, 1140, 960, 1680),
         radius: brandNumber(d.radius, 20, 0, 48),
@@ -488,6 +522,7 @@ const App = (() => {
     s.fontDisplay = safe.fontDisplay || '';
     s.customFonts = cleanBrandFonts(safe.customFonts);
     s.logo = safe.logo || '';
+    if (safe.constitution) s.constitution = JSON.parse(JSON.stringify(safe.constitution));
     s.design = {
       ...(s.design || {}),
       containerWidth: brandNumber(d.containerWidth, 1140, 960, 1680),
@@ -783,10 +818,63 @@ const App = (() => {
     toast('Redone ↪', true);
   }
 
+  // Which row is being named right now (-1 for none). Held outside the modal so
+  // that renaming, pinning or deleting a row can re-render the list and land
+  // back on the same row rather than closing the whole thing.
+  let histNaming = -1;
+
+  /*
+    The tier the milestone limits are read from.
+
+    The EFFECTIVE entitlement, not the stored plan id: a free account inside an
+    earned Pro trial, or a Pro+ review gift, has that tier's allowance, and
+    `planState().plan` would say 'free' and refuse a feature the account is
+    already entitled to. One helper so the history modal and the storage panel
+    cannot disagree about which plan the creator is on.
+  */
+  function milestoneTier() {
+    if (typeof isProPlus === 'function' && isProPlus()) return 'proplus';
+    if (typeof isPro === 'function' && isPro()) return 'pro';
+    return 'free';
+  }
+
+  /*
+    The line under the list of snapshots.
+
+    Always shown, on every tier: a Pin button that quietly refuses after the
+    first one is worse than no button, and the sentence that explains the limit
+    is the same sentence that sells the tier above it. Counts come from the
+    module, so the wording cannot drift from what the limits actually are.
+  */
+  function milestoneNote(ship, plan) {
+    if (!ship) return '';
+    const tier = (Mile && Mile.TIER_NAMES[plan]) || 'Free';
+    if (!ship.pinned) {
+      return 'Pin a snapshot to keep it for good — milestones are never pruned. ' + tier + ' keeps ' + ship.limit + ' per project.';
+    }
+    return ship.pinned + ' of ' + ship.limit + ' milestone' + (ship.limit === 1 ? '' : 's') + ' used in this project (' + tier + '). Milestones are never pruned.';
+  }
+
+  /*
+    Opening from the toolbar starts clean.
+
+    The naming row is state, and state that outlives its modal is how the ⏱
+    button comes back showing a text box for a snapshot the creator abandoned
+    halfway through naming. Every re-render from inside the modal (a pin, a
+    rename, a delete) goes straight to renderHistoryModal instead, so it lands
+    on the same row it was on.
+  */
   function histOpen() {
+    histNaming = -1;
+    renderHistoryModal();
+  }
+
+  function renderHistoryModal() {
     const c = current();
     if (!c) return toast('Open a project first');
+    const plan = milestoneTier();
     const list = (loadRevs()[c.id] || []);
+    const ship = Mile ? Mile.report(loadRevs(), c.id, plan) : null;
     if (!list.length) {
       return openModal('Autosave history', `
         <p style="color:var(--muted)">No autosaved revisions for “${esc(c.name)}” yet. Snapshots are taken about 2 seconds after you stop editing (up to 12 per project) — and every edit is also covered by <b>Undo</b> (${KBD}Z) while the designer is open.</p>`);
@@ -801,14 +889,82 @@ const App = (() => {
       return ago + ' · ' + d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     };
     openModal('Autosave history — ' + esc(c.name), `
-      <p style="color:var(--muted);margin-bottom:12px">Autosaved snapshots of this project. Restoring keeps the current state in Undo (${KBD}Z) so nothing is lost.</p>
+      <p style="color:var(--muted);margin-bottom:12px">Autosaved snapshots of this project. Restoring keeps the current state in Undo (${KBD}Z) so nothing is lost.${ship && ship.pinned ? ` <b>${ship.pinned} milestone${ship.pinned === 1 ? '' : 's'}</b> ${ship.pinned === 1 ? 'is' : 'are'} never pruned.` : ''}</p>
       <div style="display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto">
         ${list.map((r, i) => {
           let meta = '';
           try { const s = JSON.parse(r.snap); meta = (s.site.sections || []).length + ' sections · ' + (s.suites || []).length + ' suites'; } catch (e) {}
-          return `<div class="rev-row"><div><b>${fmt(r.t)}</b><small>${esc(meta)}</small></div><div style="display:flex;gap:6px"><button class="btn ghost small" data-rev-diff="${i}">Diff</button><button class="btn ghost small" data-rev-del="${i}">${uiIcon('trash')}</button><button class="btn primary small" data-rev-use="${i}">Restore</button></div></div>`;
+          const named = Mile ? Mile.nameOf(r) : '';
+          if (histNaming === i) {
+            return `<div class="rev-row rev-naming">
+              <input type="text" id="revPinName" maxlength="${Mile ? Mile.NAME_MAX : 60}" placeholder="e.g. Approved by the client" value="${esc(named)}">
+              <div class="rev-acts"><button class="btn ghost small" data-rev-pincancel="1">Cancel</button><button class="btn primary small" data-rev-pinsave="${i}">Save milestone</button></div>
+            </div>`;
+          }
+          return `<div class="rev-row${named ? ' rev-named' : ''}"><div>${named ? `<span class="rev-mark">★ ${esc(named)}</span>` : ''}<b>${fmt(r.t)}</b><small>${esc(meta)}</small></div><div class="rev-acts">
+            ${named
+              ? `<button class="btn ghost small" data-rev-rename="${i}" title="Rename this milestone">Rename</button><button class="btn ghost small" data-rev-unpin="${i}" title="Make it disposable again">Unpin</button>`
+              : `<button class="btn ghost small" data-rev-pin="${i}" title="Keep this snapshot for good">★ Pin</button>`}
+            <button class="btn ghost small" data-rev-diff="${i}">Diff</button>
+            ${named ? '' : `<button class="btn ghost small" data-rev-del="${i}">${uiIcon('trash')}</button>`}
+            <button class="btn primary small" data-rev-use="${i}">Restore</button></div></div>`;
         }).join('')}
+      </div>
+      <div class="rev-foot">
+        ${ship && ship.atLimit
+          ? `<span class="rev-note warn">${esc(ship.message)}</span>${plan === 'proplus' ? '' : '<button class="btn small" data-rev-upgrade="1">See plans</button>'}`
+          : `<span class="rev-note">${esc(milestoneNote(ship, plan))}</span>`}
       </div>`);
+    // Pinning and unpinning write through the live array rather than a copy, so
+    // the row indices the buttons carry stay meaningful on the next render.
+    const liveList = () => {
+      const all = loadRevs();
+      if (!Array.isArray(all[c.id])) all[c.id] = [];
+      return all[c.id];
+    };
+    $$('[data-rev-pin]').forEach((b) => b.onclick = () => {
+      const gate = Mile ? Mile.canPin(loadRevs(), c.id, plan) : { ok: true };
+      if (!gate.ok) {
+        toast(gate.message, false);
+        // The refusal names the next tier up, so the offer is one click rather
+        // than a dead end — but only when there IS a next tier to buy.
+        if (plan !== 'proplus') openPricing();
+        return;
+      }
+      histNaming = +b.dataset.revPin;
+      renderHistoryModal();
+      const input = $('#revPinName');
+      if (input) input.focus();
+    });
+    $$('[data-rev-rename]').forEach((b) => b.onclick = () => {
+      histNaming = +b.dataset.revRename;
+      renderHistoryModal();
+      const input = $('#revPinName');
+      if (input) input.focus();
+    });
+    $$('[data-rev-pincancel]').forEach((b) => b.onclick = () => { histNaming = -1; renderHistoryModal(); });
+    $$('[data-rev-pinsave]').forEach((b) => b.onclick = () => {
+      const i = +b.dataset.revPinsave;
+      const input = $('#revPinName');
+      const res = Mile ? Mile.pin(liveList()[i], input ? input.value : '', Date.now()) : { ok: false, error: 'Milestones are not available in this build.' };
+      if (!res.ok) return toast(res.error, false);
+      liveList()[i] = res.rev;
+      persistRevs();
+      histNaming = -1;
+      renderHistoryModal();
+      toast('Milestone saved — it will not be pruned ★', true);
+    });
+    $$('[data-rev-unpin]').forEach((b) => b.onclick = () => {
+      const i = +b.dataset.revUnpin;
+      const res = Mile ? Mile.unpin(liveList()[i]) : { ok: false, error: 'Milestones are not available in this build.' };
+      if (!res.ok) return toast(res.error, false);
+      liveList()[i] = res.rev;
+      persistRevs();
+      histNaming = -1;
+      renderHistoryModal();
+      toast('Milestone removed — the snapshot stays until the rollover reaches it', true);
+    });
+    $$('[data-rev-upgrade]').forEach((b) => b.onclick = () => openPricing());
     $$('[data-rev-use]').forEach((b) => b.onclick = () => {
       const rev = list[+b.dataset.revUse];
       if (!rev) return;
@@ -832,7 +988,7 @@ const App = (() => {
       const revs = loadRevs();
       if (revs[c.id]) revs[c.id].splice(+b.dataset.revDel, 1);
       persistRevs(revs);
-      histOpen();
+      renderHistoryModal();
     });
     $$('[data-rev-diff]').forEach((b) => b.onclick = () => {
       const rev = list[+b.dataset.revDiff];
@@ -840,19 +996,20 @@ const App = (() => {
       let prev = null;
       try { prev = JSON.parse(rev.snap); } catch (e) {}
       if (!prev || !prev.site) return toast('That snapshot could not be read');
-      openRevisionDiff(prev, c);
+      openRevisionDiff(prev, c, Mile ? Mile.nameOf(rev) : '');
     });
   }
 
   // Side-by-side revision diff (roadmap #8): what changed between an autosaved
   // snapshot and the live project — summary facts first, then per-section edits.
-  function openRevisionDiff(prev, cur) {
+  // The inner HTML for a snapshot comparison. `null` when there is nothing to
+  // show, so each caller can choose its own "no differences" wording — the
+  // autosave history opens it in a modal, the vault history shows it inline.
+  function revisionDiffBody(snapshot, cur) {
     const report = (typeof RevDiff !== 'undefined')
-      ? RevDiff.diff(prev, cur)
+      ? RevDiff.diff(snapshot, cur)
       : { changed: false, summary: [], sections: [] };
-    if (!report.changed) {
-      return openModal('Revision diff', `<p style="color:var(--muted)">No differences — this snapshot matches the current project.</p>`);
-    }
+    if (!report.changed) return null;
     const row = (ch) => `<div class="diff-row"><span class="diff-label">${esc(ch.label)}</span><span class="diff-from">${esc(String(ch.from || '—'))}</span><span class="diff-arrow">→</span><span class="diff-to">${esc(String(ch.to || '—'))}</span></div>`;
     const secBlock = (s) => {
       const kindTag = s.kind === 'added' ? '<span class="diff-kind add">added</span>'
@@ -863,12 +1020,24 @@ const App = (() => {
         : `<div class="diff-row"><span class="diff-label">${esc(s.label)}</span><span class="diff-to">${s.kind === 'added' ? 'new in current version' : 'missing from current version'}</span></div>`;
       return `<details class="diff-sec" ${s.kind !== 'edited' || s.changes.length <= 2 ? 'open' : ''}><summary>${kindTag} ${esc(s.label)} <small>#${s.index + 1}</small></summary><div class="diff-sec-body">${body}</div></details>`;
     };
-    openModal('What changed — ' + esc(cur.name), `
-      <p style="color:var(--muted);margin-bottom:10px">Comparing the snapshot to the project as it is now.</p>
-      ${report.summary.length ? `<div class="diff-summary">${report.summary.map(row).join('')}</div>` : ''}
+    return `${report.summary.length ? `<div class="diff-summary">${report.summary.map(row).join('')}</div>` : ''}
       <div style="display:flex;flex-direction:column;gap:8px;max-height:380px;overflow:auto;margin-top:8px">
         ${report.sections.map(secBlock).join('') || '<p style="color:var(--muted)">Only general settings changed.</p>'}
-      </div>`);
+      </div>`;
+  }
+
+  // `name` is a milestone's name when there is one, so the diff of the version
+  // a client approved says so rather than "this snapshot" — the whole point of
+  // naming it was being able to point at it later.
+  function openRevisionDiff(prev, cur, name) {
+    const label = String(name || '').trim();
+    const body = revisionDiffBody(prev, cur);
+    if (!body) {
+      return openModal('Revision diff', `<p style="color:var(--muted)">No differences — this ${label ? 'milestone <b>★ ' + esc(label) + '</b>' : 'snapshot'} matches the current project.</p>`);
+    }
+    openModal('What changed — ' + esc(cur.name), `
+      <p style="color:var(--muted);margin-bottom:10px">${label ? 'Comparing the milestone <b>★ ' + esc(label) + '</b> to the project as it is now.' : 'Comparing the snapshot to the project as it is now.'}</p>
+      ${body}`);
   }
 
   async function aiSectionRewrite(sec) {
@@ -1320,6 +1489,10 @@ const App = (() => {
   let modalPrevFocus = null;
   const cmdState = { open: false, index: 0, hits: [] };
   function toast(msg, ok) {
+    /* The status card — icon, wrapping text, and a bar that drains on the same
+       clock as the auto-hide timer — lives in data/uikit.js. This body stays as
+       the fallback so a page that loads without the shell still reports. */
+    if (typeof UIShell !== 'undefined' && UIShell.toast) return UIShell.toast(msg, ok);
     const t = $('#appToast');
     t.textContent = msg;
     t.classList.toggle('ok', !!ok);
@@ -1916,22 +2089,54 @@ const App = (() => {
   // per account so work survives a lost device or a cleared profile. Every
   // step is background + non-fatal: a vault failure can never block saving,
   // rendering or the rest of the cloud sync.
-  let cloudVault = { status: 'idle', lastSync: 0, lastError: '' };
+  let cloudVault = { status: 'idle', lastSync: 0, lastError: '', lastConflicts: 0, cloudProjects: 0, cloudBytes: 0, skipped: 0 };
+  let vaultSyncing = false;    // one sync at a time — a debounced save and a "Back up now" click must not interleave
+  let vaultSyncQueued = false; // a save landed mid-sync: run one more pass the moment this one drains
+  let vaultTimer = null;       // one debounce for the whole vault (a sync reads every project anyway)
   const vaultReady = () => typeof Vault !== 'undefined' && SUPABASE.isConfigured() && SUPABASE.signedIn();
-  const vaultTimers = {};
-  function scheduleVaultPush(c) {
-    if (!vaultReady() || !c || settings.cloudVaultEnabled === false) return;
-    clearTimeout(vaultTimers[c.id]);
-    vaultTimers[c.id] = setTimeout(() => { syncVault().catch(() => {}); }, settings.cloudVaultDelayMs || 4000);
+  // One debounce for the whole vault rather than one timer per project: syncVault()
+  // reads and plans against every project, so per-project timers only ever
+  // coalesced into the same work. Crucially it no longer depends on a project
+  // being open — a restore from vault history, an import or a delete all save
+  // projects while the dashboard is in front, and those saves must still reach
+  // the cloud.
+  function scheduleVaultPush() {
+    if (!vaultReady() || settings.cloudVaultEnabled === false) return;
+    clearTimeout(vaultTimer);
+    vaultTimer = setTimeout(() => { syncVault({ queue: true }).catch(() => {}); }, settings.cloudVaultDelayMs || 4000);
+  }
+  // Resolves once no vault pass is running or queued — what the manual "Back up
+  // now" waits on so a background sync can never silently swallow the click.
+  function vaultIdle() {
+    return new Promise((resolve) => {
+      const tick = () => { (vaultSyncing || vaultSyncQueued) ? setTimeout(tick, 120) : resolve(); };
+      tick();
+    });
   }
   async function syncVault(opts) {
     if (!vaultReady()) return { ok: false, skipped: true };
+    if (vaultSyncing) {
+      // A pass is already in flight. Queue one more for the debounced autosave
+      // path (a save that landed mid-sync is never dropped); a manual caller
+      // waits for idle and runs its own full pass instead.
+      if (opts && opts.queue) vaultSyncQueued = true;
+      return { ok: false, skipped: true, busy: true };
+    }
+    vaultSyncing = true;
     const options = (opts && opts.signal) ? opts : null;
     cloudVault.status = 'syncing';
     try {
+      // No token bookkeeping here: an access token that outlived its hour is
+      // refreshed inside the client (single-flight, once per 401) and the
+      // request replayed, so an autosave sync hours into a session cannot sign
+      // the account out over routine work.
       const res = await SUPABASE.getProjectBackups(options);
       if (!res.ok) throw new Error(res.msg || 'Vault read failed');
       const planOut = Vault.plan(projects, res.backups);
+      // Usage meter: what this account actually holds in the cloud right now.
+      const live = (res.backups || []).filter((b) => !b.deletedAt);
+      cloudVault.cloudProjects = live.length;
+      cloudVault.cloudBytes = live.reduce((n, b) => n + Vault.byteLength(Vault.serializeProject(b.payload) || ''), 0);
       // Drop locals the cloud has tombstoned (deleted on another device).
       if (planOut.toDropLocal.length) {
         const gone = new Set(planOut.toDropLocal);
@@ -1940,6 +2145,18 @@ const App = (() => {
         planOut.toDropLocal.forEach((id) => clearRevisions(id));
         saveProjects();
       }
+      // A diverged local copy is about to be overwritten by the cloud winner:
+      // archive it as a 'conflict' version first. A lost merge race never
+      // means lost work — the losing state stays in vault history.
+      let conflicted = 0;
+      for (const cf of planOut.conflicts || []) {
+        const loser = projects.find((p) => p.id === cf.id);
+        if (!loser) continue;
+        try {
+          const r = await SUPABASE.saveProjectBackupVersion(cf.id, loser, 'conflict', options);
+          if (r && r.ok) conflicted++;
+        } catch (e) { /* archive failure must not block the adopt */ }
+      }
       // Adopt cloud-newer copies (another device won the race).
       let adopted = 0;
       for (const payload of planOut.toAdopt) {
@@ -1947,6 +2164,9 @@ const App = (() => {
         const row = res.backups.find((b) => b.projectId === payload.id) || {};
         const idx = projects.findIndex((p) => p.id === payload.id);
         const incoming = Vault.withVaultMeta(payload, row);
+        // Baseline: what this device now knows the cloud holds. The next
+        // sync compares content against it instead of re-adopting blindly.
+        incoming.vault.baseline = payload.updatedAt || 0;
         if (idx === -1) { projects.unshift(incoming); } else { projects[idx] = incoming; }
         if (!Array.isArray(incoming.suites)) incoming.suites = [];
         try { Builder.pages(incoming); } catch (e) { /* older payload */ }
@@ -1958,33 +2178,194 @@ const App = (() => {
         if (currentView === 'designer') renderDesigner();
         toast('Cloud backup restored ' + adopted + ' project' + (adopted === 1 ? '' : 's') + ' ☁', true);
       }
-      // Push local-newer copies (this device just saved them).
-      const push = await Vault.pushAll(planOut.toPush, (id, name, payload) => SUPABASE.saveProjectBackup(id, name, payload, options));
+      // Push local-newer copies (this device just saved them). Each success
+      // stamps the new baseline so the next sync is a quiet no-op, and the
+      // push carries updatedAt so the server's version guard can archive
+      // any different cloud state it overwrites.
+      const push = await Vault.pushAll(planOut.toPush, async (id, name, payload, _o, localAt) => {
+        const r = await SUPABASE.saveProjectBackup(id, name, payload, options, localAt);
+        if (r && r.ok) {
+          const p = projects.find((x) => x.id === id);
+          if (p) p.vault = Object.assign({}, p.vault, { baseline: localAt || p.updatedAt || 0, syncedAt: Date.now() });
+        }
+        return r;
+      });
+      // Persist the fresh sync baselines — but only when something actually
+      // landed. Saving unconditionally on "there was something to push" would
+      // reschedule another sync (saveProjects debounces one), so a project that
+      // can never be pushed — too large, or failing server-side — would retry
+      // every few seconds forever. A failed or skipped push is reported to the
+      // user and retried on the next edit instead.
+      if (push.pushed) saveProjects();
       cloudVault.status = 'idle';
       cloudVault.lastSync = Date.now();
+      cloudVault.lastConflicts = conflicted;
+      cloudVault.skipped = push.skipped || 0;
       cloudVault.lastError = push.failed ? (push.errors[0] && push.errors[0].reason) || 'push failed' : '';
       if (settingsTab === 'account') renderSettings();
-      return { ok: !push.failed, ...push, adopted };
+      return { ok: !push.failed, ...push, adopted, conflicted };
     } catch (e) {
       cloudVault.status = 'error';
       cloudVault.lastError = (e && e.message) || 'Vault sync failed';
       if (settingsTab === 'account') renderSettings();
       return { ok: false, msg: cloudVault.lastError };
+    } finally {
+      vaultSyncing = false;
+      if (vaultSyncQueued) { vaultSyncQueued = false; setTimeout(() => { syncVault().catch(() => {}); }, 0); }
     }
   }
-  function vaultBackupNow() {
+  async function vaultBackupNow() {
     if (!SUPABASE.isConfigured() || !SUPABASE.signedIn()) {
       openModal('Cloud backup', '<p style="color:var(--muted)">Sign in to the PallettAI registry (Settings ▸ Account & billing) to back your projects up. Your work stays on this machine until then.</p>');
       return;
     }
     const b = $('#btnVaultBackup');
     if (b) { b.disabled = true; b.textContent = 'Backing up…'; }
-    syncVault().then((r) => {
-      if (b) { b.disabled = false; b.textContent = 'Back up now'; }
+    try {
+      let r = await syncVault();
+      // A background pass had the lock: wait for the queue to drain, then run
+      // our own full pass so the click genuinely backs up the latest save
+      // instead of silently doing nothing.
+      if (r && r.busy) { await vaultIdle(); r = await syncVault(); }
       if (r && r.skipped) return;
-      if (r && r.ok) toast('Vault up to date — ' + (r.pushed || 0) + ' pushed, ' + (r.adopted || 0) + ' restored ☁', true);
+      if (r && r.ok) toast('Vault up to date — ' + (r.pushed || 0) + ' pushed, ' + (r.adopted || 0) + ' restored' + (r.conflicted ? ', ' + r.conflicted + ' conflict snapshot' + (r.conflicted === 1 ? '' : 's') + ' archived' : '') + (r.skipped ? ', ' + r.skipped + ' too large to sync' : '') + ' ☁', true);
       else toast((r && r.msg) || 'Vault sync failed — try again', false);
-    }).catch(() => { if (b) { b.disabled = false; b.textContent = 'Back up now'; } toast('Vault sync failed — try again', false); });
+    } catch (e) {
+      toast('Vault sync failed — try again', false);
+    } finally {
+      if (b) { b.disabled = false; b.textContent = 'Back up now'; }
+    }
+  }
+
+  // Browse the cloud archive for one project, compare a snapshot with the
+  // project as it stands, or restore it. Restore is a normal save (newer
+  // updatedAt) through the same audited vault path — and that push archives the
+  // state it replaces, so even a restore is itself undoable.
+  //
+  // The picker is the union of the local projects and the account's cloud rows,
+  // so a project deleted on another device (tombstoned, its last state filed as
+  // a 'pre-delete' version) can still be found and restored from here.
+  async function openVaultHistory() {
+    if (!vaultReady()) return toast('Sign in to browse vault history', false);
+    const histBtn = $('#btnVaultHistory');
+    if (histBtn) { histBtn.disabled = true; histBtn.textContent = 'Loading…'; }
+    const cloud = await SUPABASE.getProjectBackups().catch(() => ({ ok: false }));
+    if (histBtn) { histBtn.disabled = false; histBtn.textContent = 'Version history'; }
+    const entries = [];
+    const seen = new Set();
+    projects.forEach((p) => {
+      seen.add(p.id);
+      entries.push({ id: p.id, name: (p.site && p.site.name) || p.name || 'Untitled', tag: '' });
+    });
+    if (cloud && cloud.ok) {
+      cloud.backups.forEach((row) => {
+        if (seen.has(row.projectId)) return;
+        seen.add(row.projectId);
+        const name = row.name || (row.payload && row.payload.site && row.payload.site.name) || 'Untitled';
+        entries.push({ id: row.projectId, name, tag: row.deletedAt ? ' · deleted in the cloud' : ' · cloud only' });
+      });
+    }
+    if (!entries.length) return toast('No projects to browse yet', false);
+    const opts = entries.map((e) => `<option value="${esc(e.id)}">${esc(e.name + e.tag)}</option>`).join('');
+    openModal('☁ Vault version history', `
+      <p style="color:var(--muted)">Every vault overwrite and deletion files the previous state here (newest 10 per project). Restoring pushes the snapshot back as a newer save — the state it replaces is archived too, so nothing is ever lost by restoring.</p>
+      <div class="field"><label>Project</label><select id="vhProject">${opts}</select></div>
+      <div id="vhList" style="margin:10px 0"><p class="sub">Loading archive…</p></div>
+      <div style="display:flex;justify-content:flex-end"><button class="btn ghost small" id="vhClose">Close</button></div>`);
+    $('#vhClose').onclick = closeModal;
+    const reasonLabel = (x) => x === 'conflict' ? '<span style="color:#c77d00">conflict copy</span>' : x === 'pre-delete' ? '<span style="color:var(--danger)">deleted state</span>' : 'overwritten save';
+
+    function currentPid() {
+      return ($('#vhProject') && $('#vhProject').value) || '';
+    }
+
+    // Inline comparison: the snapshot against the project as it is right now.
+    async function compareVersion(pid, versionId) {
+      const box = $('#vhList');
+      if (!box) return;
+      const cur = projects.find((p) => p.id === pid);
+      if (!cur) return toast('That snapshot belongs to a project that is not on this device — restore it first, then compare.', false);
+      box.innerHTML = '<p class="sub">Loading snapshot…</p>';
+      const g = await SUPABASE.getProjectBackupVersion(pid, versionId);
+      if (!g.ok || !Vault.looksLikeProject(g.payload)) { box.innerHTML = ''; return toast((g && g.msg) || 'That snapshot could not be read', false); }
+      const body = revisionDiffBody(g.payload, cur);
+      box.innerHTML = `<div class="vh-diff">${body
+        ? '<div class="set-desc" style="margin-bottom:8px">Comparing the archived snapshot with the current project.</div>' + body
+        : '<p class="sub">No differences — this snapshot matches the current project.</p>'}</div>
+        <div style="display:flex;justify-content:flex-end;margin-top:10px"><button class="btn ghost small" id="vhBack">Back to versions</button></div>`;
+      const back = $('#vhBack');
+      if (back) back.onclick = load;
+    }
+
+    // Restore replaces the local copy, so it asks first — inline, so the archive
+    // (and the other versions) stay on screen behind the question.
+    function bindActions(pid) {
+      $$('[data-vh-compare]').forEach((btn) => { btn.onclick = () => compareVersion(pid, btn.dataset.vhCompare); });
+      $$('[data-vh-restore]').forEach((btn) => { btn.onclick = () => {
+        const actions = btn.closest('.vh-actions');
+        if (!actions) return;
+        actions.innerHTML = '<span class="set-desc">Replace the current copy?</span>'
+          + '<button class="btn danger small" data-vh-yes="' + esc(btn.dataset.vhRestore) + '">Yes, restore</button>'
+          + '<button class="btn ghost small" data-vh-no="1">Cancel</button>';
+        const yes = actions.querySelector('[data-vh-yes]');
+        const no = actions.querySelector('[data-vh-no]');
+        if (no) no.onclick = load;
+        if (yes) yes.onclick = async () => {
+          yes.disabled = true; yes.textContent = 'Restoring…';
+          const g = await SUPABASE.getProjectBackupVersion(pid, yes.dataset.vhYes);
+          if (!g.ok || !Vault.looksLikeProject(g.payload)) {
+            yes.disabled = false; yes.textContent = 'Yes, restore';
+            return toast((g && g.msg) || 'That snapshot could not be restored', false);
+          }
+          applyVaultRestore(g.payload);
+        };
+      }; });
+    }
+
+    async function load() {
+      const pid = currentPid();
+      const box = $('#vhList');
+      if (!pid || !box) return;
+      box.innerHTML = '<p class="sub">Loading archive…</p>';
+      const r = await SUPABASE.listProjectBackupVersions(pid);
+      if (!r.ok) { box.innerHTML = '<p class="sub" style="color:var(--danger)">' + esc(r.msg || 'Could not read the archive') + '</p>'; return; }
+      if (!r.versions.length) { box.innerHTML = '<p class="sub">No archived versions yet for this project — they appear here after the next overwrite, conflict or deletion.</p>'; return; }
+      box.innerHTML = r.versions.map((v) => `
+        <div class="set-row" style="align-items:center">
+          <div><b>${new Date(v.createdAt).toLocaleString()}</b>
+          <div class="set-desc">${reasonLabel(v.reason)} · ~${Math.max(1, Math.round((v.bytes || 0) / 1024))} KB</div></div>
+          <div class="vh-actions" style="display:flex;gap:6px;align-items:center">
+            <button class="btn ghost small" data-vh-compare="${esc(v.id)}">Compare</button>
+            <button class="btn ghost small" data-vh-restore="${esc(v.id)}">Restore</button>
+          </div>
+        </div>`).join('');
+      bindActions(pid);
+    }
+
+    const sel = $('#vhProject');
+    if (sel) sel.onchange = load;
+    load();
+  }
+
+  // Put a vault snapshot back on this device as the newest save. The next sync
+  // pushes it (the push archives whatever it overwrites, so a restore is itself
+  // undoable). Works for a project deleted on another device too: the fresh
+  // updatedAt beats the cloud tombstone, so it resurrects deliberately.
+  function applyVaultRestore(payload) {
+    const restore = JSON.parse(JSON.stringify(payload));
+    restore.updatedAt = Date.now(); // the restore wins the next merge, honestly
+    const idx = projects.findIndex((p) => p.id === restore.id);
+    const incoming = Vault.withVaultMeta(restore, { updatedAt: Date.now() });
+    if (idx === -1) projects.unshift(incoming); else projects[idx] = incoming;
+    if (!Array.isArray(incoming.suites)) incoming.suites = [];
+    try { Builder.pages(incoming); } catch (e) { /* older payload */ }
+    saveProjects();
+    closeModal();
+    if (currentView === 'dashboard') renderDashboard();
+    if (currentView === 'designer') renderDesigner();
+    // saveProjects() only debounces a push; kick one now so the toast is true.
+    syncVault({ queue: true }).catch(() => {});
+    toast('Snapshot restored — it syncs as the newest save ↩', true);
   }
 
   // ---------------- navigation ----------------
@@ -1998,7 +2379,18 @@ const App = (() => {
     });
   }
 
+  /* A view swap is a real navigation, so it is worth the browser's cross-fade
+     where that exists. The DOM work stays in paintView either way: if the
+     transition path is unavailable or throws, the navigation still happens. */
   function switchView(name) {
+    if (typeof UIShell !== 'undefined' && UIShell.viewTransition) {
+      UIShell.viewTransition(() => paintView(name));
+      return;
+    }
+    paintView(name);
+  }
+
+  function paintView(name) {
     if (name !== 'ai' && aiStudyController) {
       aiStudyController.abort();
       aiStudyController = null;
@@ -2588,9 +2980,11 @@ const App = (() => {
     const now = Date.now();
     const weekAgo = now - 7 * 864e5;
     const editedWeek = projects.filter((p) => p.updatedAt >= weekAgo).length;
+    // The icon travels with the cell now instead of being accepted and dropped:
+    // three cells of identical text need one non-textual cue to tell them apart.
     const makeStat = (cls, label, ico, valueHtml, sub, go) =>
       `<div class="metric ${cls}"${go ? ` data-go="${go}"` : ''}>
-        <div class="sc-top"><span class="sc-label">${label}</span></div>
+        <div class="sc-top"><span class="sc-label">${label}</span>${ico ? `<span class="sc-ico" aria-hidden="true">${uiIcon(ico)}</span>` : ''}</div>
         <div class="sc-value">${valueHtml}</div>
         <div class="sc-sub">${sub}</div>
       </div>`;
@@ -2622,9 +3016,9 @@ const App = (() => {
       : projects.length + ' project' + (projects.length === 1 ? '' : 's') + ' + autosave history · local only';
     if (settings.dashboardShowMetrics === false) stats.innerHTML = '';
     else stats.innerHTML =
-      makeStat('sc-projects', 'Projects', '', '<span>' + projects.length + '</span>', pSub, 'projects') +
-      makeStat('sc-ai', 'Credits', '', '<span>' + (pro ? 'Unlimited' : cred.left) + '</span><small>' + (pro ? '' : ' left') + '</small>', cSub, 'ai') +
-      makeStat('sc-store', 'Local data', '', '<span>' + dashFmtBytes(totB) + '</span>', st4);
+      makeStat('sc-projects', 'Projects', 'grid', '<span>' + projects.length + '</span>', pSub, 'projects') +
+      makeStat('sc-ai', 'Credits', 'spark', '<span>' + (pro ? 'Unlimited' : cred.left) + '</span><small>' + (pro ? '' : ' left') + '</small>', cSub, 'ai') +
+      makeStat('sc-store', 'Local data', 'cylinder', '<span>' + dashFmtBytes(totB) + '</span>', st4);
     $$('#dashStats .metric[data-go]').forEach((c) => c.onclick = () => {
       const go = c.dataset.go;
       if (go === 'ai') switchView('ai');
@@ -3063,6 +3457,15 @@ const App = (() => {
         <div class="field"><label>Container width (px)</label><input type="number" id="dWidth" value="${s.design && Number.isFinite(Number(s.design.containerWidth)) ? s.design.containerWidth : 1140}" min="960" max="1680"></div>
         <div class="field"><label>Corner radius (px)</label><input type="number" id="dRadius" value="${s.design && Number.isFinite(Number(s.design.radius)) ? s.design.radius : 20}" min="0" max="48"></div>
         <div class="field"><label>Section spacing (px)</label><input type="number" id="dSpacing" value="${s.design && Number.isFinite(Number(s.design.spacing)) ? s.design.spacing : 96}" min="32" max="220"></div>
+        <div class="panel" style="margin:14px 0;background:color-mix(in srgb,var(--accent) 5%,var(--surface))">
+          <h3 style="margin-bottom:2px">Design constitution</h3>
+          <p class="set-desc" style="margin:0 0 8px">A short visual rulebook the Copilot preserves when it edits this site.</p>
+          <div class="field"><label>Mood</label><input id="dConMood" value="${esc((s.constitution && s.constitution.mood) || '')}" placeholder="e.g. editorial restraint"></div>
+          <div class="field"><label>Button personality</label><input id="dConButton" value="${esc((s.constitution && s.constitution.button) || '')}" placeholder="e.g. quiet outline"></div>
+          <div class="field"><label>Shadow rule</label><input id="dConShadows" value="${esc((s.constitution && s.constitution.shadows) || '')}" placeholder="e.g. soft, never heavy"></div>
+          <div class="field"><label>Preferred patterns · one per line</label><textarea id="dConPreferred" rows="2" placeholder="asymmetric compositions&#10;one strong visual beat">${esc(((s.constitution && s.constitution.preferred) || []).join('\\n'))}</textarea></div>
+          <div class="field"><label>Forbidden patterns · one per line</label><textarea id="dConForbidden" rows="2" placeholder="generic card grids&#10;stock-sounding claims">${esc(((s.constitution && s.constitution.forbidden) || []).join('\\n'))}</textarea></div>
+        </div>
         <div class="panel" id="typoLab" style="margin:14px 0">
           <h3 style="margin-bottom:2px">Typography Lab</h3>
           <p class="set-desc" style="margin:0 0 8px">Heading + body pairing, scale, line-height and tracking — preview live below.</p>
@@ -3223,6 +3626,18 @@ const App = (() => {
       el.oninput = () => { histCapture(); c.site.design = c.site.design || {}; c.site.design[key] = +el.value || 0; touch(c); };
     };
     bindD('dWidth', 'containerWidth'); bindD('dRadius', 'radius'); bindD('dSpacing', 'spacing');
+    const bindCon = (id, key, list) => {
+      const el = $('#' + id);
+      if (!el) return;
+      el.oninput = () => {
+        histCapture();
+        c.site.constitution = c.site.constitution || {};
+        c.site.constitution[key] = list ? el.value.split('\\n').map((x) => x.trim()).filter(Boolean).slice(0, 8) : el.value.slice(0, 80);
+        touch(c);
+      };
+    };
+    bindCon('dConMood', 'mood'); bindCon('dConButton', 'button'); bindCon('dConShadows', 'shadows');
+    bindCon('dConPreferred', 'preferred', true); bindCon('dConForbidden', 'forbidden', true);
     const dHero = $('#dHero');
     if (dHero) dHero.onchange = () => { histCapture(); c.site.heroLayout = dHero.value; touch(c); };
     const dSigEngine = $('#dSigEngine');
@@ -3513,10 +3928,44 @@ const App = (() => {
     }
     let viewingLegal = null;
 
-    if (Builder.pages(c).length < 2 && !legalOn) { f.onload = null; return; }
+    // Keep the load hook even for a one-page site: section targeting is useful
+    // there too. Legal-page navigation is handled conditionally inside the hook.
     f.onload = () => {
       const d = f.contentDocument;
       if (!d) return;
+      // Click-to-direct Copilot targeting: the rendered section is the source of
+      // truth, so a click selects the exact model section rather than asking the
+      // Copilot to infer what “the middle bit” meant. Interactive children keep
+      // their normal behaviour; clicking the surrounding section opens its
+      // editor and makes the next Copilot instruction precise.
+      d.querySelectorAll('main section[id^="sec-"]').forEach((node) => {
+        node.setAttribute('tabindex', '0');
+        node.setAttribute('aria-label', 'Select this section in Designer');
+        const selectRenderedSection = (event) => {
+          if (event && event.target && event.target.closest && event.target.closest('a,button,input,select,textarea')) return;
+          const index = Number(node.getAttribute('data-section-index'));
+          const pageId = String(node.getAttribute('data-page-id') || '');
+          const open = current();
+          if (!open || !Number.isInteger(index)) return;
+          const pages = (typeof Builder !== 'undefined' && Builder.pages) ? Builder.pages(open) : [];
+          const page = pageId ? pages.find((pg) => pg && pg.id === pageId) : (pages[0] || null);
+          if (!page || !Array.isArray(page.sections) || !page.sections[index]) return;
+          if (event && event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+          if (event && event.type === 'keydown') event.preventDefault();
+          if (page.id && open.site.activePageId !== page.id) {
+            open.site.activePageId = page.id;
+            open.site.sections = page.sections;
+          }
+          selectedSec = index;
+          renderSecList();
+          renderEditor();
+          const editor = $('#secEditor');
+          if (editor && editor.scrollIntoView) editor.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          if (typeof chatAdd === 'function' && event && event.type === 'keydown') chatAdd('bot note', 'Selected the ' + (page.sections[index].type || 'section') + ' section on ' + (page.name || 'this page') + ' — your next Copilot instruction will target it.');
+        };
+        node.addEventListener('click', selectRenderedSection);
+        node.addEventListener('keydown', selectRenderedSection);
+      });
       d.querySelectorAll('a.page-link').forEach((a) => {
         a.onclick = (e) => { e.preventDefault(); const id = a.getAttribute('data-page'); if (id) { viewingLegal = null; setActivePage(id); } };
       });
@@ -4214,9 +4663,11 @@ const App = (() => {
     );
   }
 
-  // Page file list including robots.txt / sitemap.xml (the latter needs a live URL).
+  // Page file list including robots.txt / sitemap.xml (the latter needs a live URL)
+  // and llms.txt — the AI-answer summary, which ships unconditionally because
+  // answer engines read the site root first and the file is a few KB at most.
   function exportFileList(c) {
-    return [...sitePageFiles(c).map((f) => ({ name: f.slug + '.html', content: f.html })), ...Builder.seoExtras(c, exportSettings())];
+    return [...sitePageFiles(c).map((f) => ({ name: f.slug + '.html', content: f.html })), ...Builder.seoExtras(c, exportSettings()), { name: 'llms.txt', content: Builder.llmsText(c, Builder.pages(c), String(c.site.url || '').trim().replace(/\/+$/, '')) }];
   }
 
   function appVersion() {
@@ -4238,6 +4689,7 @@ const App = (() => {
     try { if (typeof Links !== 'undefined') out.links = Links.audit(pages, files); } catch (e) { /* optional */ }
     try { if (typeof Images !== 'undefined') out.images = Images.audit(pages); } catch (e) { /* optional */ }
     try { if (typeof Readability !== 'undefined') out.copy = Readability.grade(c); } catch (e) { /* optional */ }
+    try { if (typeof Builder !== 'undefined' && Builder.geoAudit) out.aiSearch = Builder.geoAudit(c, Builder.pages(c), exportSettings()); } catch (e) { /* optional */ }
     return out;
   }
 
@@ -4368,6 +4820,18 @@ const App = (() => {
     const h1s = (html.match(/<h1(?:\s|>)/g) || []).length;
     if (h1s === 0) add('warn', 'No <h1> heading on the home page — the page has no primary topic signal.', 'Give the hero section a title.', 1.1);
     else if (h1s > 1) add('info', h1s + ' <h1> headings on the home page — search engines expect exactly one.', 'Use a subtitle on the second hero instead.');
+    // GEO — how quotable this site is for AI answers. The checks mirror what
+    // llms.txt and robots.txt actually deliver, so the audit cannot promise
+    // something the export does not ship. Worth a section of its own: answer
+    // engines now introduce businesses directly, and every competitor's launch
+    // report scores SEO, performance and accessibility but not this.
+    try {
+      const geo = Builder.geoAudit(c, Builder.pages(c), exportSettings());
+      if (geo && geo.findings) {
+        const gm = { error: 14, warn: 6, info: 0 };
+        geo.findings.forEach((f) => { add(f.level, f.msg, f.fix); score -= gm[f.level] || 0; });
+      }
+    } catch (e) { /* the audit must never fail an export */ }
     if (totalImg > 0) {
       if (noAlt > 0) add('warn', noAlt + ' image' + (noAlt === 1 ? '' : 's') + ' without an alt attribute.', 'Describe each image briefly in the section editor.');
       if (lazyImg < totalImg) add('info', lazyImg + '/' + totalImg + ' images lazy-load (the hero intentionally stays eager for speed).', '');
@@ -4400,7 +4864,7 @@ const App = (() => {
       <div style="display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow:auto">
         ${a.checks.map((i) => `<div class="diag-row diag-${esc(i.level)}"><div>${ic(i.level, i.fix)} ${esc(i.msg)}${i.fix ? `<br><small style="color:var(--muted)">Fix: ${esc(i.fix)}</small>` : ''}</div></div>`).join('')}
       </div>
-      <div class="set-desc" style="margin-top:12px">🔓 Sites are files, not tenants. “${esc(name || '')}” is plain HTML/CSS/JS — you own it and can host it anywhere. No PallettAI runtime, cookies or account required on the exported site. robots.txt included${c.site.url ? ' + sitemap.xml ✓' : ' — set the Site URL to also receive sitemap.xml'}.</div>`);
+      <div class="set-desc" style="margin-top:12px">🔓 Sites are files, not tenants. “${esc(name || '')}” is plain HTML/CSS/JS — you own it and can host it anywhere. No PallettAI runtime, cookies or account required on the exported site. robots.txt included${c.site.url ? ' + sitemap.xml ✓' : ' — set the Site URL to also receive sitemap.xml'}, llms.txt included — AI answer engines (ChatGPT, Perplexity, Google AI) can quote this site verbatim.</div>`);
   }
 
   // ---------------- client review loop ----------------
@@ -4912,6 +5376,9 @@ const App = (() => {
       const editable = typeof Builder.injectClientEditor === 'function';
       const files = sitePageFiles(c).map((f) => ({ name: f.slug + '.html', content: editable ? Builder.injectClientEditor(f.html) : f.html }));
       if (editable) files.push({ name: 'how-to-edit.html', content: Builder.manageGuideHtml(c.site.name || c.name) });
+      // The answer layer travels with the handoff too: whoever hosts these files
+      // gets the same AI-search surface a direct export would have shipped.
+      files.push({ name: 'llms.txt', content: Builder.llmsText(c, Builder.pages(c), String(c.site.url || '').trim().replace(/\/+$/, '')) });
       files.push({ name: 'hosting-guide.html', content: '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hosting guide</title></head><body>' + handoffPage(c, br) + '</body></html>' });
       const pal = DB.getPalette(c.site.palette);
       const f2 = DB.getFont(c.site.font);
@@ -5486,6 +5953,10 @@ const App = (() => {
               <option value="ai">Generated art</option>
               <option value="none">No photos</option>
             </select>
+            <select id="aiKernel" title="Lock this client's approved visual system. A locked field is enforced on the generated site — the AI cannot restyle past it.">
+              <option value="">No brand lock — let the AI choose</option>
+              ${brandPresets.map((p) => `<option value="${esc(p.id)}"${c && c.site && c.site.kernel && c.site.kernel.presetId === p.id ? ' selected' : ''}>🔒 ${esc(p.name)}</option>`).join('')}
+            </select>
             <label class="ai-onepager ai-photo-grade" title="Optional. Soft palette blend on photos only — faces and food stay real.">
               <input type="checkbox" id="aiPhotoGrade">
               <span>Tint photos to the palette <small>off by default · not a filter</small></span>
@@ -5635,8 +6106,23 @@ const App = (() => {
       const studiedN = (proj.site && proj.site.studied && proj.site.studied.length) || 0;
       const studiedTag = studiedN ? `<span class="chip">Studied ${studiedN} site${studiedN === 1 ? '' : 's'}</span>` : '';
       const transTag = proj.site && proj.site.translation && typeof AiTranslate !== 'undefined' ? `<span class="chip">${esc(AiTranslate.poweredByLabel(proj.site.translation.provider))}</span>` : '';
-      res.innerHTML = `<span>✦ “${esc(proj.site.name)}” generated from “${esc(lastAI.prompt.slice(0, 48))}${lastAI.prompt.length > 48 ? '…' : ''}”</span>${nicheTag}${studiedTag}${transTag}<button class="btn primary small" id="aiOpen">Open in Designer</button>`;
+      const K = kernelLib();
+      const kernel = proj.site && proj.site.kernel;
+      const kernTag = (K && kernel) ? `<span class="chip" title="${esc(K.promptContract(kernel).join(' '))}">🔒 ${esc(K.describe(kernel))}</span>` : '';
+      res.innerHTML = `<span>✦ “${esc(proj.site.name)}” generated from “${esc(lastAI.prompt.slice(0, 48))}${lastAI.prompt.length > 48 ? '…' : ''}”</span>${nicheTag}${studiedTag}${transTag}${kernTag}<button class="btn ghost small" id="aiLockLook">${(K && kernel) ? '🔓 Unlock this brand' : '🔒 Lock this look'}</button><button class="btn primary small" id="aiOpen">Open in Designer</button>`;
       $('#aiOpen').onclick = () => { currentId = proj.id; selectedSec = null; switchView('designer'); };
+      $('#aiLockLook').onclick = () => {
+        if (kernel) {
+          delete proj.site.kernel;
+          delete proj.aiKernel;
+          touch(proj);
+          saveProjects();
+          renderAI();
+          toast('Brand lock removed from this project — the AI is free to restyle it again');
+          return;
+        }
+        lockThisLook(proj);
+      };
     }
   }
 
@@ -5842,7 +6328,10 @@ const App = (() => {
       website: website || undefined,
       packId,
       photoMode,
-      photos: aiUploads.filter((u) => u && u.data).map((u) => u.data)
+      photos: aiUploads.filter((u) => u && u.data).map((u) => u.data),
+      // Direction exploration should be fresh too; otherwise reopening the
+      // lab for the same brief presents the same three cards forever.
+      salt: generationSalt()
     };
   }
 
@@ -5966,6 +6455,7 @@ const App = (() => {
     const chosen = JSON.parse(JSON.stringify(st.drafts[index]));
     const pack = st.opts.packId || chosen.directionPack;
     if (pack) AI.applyStylePack(chosen, pack);
+    critiqueGeneratedProject(chosen);
     chosen.id = 'ai_' + uid();
     chosen.createdAt = chosen.updatedAt = Date.now();
     chosen.name = (chosen.site.name || 'AI direction') + ' — Website';
@@ -5983,6 +6473,90 @@ const App = (() => {
     switchView('designer');
     toast('✦ “' + chosen.site.name + '” direction selected — now make it yours', true);
     if (photoMode !== 'none' || photos.length) runSitePhotos(chosen, st.prompt, photoMode, { photos, siteImages, includedInGenerate: true });
+  }
+
+  // ---------------- brand kernel: a locked client visual system ----------------
+  // A brand preset is a look you *may* apply; a kernel is a look the generator
+  // *must* obey. The picker supplies one, “Lock this look” turns the site in
+  // front of you into one, and the engine enforces it (data/ai-kernel.js).
+  function kernelLib() {
+    return (typeof AI !== 'undefined' && AI.brandKernel) ? AI.brandKernel() : null;
+  }
+  function selectedKernel() {
+    const sel = $('#aiKernel');
+    const id = (sel && sel.value) || '';
+    if (id) {
+      const K = kernelLib();
+      const preset = brandPresets.find((p) => p.id === id);
+      if (K && preset) return K.fromPreset(preset);
+    }
+    // An open project that already carries a kernel keeps it.
+    const c = current();
+    return (c && c.site && c.site.kernel) ? c.site.kernel : undefined;
+  }
+  function lockThisLook(c) {
+    const K = kernelLib();
+    if (!K || !c || !c.site) return toast('Open a project first', false);
+    const constitution = c.site.constitution || {};
+    const kernel = K.derive(c, {
+      name: String(c.site.name || 'Brand').trim().slice(0, 60) || 'Brand kernel',
+      mood: constitution.mood,
+      button: constitution.button,
+      shadows: constitution.shadows,
+      preferred: constitution.preferred,
+      forbidden: constitution.forbidden,
+      locks: { palette: true, type: true, radius: true, spacing: true, layout: true, constitution: true }
+    });
+    // Save the same system as a brand preset so the next generation can pick it
+    // without re-deriving it from a finished site.
+    let saved = false;
+    try {
+      const preset = brandPresetFromProject(c, kernel.name + ' brand', false);
+      if (preset) {
+        const existing = brandPresets.find((p) => String(p.name || '').toLowerCase() === String(preset.name).toLowerCase());
+        if (existing) {
+          preset.id = existing.id;
+          preset.createdAt = existing.createdAt || preset.createdAt;
+          brandPresets = brandPresets.map((p) => (p.id === existing.id ? preset : p));
+        } else {
+          brandPresets.unshift(preset);
+          if (brandPresets.length > BRAND_PRESET_LIMIT) brandPresets.pop();
+        }
+        persistBrandPresets();
+        kernel.presetId = preset.id;
+        saved = true;
+      }
+    } catch (e) { /* the lock still holds without a saved preset */ }
+    c.site.kernel = kernel;
+    touch(c);
+    saveProjects();
+    renderAI();
+    toast('🔒 Locked on this project — ' + K.describe(kernel)
+      + (saved ? '. Saved as a brand preset: pick it in “Brand lock” on your next generation.' : ''), true);
+  }
+
+  function critiqueGeneratedProject(project) {
+    if (!project || !project.site || typeof AI.critiquePass !== 'function') return null;
+    try {
+      const review = AI.critiquePass(project);
+      if (review) {
+        project.site.selfCritique = {
+          version: 1,
+          score: review.after && review.after.score,
+          letter: review.after && review.after.letter,
+          changed: review.repair ? review.repair.changed : 0,
+          fixes: (review.fixes || []).map((item) => item.id).slice(0, 12),
+          adviceCount: (review.advice || []).length,
+          receipt: review.receipt || ''
+        };
+      }
+      return review;
+    } catch (e) {
+      // A quality pass is a finishing step, never a reason to lose a generated
+      // project or its credit. The Designer can still run the publish gate.
+      console.warn('AI self-critique skipped', e);
+      return null;
+    }
   }
 
   async function runAI() {
@@ -6037,6 +6611,10 @@ const App = (() => {
         if (!studied.length && comps.length) toast('No competitor URLs could be studied — generating from your brief', false);
       }
       const p = AI.generateSite(prompt, {
+        // Never let an identical brief collapse back to the same starter. The
+        // salt is stored in the project's fingerprint, so the chosen design
+        // remains stable and editable after generation.
+        salt: generationSalt(),
         layouts: flavor === 'classic' ? 'classic' : 'auto',
         tier: isPro() ? 'pro' : 'free',
         name: bizName || undefined,
@@ -6046,10 +6624,21 @@ const App = (() => {
         photoGrade: !!( $('#aiPhotoGrade') && $('#aiPhotoGrade').checked ),
         studied: studied.length ? studied : undefined,
         website: website || undefined,
-        photoMode
+        photoMode,
+        // A brand lock is enforced by the engine, not suggested to it.
+        kernel: selectedKernel()
       });
       if (!p || !p.site) throw new Error('AI returned no project');
       if (packId) AI.applyStylePack(p, packId);
+      // A style pack is a signature look, not a licence to break a locked brand:
+      // the kernel is re-asserted over it.
+      if (p.site.kernel) {
+        const K = kernelLib();
+        if (K) K.apply(p, p.site.kernel);
+      }
+      // Run the offline art-director pass after the selected brand kernel has
+      // been re-applied, so safe tidy-ups cannot undo a locked visual system.
+      const critique = critiqueGeneratedProject(p);
       projects.unshift(p);
       saveProjects();
       committed = true;
@@ -6067,7 +6656,7 @@ const App = (() => {
           toast('✦ Studied ' + host + ' — brand, contact, services, FAQ & photos lifted, then rebuilt better', true);
         }
       } else {
-        toast('✦ AI Studio built “' + p.site.name + '”', true);
+        toast('✦ AI Studio built “' + p.site.name + '”' + (critique ? ' — ' + critique.receipt : ''), true);
       }
       if (photoMode !== 'none' || photos.length) {
         runSitePhotos(p, prompt, photoMode, { photos, siteImages: website ? (website.images || []) : [], includedInGenerate: true });
@@ -6812,7 +7401,7 @@ const App = (() => {
         <div class="storage-rows">
           ${libraryAudit.entries.map((e) => `<div class="storage-row"><span>${esc(e.key)} <em>${esc(e.verdict === 'ok' ? (e.shape + ', ' + e.items + ' item' + (e.items === 1 ? '' : 's')) : e.verdict)}</em></span><b>${fmtBytes(e.bytes)}</b></div>`).join('') || '<div class="storage-row"><span>Nothing stored yet</span><b>0 B</b></div>'}
         </div>
-        ${libraryAudit.problems.length ? `<p class="storage-note warn">${libraryAudit.problems.length} value${libraryAudit.problems.length === 1 ? '' : 's'} could not be read: ${lastAudit.problems.map((p) => esc(p.key + ' (' + (p.hint || p.error || p.verdict) + ')')).join('; ')}.</p>` : '<p class="storage-note">Every stored value reads back as the shape this build expects.</p>'}
+        ${libraryAudit.problems.length ? `<p class="storage-note warn">${libraryAudit.problems.length} value${libraryAudit.problems.length === 1 ? '' : 's'} could not be read: ${libraryAudit.problems.map((p) => esc(p.key + ' (' + (p.hint || p.error || p.verdict) + ')')).join('; ')}.</p>` : '<p class="storage-note">Every stored value reads back as the shape this build expects.</p>'}
         ${libraryAudit.advice ? `<p class="storage-note warn">${esc(libraryAudit.advice)}</p>` : ''}
       ` : ''}
       <div class="storage-actions">
@@ -6863,12 +7452,16 @@ const App = (() => {
 
   function revisionTotals() {
     const ids = Object.keys(revs || {});
-    let snaps = 0, bytes = 0;
+    let snaps = 0, bytes = 0, pinned = 0;
     ids.forEach((id) => {
       const list = Array.isArray(revs[id]) ? revs[id] : [];
-      list.forEach((r) => { snaps += 1; bytes += (r && typeof r.snap === 'string') ? r.snap.length : 0; });
+      list.forEach((r) => {
+        snaps += 1;
+        bytes += (r && typeof r.snap === 'string') ? r.snap.length : 0;
+        if (Mile && Mile.isPinned(r)) pinned += 1;
+      });
     });
-    return { projects: ids.length, snaps, bytes };
+    return { projects: ids.length, snaps, bytes, pinned };
   }
 
   async function renderRetentionCard() {
@@ -6890,6 +7483,14 @@ const App = (() => {
         : totals.snaps + ' snapshot' + (totals.snaps === 1 ? '' : 's');
     }
 
+    // What the milestones cost the plan, said once so the three places that
+    // mention them below cannot describe them differently.
+    const ms = plan.milestones || { kept: 0, savedByAge: 0, savedByCount: 0, savedByBudget: 0 };
+    const msSaved = ms.savedByAge + ms.savedByCount + ms.savedByBudget;
+    const msKeptCopy = ms.kept
+      ? ` Your ${ms.kept} milestone${ms.kept === 1 ? '' : 's'} ${ms.kept === 1 ? 'is' : 'are'} not touched by any of it${msSaved ? ` — ${msSaved} of them would have gone without it` : ''}.`
+      : '';
+
     const byProject = Object.keys(revs || {})
       .map((id) => {
         const list = Array.isArray(revs[id]) ? revs[id] : [];
@@ -6901,8 +7502,8 @@ const App = (() => {
 
     el.innerHTML = `
       <div class="storage-head">
-        <div><b>${fmtBytes(totals.bytes)}</b> in ${totals.snaps} autosave snapshot${totals.snaps === 1 ? '' : 's'} across ${totals.projects} project${totals.projects === 1 ? '' : 's'}</div>
-        <div class="storage-sub">${pressure ? esc(pressure.advice) : 'Snapshots are what autosave restores from — the newest one per project is never pruned.'}</div>
+        <div><b>${fmtBytes(totals.bytes)}</b> in ${totals.snaps} autosave snapshot${totals.snaps === 1 ? '' : 's'} across ${totals.projects} project${totals.projects === 1 ? '' : 's'}${totals.pinned ? ` · <b>${totals.pinned}</b> milestone${totals.pinned === 1 ? '' : 's'}` : ''}</div>
+        <div class="storage-sub">${pressure ? esc(pressure.advice) : 'Snapshots are what autosave restores from — a named milestone is never pruned, and neither is the newest snapshot of a project.'}</div>
       </div>
       <div class="storage-rows">
         ${byProject.map((p) => `<div class="storage-row"><span>${esc(p.name)} <em>${p.count} snapshot${p.count === 1 ? '' : 's'}</em></span><b>${fmtBytes(p.bytes)}</b></div>`).join('') || '<div class="storage-row"><span>No history yet — it builds up as you edit</span><b>0 B</b></div>'}
@@ -6911,10 +7512,9 @@ const App = (() => {
         ${RevsPolicy.PRESETS.map((p) => `<button class="btn ghost small${retentionPreset === p.id ? ' active' : ''}" data-revpreset="${esc(p.id)}" title="${esc(p.note)}">${esc(p.label)}</button>`).join('')}
       </div>
       <p class="storage-note">${esc((RevsPolicy.PRESETS.find((p) => p.id === retentionPreset) || {}).note || '')}</p>
-      ${plan.drop.length
-        ? `<p class="storage-note warn">Pruning now would remove <b>${plan.drop.length}</b> snapshot${plan.drop.length === 1 ? '' : 's'} and free <b>${fmtBytes(plan.bytesFreed)}</b>${plan.byWhy.age ? ` — ${plan.byWhy.age} past the age limit` : ''}${plan.byWhy.count ? `${plan.byWhy.age ? ',' : ' —'} ${plan.byWhy.count} past the per-project limit` : ''}${plan.byWhy.budget ? `${(plan.byWhy.age || plan.byWhy.count) ? ',' : ' —'} ${plan.byWhy.budget} to fit the byte budget` : ''}. The newest snapshot of every project stays.</p>
+      ${plan.drop.length          ? `<p class="storage-note warn">Pruning now would remove <b>${plan.drop.length}</b> snapshot${plan.drop.length === 1 ? '' : 's'} and free <b>${fmtBytes(plan.bytesFreed)}</b>${plan.byWhy.age ? ` — ${plan.byWhy.age} past the age limit` : ''}${plan.byWhy.count ? `${plan.byWhy.age ? ',' : ' —'} ${plan.byWhy.count} past the per-project limit` : ''}${plan.byWhy.budget ? `${(plan.byWhy.age || plan.byWhy.count) ? ',' : ' —'} ${plan.byWhy.budget} to fit the byte budget` : ''}. The newest snapshot of every project stays.${msKeptCopy}</p>
            <div class="storage-actions"><button class="btn small" data-revprune="1">Prune and free ${fmtBytes(plan.bytesFreed)}</button><button class="btn ghost small" data-revwhy="1">How this is decided</button></div>`
-        : '<p class="storage-note">Nothing is over the current rules, so nothing would be removed. A tighter policy frees space; the newest snapshot of each project is always kept.</p>'}
+        : `<p class="storage-note">Nothing is over the current rules, so nothing would be removed. A tighter policy frees space; the newest snapshot of each project and every named milestone are always kept.</p>`}
       <div class="storage-actions">
         <button class="btn ghost small" data-revclearall="1">Clear all history…</button>
       </div>
@@ -6928,20 +7528,22 @@ const App = (() => {
     });
     const whyBtn = $('[data-revwhy]');
     if (whyBtn) whyBtn.onclick = () => openModal('How pruning decides', `
-      <p>Three limits, applied in this order, and the newest snapshot of every project is skipped by all of them:</p>
+      <p>Three limits, applied in this order, and two kinds of snapshot are skipped by all of them: the newest one in each project, and anything you named.</p>
       <div class="storage-rows">
         <div class="storage-row"><span>Age</span><b>${retentionRules.maxAgeDays ? retentionRules.maxAgeDays + ' days' : 'no limit'}</b></div>
         <div class="storage-row"><span>Per project</span><b>newest ${retentionRules.maxPerProject}</b></div>
         <div class="storage-row"><span>Total budget</span><b>${retentionRules.budgetBytes ? fmtBytes(retentionRules.budgetBytes) : 'no limit'}</b></div>
+        <div class="storage-row"><span>Named milestones</span><b>never dropped</b></div>
       </div>
       <p class="storage-note">Order matters: age and count are decided per project, then the byte budget is applied newest-first across everything. A snapshot that is the last one left in its project is never dropped, so a library can exceed the budget rather than lose a project's only restore point.</p>
+      <p class="storage-note">A milestone is exempted before any of it is counted — a name is a decision somebody made about a version, usually the one a client has already seen, and no storage rule can recreate that. Pin one from the ⏱ history picker in the designer.${totals.pinned ? ` This library has ${totals.pinned}.` : ''}</p>
       <p class="storage-note">Pruning writes to the same store the edit history lives in and cannot be undone — back the library up first if you are unsure. Snapshots are only ever autosave copies; the projects themselves are untouched.</p>
     `);
     const pruneBtn = $('[data-revprune]');
     if (pruneBtn) pruneBtn.onclick = () => {
       const fresh = RevsPolicy.plan(revs, retentionRules, Date.now());
       if (!fresh.drop.length) return renderRetentionCard();
-      confirmModal('Prune autosave history?', `Removes ${fresh.drop.length} snapshot${fresh.drop.length === 1 ? '' : 's'} and frees about ${fmtBytes(fresh.bytesFreed)}. The newest snapshot of every project is kept. This cannot be undone.`, () => {
+      confirmModal('Prune autosave history?', `Removes ${fresh.drop.length} snapshot${fresh.drop.length === 1 ? '' : 's'} and frees about ${fmtBytes(fresh.bytesFreed)}. The newest snapshot of every project is kept, and so is every milestone you named. This cannot be undone.`, () => {
         revs = RevsPolicy.apply(revs, fresh);
         persistRevs();
         renderRetentionCard();
@@ -8714,9 +9316,15 @@ const App = (() => {
           <label class="switch"><input type="checkbox" id="setVaultEnabled" ${settings.cloudVaultEnabled !== false ? 'checked' : ''}><span class="slider"></span></label></div>
         <div class="vault-status">
           <span>${cloudVault.status === 'syncing' ? '☁ Syncing…' : cloudVault.lastError ? '⚠ ' + esc(cloudVault.lastError) : cloudVault.lastSync ? '✓ Vault up to date' : '☁ Ready — projects sync automatically'}</span>
-          ${cloudVault.lastSync ? `<small>Last synced ${new Date(cloudVault.lastSync).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small>` : ''}
+          ${cloudVault.lastSync ? `<small>Last synced ${new Date(cloudVault.lastSync).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${cloudVault.lastConflicts ? ' · ' + cloudVault.lastConflicts + ' conflict snapshot' + (cloudVault.lastConflicts === 1 ? '' : 's') + ' archived' : ''}</small>` : ''}
         </div>
-        <div class="acc-row"><button class="btn ghost small" id="btnVaultBackup">Back up now</button></div>`}
+        <div class="vault-usage">
+          <span>${cloudVault.lastSync
+            ? (cloudVault.cloudProjects ? cloudVault.cloudProjects + ' project' + (cloudVault.cloudProjects === 1 ? '' : 's') + ' in the cloud · ' + fmtBytes(cloudVault.cloudBytes) : 'No projects in the cloud yet')
+            : 'Usage appears after the first sync'}</span>
+          <small>${projects.length} on this device${cloudVault.skipped ? ' · ' + cloudVault.skipped + ' too large to sync' : ''}</small>
+        </div>
+        <div class="acc-row" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost small" id="btnVaultBackup">Back up now</button><button class="btn ghost small" id="btnVaultHistory">Version history</button></div>`}
       </div>
 
       <div class="settings-card">
@@ -9067,11 +9675,13 @@ const App = (() => {
     on('#setVaultEnabled', 'change', (e) => {
       settings.cloudVaultEnabled = e.target.checked;
       saveSettings();
-      if (e.target.checked && vaultReady()) syncVault().catch(() => {});
+      if (e.target.checked && vaultReady()) syncVault({ queue: true }).catch(() => {});
       renderSettings();
     });
     const vaultBtn = $('#btnVaultBackup');
     if (vaultBtn) vaultBtn.onclick = vaultBackupNow;
+    const vaultHistBtn = $('#btnVaultHistory');
+    if (vaultHistBtn) vaultHistBtn.onclick = openVaultHistory;
     const reviewBtn = $('#btnReviewClaim');
     if (reviewBtn) reviewBtn.onclick = async () => {
       const name = ($('#revName') && $('#revName').value) || '';
@@ -10801,6 +11411,7 @@ const App = (() => {
           </div>
           <div class="care-actions">
             <button class="btn secondary small" id="careOpen">Open in Designer</button>
+            <button class="btn small" id="careReport" title="${isProPlus() ? 'A one-file report you can send the client' : 'A Pro+ feature'} ">Client report${isProPlus() ? '' : ' \u00b7 Pro+'}</button>
             <button class="btn ghost small" id="careRescan" title="Audit every project again">Re-scan</button>
           </div>
         </div>
@@ -10818,6 +11429,11 @@ const App = (() => {
     $$('[data-care]').forEach((b) => b.onclick = () => { careSel = b.dataset.care; renderCare(); });
     const openBtn = $('#careOpen');
     if (openBtn) openBtn.onclick = () => { currentId = careSel; switchView('designer'); };
+    const repBtn = $('#careReport');
+    if (repBtn) repBtn.onclick = () => {
+      const p = projects.find((x) => x.id === careSel);
+      if (p) openCareReport(p);
+    };
     const rescan = $('#careRescan');
     if (rescan) rescan.onclick = () => {
       renderCare();
@@ -10831,6 +11447,65 @@ const App = (() => {
       <h2>Site Care</h2>
       <p>Delivered sites go stale. A date goes by, a price changes, one of our own sample phone numbers survives into production — nothing is broken, it has just stopped being true. This reads every project in your workspace and tells you which ones need a call.</p>
     </div>`;
+  }
+
+  /*
+    The client-facing care report (Pro+).
+
+    The sweep above is written for the studio — "which of my client sites do I
+    need to call?". This is the other half of the same work: the same audit,
+    written for the person who pays the retainer, as one file the studio sends.
+    It is Pro+ because it is unbranded — the document carries the studio's name
+    and the site's own accent colour, and PallettAI appears in an HTML comment
+    that a client will never open.
+
+    Built from the audit taken at the moment the button is pressed rather than
+    from something cached: a report assembled from a stale copy is how a client
+    ends up reading about a problem that was fixed last week.
+  */
+  function openCareReport(p) {
+    if (typeof CareReport === 'undefined') return toast('The report builder is not in this build', false);
+    if (!isProPlus()) {
+      toast('The white-label client report is a Pro+ feature \ud83d\udd12', false);
+      return openPricing();
+    }
+    const report = careReport(p);
+    if (!report) return toast('That project could not be read', false);
+    const palette = (typeof DB !== 'undefined' && DB.getPalette) ? DB.getPalette((p.site && p.site.palette) || '') : null;
+    // The portfolio line is the whole reason an agency sends this rather than a
+    // screenshot: it says how many sites are being looked after, so one report
+    // is evidence of the relationship rather than of a single audit.
+    let flagged = 0;
+    projects.forEach((x) => { const r = careReport(x); if (r && r.counts.error) flagged += 1; });
+    const note = CareReport.build({
+      report: report,
+      project: p,
+      brand: palette ? { accent: palette.primary } : null,
+      studio: { name: settings.businessName || '', email: settings.businessEmail || '' },
+      portfolio: { total: projects.length, flagged: flagged },
+      now: Date.now()
+    });
+    if (!note.ok) return toast(note.error, false);
+    const html = CareReport.page(note, { version: appVersion() });
+    const file = CareReport.fileName(note);
+    const toFix = note.totals.findings
+      ? note.totals.findings + ' item' + (note.totals.findings === 1 ? '' : 's') + ' to put right'
+      : 'nothing to put right';
+    openModal('Client report \u2014 ' + esc(p.name), `
+      <p class="care-rep-note">${note.totals.checksRun} checks across the whole site, <b>${note.totals.checksClear} of which found nothing</b>, and ${esc(toFix)}. One self-contained file (${esc(fmtBytes(html.length))}) in the site's own colours with no badge on it: it opens on a client's phone from an email and prints to PDF from any browser.</p>
+      <div class="care-rep-preview"><iframe title="Client report preview" sandbox="allow-same-origin" srcdoc="${esc(html)}"></iframe></div>
+      <div class="care-rep-actions">
+        <button class="btn small" id="careRepSave">Download for the client</button>
+        <button class="btn ghost small" id="careRepCopy">Copy the text version</button>
+      </div>
+      <p class="care-rep-note">${note.studioName ? 'Prepared by <b>' + esc(note.studioName) + '</b>' : 'Add a business name in Settings and it will be signed on the report'}${note.studioEmail ? ' \u00b7 replies go to ' + esc(note.studioEmail) : ''} \u00b7 next review ${esc(note.totals.reviewBy || 'not set')}.</p>`, true);
+    const save = $('#careRepSave');
+    if (save) save.onclick = () => {
+      if (downloadText(file, html, 'text/html')) toast('Report saved \u2014 send it to the client \u2b07', true);
+      else toast('That download was blocked', false);
+    };
+    const copy = $('#careRepCopy');
+    if (copy) copy.onclick = () => copyText(note.text, 'The text version is on your clipboard \u2702');
   }
 
   function renderQr() {
@@ -11163,6 +11838,10 @@ const App = (() => {
     await hydrateBriefs();
     initSystemAccent();
     applyTitlebarInset();
+    // Shell behaviour (toast card, metric count-up, top-bar lift, view
+    // cross-fade, shortcut sheet, palette recents). Additive: it degrades to
+    // nothing when the module is absent.
+    if (typeof UIShell !== 'undefined' && UIShell.initAppShell) UIShell.initAppShell();
     seed();
     paintNav();
     const chatSpark = document.querySelector('.chat-spark');
@@ -11254,7 +11933,7 @@ const App = (() => {
     // local project list with the account's vault (restore here, push there).
     // Background + best-effort — never blocks the studio from being usable.
     if (vaultReady() && settings.cloudVaultEnabled !== false) {
-      setTimeout(() => { syncVault().catch((e) => console.warn('Vault sync failed:', e)); }, 1500);
+      setTimeout(() => { syncVault({ queue: true }).catch((e) => console.warn('Vault sync failed:', e)); }, 1500);
     }
     // Electron-only: move the Supabase session (refresh token) out of
     // localStorage and into the OS keystore via safeStorage. The browser build

@@ -49,6 +49,16 @@ const plumber = AI.generateSite('a plumber in Leeds', {
   brief: { name: 'Rivet & Sons', area: 'Leeds', offer: 'A leak at 11pm should not be a lottery. Rivet & Sons answers.' },
   onePager: true
 });
+// A generated site now arrives already graded and tidied (the art-director pass
+// in modules/ai.js fills in a missing meta description before the creator sees
+// it), so a defect this suite means to test has to be reintroduced explicitly.
+// Testing it on a project the generator has since self-healed would quietly stop
+// covering the copilot's meta-description action.
+plumber.site.metaDescription = '';
+// The production generator now self-critiques its first result. This fixture
+// deliberately reintroduces the finding so the Copilot review path still tests
+// the action that repairs it.
+plumber.site.metaDescription = '';
 const gate = AI.qualityGate(plumber);
 const review = Copilot.review(plumber, gate);
 
@@ -266,6 +276,10 @@ const bakery = AI.generateSite('a bakery in York', {
   brief: { name: 'Willow & Rye', area: 'York', offer: 'Stone-milled local flour, baked before dawn.' },
   onePager: false
 });
+// Same reason as the plumber fixture above: leave the safe repair pass something
+// real to do, so "a promised score is measured, never estimated" still has a
+// repair to measure.
+bakery.site.metaDescription = '';
 const pageNames = Builder.pages(bakery).map((pg) => pg.name);
 assert(pageNames.length > 1, 'the fixture is a real multi-page site (' + pageNames.join(', ') + ')');
 

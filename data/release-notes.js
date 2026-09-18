@@ -4,10 +4,15 @@
 // Bump `version` when you ship. Each entry: version, date, tagline, highlights[].
 // Keep highlights to 3-4 items, written as user-facing wins (not commit logs).
 const RELEASE_NOTES = {
-  version: '0.4.7',
-  date: 'September 17, 2026',
-  tagline: 'Updates install themselves again \u2014 and a stalled one can no longer lock you out of Studio',
+  version: '0.4.8',
+  date: 'September 18, 2026',
+  tagline: 'Studio now gives every project a distinct creative direction, with safer AI guidance and stronger site intelligence',
   highlights: [
+    {
+      icon: 'spark',
+      title: 'Every generation gets a genuinely different direction',
+      desc: 'Studio now varies composition, typography, section rhythm, hero treatment, imagery guidance and motion instead of only changing colours. The chosen direction is saved with the project, so it remains editable and stable after creation.'
+    },
     {
       icon: 'download',
       title: 'Restarting to update now actually restarts',

@@ -59,9 +59,10 @@ const PLANS = {
         'Free live widgets: map, weather, embeds, online booking',
         '4 free online databases (photos, people, quotes, fonts)',
         '7 AI Studio credits',
+        '1 pinned milestone per project — a named snapshot that is never pruned',
         '“Made with PallettAI” badge on exports'
       ],
-      limits: { projects: 2, sectionsPerSite: 10, aiCredits: 7 }
+      limits: { projects: 2, sectionsPerSite: 10, aiCredits: 7, milestones: 1 }
     },
     {
       id: 'pro', name: 'Pro', price: 9, period: 'month', popular: true,
@@ -76,9 +77,10 @@ const PLANS = {
         '3 extra online databases (CoinGecko, GitHub, Frankfurter + Wikipedia)',
         'Unlimited AI Studio generations',
         'AI image generation',
+        '10 pinned milestones per project — name the build the client approved',
         'Priority support'
       ],
-      limits: { projects: Infinity, sectionsPerSite: Infinity, aiCredits: Infinity }
+      limits: { projects: Infinity, sectionsPerSite: Infinity, aiCredits: Infinity, milestones: 10 }
     },
     {
       id: 'proplus', name: 'Pro+', price: 19, period: 'month', popular: false,
@@ -89,9 +91,11 @@ const PLANS = {
         'Reusable brand presets — save up to 12 visual systems across projects',
         'White-label client handoff ZIP',
         'No PallettAI attribution in the hosting guide or brand kit',
-        'A polished delivery pack for every client project'
+        'A polished delivery pack for every client project',
+        '25 pinned milestones per project — a signed-off version kept for every site you look after',
+        'White-label Site Care report to hand a client, with your branding on it'
       ],
-      limits: { projects: Infinity, sectionsPerSite: Infinity, aiCredits: Infinity }
+      limits: { projects: Infinity, sectionsPerSite: Infinity, aiCredits: Infinity, milestones: 25 }
     }
   ],
 

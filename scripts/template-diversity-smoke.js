@@ -117,6 +117,10 @@ function blockOf(html, type) {
 function shape(block) {
   return block
     .replace(/>[^<]*</g, '><')
+    // Targeting metadata belongs to the editor, not the visual shape. Ignore it
+    // so two starters sharing one layout still compare as the same block.
+    .replace(/\sdata-page-id="[^"]*"/g, '')
+    .replace(/\sdata-section-index="\d+"/g, '')
     .replace(/sec-[a-z]+-\d+/g, (m) => m.replace(/-\d+$/, ''))
     .replace(/\s+/g, ' ')
     .trim();

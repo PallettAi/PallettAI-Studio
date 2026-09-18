@@ -274,8 +274,9 @@ body.photo-grade{
     const anim = section.animation || 'fade-up';
     const animCss = (DB.getAnimation(anim) || {}).css || '';
     const cls = anim === 'none' ? '' : 'reveal';
+    const pageId = (_ctx.page && _ctx.page.id) || '';
     return `
-    <section id="sec-${section.type}-${index}" class="section sec-${section.type}">
+    <section id="sec-${section.type}-${index}" class="section sec-${section.type}" data-page-id="${esc(pageId)}" data-section-index="${index}">
       <div class="container ${cls}" data-anim-css="${esc(animCss)}">
         ${inner}
       </div>
@@ -2849,10 +2850,18 @@ ${motionCSS(p)}
         + `<noscript>${fontUrls.map((u) => `<link rel="stylesheet" href="${esc(u)}">`).join('')}</noscript>`
       : '';
 
-    const body = p.site.sections.map((s, i) => {
+    const renderedBody = p.site.sections.map((s, i) => {
       const fn = renderers[s.type];
       return fn ? fn(p, s, i) : '';
     }).join('');
+    // Some specialised renderers (notably the hero) do not use sectionShell.
+    // Add the same stable targeting metadata to every section after rendering,
+    // so the Designer can select an exact page/section in a multi-page preview
+    // without guessing from a duplicated `sec-hero-0` id.
+    const body = renderedBody.replace(/<section\b([^>]*\bid="sec-[^"]+-(\d+)"[^>]*)>/gi, (all, attrs, index) => {
+      if (/\bdata-section-index\s*=/.test(attrs)) return all;
+      return '<section' + attrs + ' data-page-id="' + esc(page.id || '') + '" data-section-index="' + index + '">';
+    });
 
     const pal2 = DB.getPalette(p.site.palette);
     const cfg = {
@@ -3103,14 +3112,165 @@ ${customJs}
     const pages = normalizePages(withLegal(project, settings));
     const base = String((project.site && project.site.url) || '').trim().replace(/\/+$/, '');
     const xml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const files = [{ name: 'robots.txt', content: 'User-agent: *\nAllow: /\n' + (base ? 'Sitemap: ' + base + '/sitemap.xml\n' : '') }];
+    // Generative-engine crawlers are named explicitly: a policy that only says
+    // "User-agent: *" leaves GPTBot, ClaudeBot, PerplexityBot and friends to
+    // their own defaults, and several AI answer engines interpret an absent
+    // rule differently from an explicit Allow. Stating them costs one line
+    // each and makes the site's consent to be quoted unambiguous.
+    const AI_CRAWLERS = ['GPTBot', 'OAI-SearchBot', 'ChatGPT-User', 'ClaudeBot', 'PerplexityBot', 'Google-Extended', 'Applebot-Extended', 'CCBot'];
+    const files = [
+      { name: 'robots.txt', content: 'User-agent: *\nAllow: /\n'
+        + AI_CRAWLERS.map((ua) => `User-agent: ${ua}\nAllow: /\n`).join('')
+        + (base ? 'Sitemap: ' + base + '/sitemap.xml\n' : '') }
+    ];
     if (base) {
       const today = new Date().toISOString().slice(0, 10);
       const seg = (pg) => { const sl = String(pg.slug || '').trim() || slugify(pg.name || 'page'); return sl === 'index' ? '' : sl + '.html'; };
       const urls = pages.map((pg) => `  <url>\n    <loc>${xml(base + '/' + seg(pg))}</loc>\n    <lastmod>${today}</lastmod>\n  </url>`).join('\n');
       files.push({ name: 'sitemap.xml', content: '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + urls + '\n</urlset>\n' });
     }
+    files.push({ name: 'llms.txt', content: buildLlmsText(project, pages, base) });
     return files;
+  }
+
+  // ---------------- GEO: the AI-search answer layer ----------------
+  // Answer engines (ChatGPT, Perplexity, Google AI Overviews, Copilot) increasingly
+  // quote businesses directly instead of listing ten blue links. What they can
+  // quote is decided by what the site makes easy to lift: a stated, well-shaped
+  // summary, question-shaped content, and contact details that survive being read
+  // without a browser. The launch audit's SEO section checks the HTML for the
+  // same signals, so what the audit promises is exactly what the file delivers.
+  //
+  // Everything here is deterministic and offline, reuses the FAQ/config data the
+  // JSON-LD engine already reads, and never mutates the project.
+
+  // llms.txt — the proposal at llmstxt.org: a Markdown file at the site root
+  // giving an LLM the short, high-signal version of the site. Ships on every
+  // export, like robots.txt: it is small, and answers read the root first.
+  function buildLlmsText(project, pages, base) {
+    const s = (project && project.site) || {};
+    const now = new Date().toISOString().slice(0, 10);
+    const clean = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
+    const md = (v) => clean(v).replace(/\\/g, '').replace(/[\[\]]/g, '');
+    const lines = [];
+    lines.push('# ' + (clean(s.name) || clean(project.name) || 'This website'));
+    const meta = clean(s.metaDescription);
+    lines.push('');
+    lines.push('> ' + (md(meta) || md(s.tagline) || 'Website of ' + md(s.name || project.name || 'this business') + '.'));
+    if (base) {
+      lines.push('');
+      lines.push('Site: ' + base + '/');
+    }
+    const pagesList = pages.filter((pg) => String(pg.slug || '') !== 'index');
+    if (pagesList.length) {
+      lines.push('');
+      lines.push('## Pages');
+      lines.push('');
+      pagesList.forEach((pg) => {
+        const slug = String(pg.slug || '').trim() || 'page';
+        const href = base ? base + '/' + slug + '.html' : slug + '.html';
+        lines.push('- [' + md(pg.name || slug) + '](' + href + ')' + (base ? '' : ': ' + href));
+      });
+    }
+    const faqs = geoFaqs(project, pages);
+    if (faqs.length) {
+      lines.push('');
+      lines.push('## Frequently asked questions');
+      lines.push('');
+      faqs.slice(0, 12).forEach((f) => {
+        lines.push('### ' + md(f.q));
+        lines.push(md(f.a));
+        lines.push('');
+      });
+    }
+    const contact = contactLines(project);
+    if (contact.length) {
+      lines.push('## Contact');
+      lines.push('');
+      contact.forEach((l) => lines.push('- ' + l));
+    }
+    lines.push('');
+    lines.push('Updated: ' + now + '. Content may be quoted with attribution to ' + (clean(s.name) || 'this site') + '.');
+    return lines.join('\n') + '\n';
+  }
+
+  // The site's own facts, shaped as questions. Answer engines lift passages
+  // that answer a question directly; the same Q&A already feeds the FAQPage
+  // JSON-LD, so what the structured data claims and what the file offers can
+  // never drift apart.
+  function geoFaqs(project, pages) {
+    const out = [];
+    const seen = new Set();
+    const push = (q, a) => {
+      const key = String(q || '').toLowerCase();
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      out.push({ q: String(q), a: String(a) });
+    };
+    (Array.isArray(pages) ? pages : []).forEach((pg) => {
+      (Array.isArray(pg.sections) ? pg.sections : []).forEach((sec) => {
+        if (!sec || sec.type !== 'faq' || !Array.isArray(sec.items)) return;
+        sec.items.forEach((it) => {
+          const q = String(it && it.title || '').trim();
+          const a = String(it && it.text || '').trim();
+          if (q && a) push(q, a);
+        });
+      });
+    });
+    return out;
+  }
+
+  // One canonical contact list, plain text and absolute — the way an answer
+  // engine, not a browser, reads a page.
+  function contactLines(project) {
+    const s = (project && project.site) || {};
+    const out = [];
+    const email = String(s.email || '').trim();
+    const phone = String(s.phone || '').trim();
+    const address = String(s.address || '').trim();
+    const area = String(s.area || '').trim();
+    if (email) out.push('Email: ' + email);
+    if (phone) out.push('Phone: ' + phone);
+    if (address) out.push('Address: ' + address);
+    if (area) out.push('Serves: ' + area);
+    const socials = Array.isArray(s.socials) ? s.socials : [];
+    socials.forEach((so) => {
+      const url = String(so && so.url || '').trim();
+      if (/^https?:\/\//i.test(url)) out.push('Social: ' + url);
+    });
+    return out;
+  }
+
+  // The audit half of the GEO pass. Same inputs as the file half, so the two
+  // sides cannot disagree: every finding below names something llms.txt or
+  // robots.txt actually carries. Pure and offline — pass `{ now }` and the
+  // same project always produces the same report.
+  function geoAudit(project, pagesArg, settings) {
+    const pages = Array.isArray(pagesArg) && pagesArg.length ? pagesArg : normalizePages(withLegal(project, settings || {}));
+    const s = (project && project.site) || {};
+    const score = (() => {
+      let n = 100;
+      const facts = [s.name, s.metaDescription || s.tagline, s.email || s.phone, s.area || s.address].filter(Boolean).length;
+      if (facts < 2) n -= 30; else if (facts < 3) n -= 12;
+      const faqs = geoFaqs(project, pages);
+      if (!faqs.length) n -= 25; else if (faqs.length < 4) n -= 8;
+      if (!String(s.url || '').trim()) n -= 20;
+      if (!contactLines(project).length) n -= 10;
+      return Math.max(0, n);
+    })();
+    const findings = [];
+    const add = (level, msg, fix) => findings.push({ level, msg, fix });
+    const meta = String(s.metaDescription || '').trim();
+    if (!meta) add('warn', 'No meta description — AI answer engines quote the tagline (or nothing) when introducing this business.', 'Write one sentence in Design & branding ▸ Meta description.');
+    if (!(geoFaqs(project, pages)).length) add('warn', 'No question-shaped content — answer engines lift passages that answer a question directly, and there are none to lift.', 'Add an FAQ section; the AI Studio writes one automatically for your business type.');
+    else if (geoFaqs(project, pages).length < 4) add('info', 'Only ' + geoFaqs(project, pages).length + ' FAQ entries — four or more gives an answer engine a usable passage in more searches.');
+    else add('info', 'FAQ passages exported — answer engines can quote these verbatim.');
+    if (!String(s.url || '').trim()) add('info', 'No site URL set — llms.txt page links stay relative and the robots.txt cannot advertise the sitemap.', 'Add your domain in Design & branding ▸ Site URL.');
+    if (!contactLines(project).length) add('warn', 'No plain-text contact details — an answer engine cannot tell a visitor how to reach you.', 'Set an email or phone in Design & branding.');
+    else add('info', 'Contact details shipped in llms.txt as plain text, readable without a browser.');
+    if (!meta && String(s.tagline || '').trim()) add('info', 'The tagline stands in as the summary — a real meta description would be quoted with more context.');
+    const letter = score >= 88 ? 'A' : score >= 78 ? 'B' : score >= 66 ? 'C' : score >= 50 ? 'D' : 'F';
+    return { score: Math.round(score), letter, findings };
   }
 
   // ---------------- suite application ----------------
@@ -3361,7 +3521,7 @@ ${customJs}
     return true;
   }
 
-  return { buildSiteHTML, buildSitePages, seoExtras, applySuite, removeSuite, esc, picsum, pages: pagesOf, slugify, pageHref, safeHref, safeEmbedUrl, safeBookingUrl, injectClientEditor, manageGuideHtml, badgeHref };
+  return { buildSiteHTML, buildSitePages, seoExtras, llmsText: buildLlmsText, geoFaqs, geoAudit, contactLines, applySuite, removeSuite, esc, picsum, pages: pagesOf, slugify, pageHref, safeHref, safeEmbedUrl, safeBookingUrl, injectClientEditor, manageGuideHtml, badgeHref };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = Builder;

@@ -81,6 +81,20 @@ const TYPE_FAMILY = {
   home: 'proof-first', generic: 'quiet', nonprofit: 'quiet', travel: 'gallery-forward'
 };
 
+// A composition is more than a shuffled list of blocks. This small grammar is
+// the OpenPage-inspired layer: it records why the page is paced this way, which
+// block owns the first visual beat, and how dense the journey should feel. The
+// renderer still consumes the same section model, so this is backwards
+// compatible with existing projects and exports.
+const DESIGN_GRAMMARS = {
+  'menu-first': { density: 'rich', lead: 'product', rhythm: 'browse → trust → decide', visual: 'image-led' },
+  'gallery-forward': { density: 'airy', lead: 'proof', rhythm: 'see → understand → enquire', visual: 'portfolio-led' },
+  'proof-first': { density: 'focused', lead: 'evidence', rhythm: 'reassure → explain → contact', visual: 'trust-led' },
+  product: { density: 'structured', lead: 'outcome', rhythm: 'promise → product → proof', visual: 'system-led' },
+  energy: { density: 'dynamic', lead: 'momentum', rhythm: 'impact → action → proof', visual: 'motion-led' },
+  quiet: { density: 'calm', lead: 'story', rhythm: 'context → confidence → conversation', visual: 'editorial-led' }
+};
+
 function familyFor(typeId, nicheId) {
   const niche = String(nicheId || '');
   if (PROOF_NICHES[niche]) return 'proof-first';
@@ -227,6 +241,79 @@ function varyPresence(sections, opts) {
   });
 }
 
+// A typed contract makes a composition explainable and lets the generator
+// reject a page that is technically valid but narratively flat. It is metadata
+// only: the existing renderer still receives the ordinary section model.
+const SECTION_CONTRACTS = {
+  hero: { purpose: 'orient', weight: 5, required: ['title', 'subtitle'], allowed: ['centered', 'split', 'minimal', 'terminal', 'aurora'] },
+  table: { purpose: 'decide', weight: 5, required: ['title', 'rows'], allowed: ['compare', ''] },
+  gallery: { purpose: 'prove', weight: 4, required: ['title', 'items'], allowed: ['mosaic', ''] },
+  features: { purpose: 'explain', weight: 3, required: ['title', 'items'], allowed: ['bento', 'numbered', 'strip', ''] },
+  stats: { purpose: 'reassure', weight: 3, required: ['title', 'items'], allowed: ['band', 'ticker', ''] },
+  testimonials: { purpose: 'reassure', weight: 3, required: ['title', 'items'], allowed: ['featured', 'masonry', ''] },
+  about: { purpose: 'context', weight: 2, required: ['title', 'text'], allowed: ['floating', 'timeline', 'left', ''] },
+  faq: { purpose: 'resolve', weight: 2, required: ['title', 'items'], allowed: ['columns', ''] },
+  pricing: { purpose: 'decide', weight: 4, required: ['title', 'items'], allowed: ['stacked', 'toggle', ''] },
+  cta: { purpose: 'act', weight: 4, required: ['title'], allowed: ['splash', 'email', ''] },
+  contact: { purpose: 'connect', weight: 5, required: [], allowed: ['overlap', 'split', 'cards', 'minimal', ''] }
+};
+
+const NOVELTY_RULES = [
+  ['hero', 'features', 'stats', 'testimonials', 'cta'],
+  ['hero', 'features', 'testimonials', 'cta'],
+  ['hero', 'about', 'features', 'cta']
+];
+
+function contractFor(type, sec) {
+  const base = SECTION_CONTRACTS[type] || { purpose: 'support', weight: 1, required: [], allowed: [] };
+  const missing = (base.required || []).filter((field) => {
+    if (field === 'items') return !Array.isArray(sec && sec.items) || !sec.items.length;
+    if (field === 'rows') return !Array.isArray(sec && sec.rows) || !sec.rows.length;
+    return !String(sec && sec[field] || '').trim();
+  });
+  return { type, purpose: base.purpose, weight: base.weight, required: base.required.slice(), missing, valid: missing.length === 0 };
+}
+
+function noveltyScore(types, seed) {
+  const list = Array.isArray(types) ? types.filter(Boolean) : [];
+  if (!list.length) return { score: 0, repeated: [], signature: '', distance: 0 };
+  const signature = list.join('>');
+  const repeated = [];
+  for (let i = 1; i < list.length; i++) if (list[i] === list[i - 1]) repeated.push(list[i]);
+  const familyPatterns = NOVELTY_RULES.map((pattern) => pattern.join('>'));
+  const exactPenalty = familyPatterns.indexOf(signature) !== -1 ? 24 : 0;
+  const distinct = new Set(list).size;
+  const score = Math.max(0, Math.min(100, Math.round(72 + Math.min(18, distinct * 3) - repeated.length * 18 - exactPenalty + (Math.abs(Number(seed) || 0) % 11))));
+  return { score, repeated: repeated.slice(0, 4), signature, distance: Math.max(0, score - 72) };
+}
+
+function compositionPlan(typeId, nicheId, seed, sections) {
+  const family = familyFor(typeId, nicheId);
+  const grammar = DESIGN_GRAMMARS[family] || DESIGN_GRAMMARS.quiet;
+  const list = Array.isArray(sections) ? sections : [];
+  const present = (type) => list.indexOf(type) !== -1;
+  const firstContent = list.find((type) => type !== 'hero' && type !== 'cta' && type !== 'contact') || 'about';
+  const variant = Math.abs(Number(seed) || 0) % 3;
+  const contracts = list.map((entry) => {
+    const type = typeof entry === 'string' ? entry : (entry && entry.type) || '';
+    return contractFor(type, typeof entry === 'object' ? entry : { type });
+  });
+  return {
+    version: 2,
+    family,
+    variant,
+    density: grammar.density,
+    lead: grammar.lead,
+    rhythm: grammar.rhythm,
+    visual: grammar.visual,
+    firstContent,
+    hasSignatureBlock: present('table') || present('gallery') || present('stats') || present('testimonials'),
+    sectionCount: list.length,
+    contracts,
+    novelty: noveltyScore(list, seed)
+  };
+}
+
 function validLayout(type, id) {
   if (typeof DB === 'undefined' || typeof DB.layoutsFor !== 'function') return true;
   const variants = DB.layoutsFor(type) || [];
@@ -280,12 +367,14 @@ function applyCompose(project, opts) {
     site.sections = restyle(site.sections);
   }
   site.compose = { family, variant, at: Date.now() };
+  site.composition = compositionPlan(src.typeId, src.nicheId, seed, site.sections || []);
   project.aiFamily = family;
   return project;
 }
 
 const AiCompose = {
-  familyFor, orderSections, seededShuffle, applyCompose, RECIPES, ANCHORS,
+  familyFor, orderSections, seededShuffle, applyCompose, compositionPlan, noveltyScore, contractFor,
+  SECTION_CONTRACTS, DESIGN_GRAMMARS, RECIPES, ANCHORS,
   varyPresence, varyNames, protectedFor,
   OPTIONAL_SECTIONS, CORE_SECTIONS, EXTRA_SECTIONS
 };

@@ -128,12 +128,19 @@ const SMOKES = [
   ['scripts/ai-fingerprint-smoke.js', 'AI fingerprint smoke'],
   ['scripts/ai-photos-smoke.js', 'AI photo ranker smoke'],
   ['scripts/ai-compose-smoke.js', 'AI compose smoke'],
+  // A locked brand is the difference between "the AI made a nice site" and "the
+  // AI made my client's site", so its suite is weighted towards what a lock must
+  // REFUSE to let through — including a self-repair that would quietly unlock it.
+  ['scripts/ai-kernel-smoke.js', 'AI brand kernel smoke'],
+  ['scripts/ai-critique-smoke.js', 'AI self-critique smoke'],
+  ['scripts/ai-next-upgrades-smoke.js', 'AI provenance, reference-distance & art-direction smoke'],
   // The wording engine: two clients in one industry must never be handed
   // word-for-word identical sites, and a client's own proofs must drive copy.
   ['scripts/copy-smoke.js', 'Copy engine smoke'],
   ['scripts/copilot-smoke.js', 'Copilot reasoning smoke'],
   ['scripts/copilot-repeat-smoke.js', 'Copilot repeat & positional targeting smoke'],
   ['scripts/vision-smoke.js', 'Copilot render audit smoke'],
+  ['scripts/visual-target-smoke.js', 'Visual section-target smoke (page/index metadata)'],
   ['scripts/palette-lab-smoke.js', 'Palette Lab smoke'],
   ['scripts/briefs-smoke.js', 'Saved briefs smoke'],
   // Offline and self-contained: guards determinism, palette binding and the size
@@ -162,6 +169,11 @@ const SMOKES = [
   // Site care judges content, not construction, so its suite is mostly about
   // what it REFUSES to flag — a maintenance report that cries wolf is ignored.
   ['scripts/sitecare-smoke.js', 'Site care smoke (stale, placeholder, demo content)'],
+  // The care report is the only artefact in the studio that is written FOR a
+  // client and then leaves the building, so its suite is about the three ways a
+  // document goes wrong on its own: it lies, it arrives broken, or a client's
+  // own words get edited into markup.
+  ['scripts/care-report-smoke.js', 'Client care report smoke (truthful, self-contained, escaped)'],
   // The badge writes a user's own referral code into every site they sell, so
   // the suite is as much about it not being a way IN as about the link working.
   ['scripts/badge-attribution-smoke.js', 'Attribution badge smoke'],
@@ -212,6 +224,11 @@ const SMOKES = [
   // — so the suite checks real exports with/without the button, stubs the
   // register, and cross-checks the three files every online source straddles.
   ['scripts/growth-links-smoke.js', 'Growth links smoke (WhatsApp, Companies House)'],
+  // The GEO answer layer (llms.txt + the AI-crawler robots policy) ends in an
+  // external handoff too — an answer engine quoting the site — so its suite
+  // checks the file is true, safe by default, and that the audit never
+  // promises more than the export ships.
+  ['scripts/geo-visibility-smoke.js', 'GEO visibility smoke (llms.txt, AI-crawler policy, AI-search grade)'],
   // macOS installs an update only once the app process is gone, and
   // electron-updater never asks it to leave — so the exit is ours to perform.
   // Getting that wrong strands every installed copy behind a splash it cannot
@@ -369,6 +386,11 @@ function checkBuilder() {
   // the last file loaded wins, so a module can be running somebody else's
   // implementation of a name it defined itself. Both had shipped.
   runScript(['scripts/global-scope-smoke.js'], 'Global scope smoke (duplicate declarations across scripts)');
+  // The look is CSS, but the behaviour behind it is not: ranking a palette
+  // search, formatting an animating number, and every class the shell writes
+  // into the DOM having a rule in the stylesheet. The metric band shipped two
+  // competing designs once and the one on screen was the quieter of the two.
+  runScript(['scripts/ui-polish-smoke.js'], 'UI polish smoke (palette ranking, counters, CSS/DOM seam)');
   // The `.v1` suffix on every stored key was a naming accident, not a version,
   // so a change to the shape of a project had two honest outcomes: keep the old
   // shape forever, or lose what people made. This asserts that the registry is
@@ -380,6 +402,12 @@ function checkBuilder() {
   // newest snapshot of a project is never dropped, by any rule — is asserted
   // here rather than asserted in a comment.
   runScript(['scripts/revs-policy-smoke.js'], 'Autosave retention smoke (age, count, byte budget)');
+  // Named milestones are the one part of that history no rule may take, and the
+  // rule is enforced in three files that cannot see each other: the rollover at
+  // capture time, the retention policy behind the Prune button, and a merge
+  // with a second machine. The suite is weighted towards what must NOT be
+  // dropped, because the failure it guards is a name that is gone months later.
+  runScript(['scripts/milestones-smoke.js'], 'Named milestones smoke (a name is never pruned)');
   // Restoring a backup used to overwrite everything and reload, which loses the
   // work the backup existed to protect whenever the file comes from a second
   // machine. Merging is now the default direction, and the rule it must keep —

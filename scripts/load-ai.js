@@ -22,6 +22,11 @@ function loadAI() {
   sandbox.AiFingerprint = require(path.join(ROOT, 'data', 'ai-fingerprint.js'));
   sandbox.AiPhotos = require(path.join(ROOT, 'data', 'ai-photos.js'));
   sandbox.AiCompose = require(path.join(ROOT, 'data', 'ai-compose.js'));
+  sandbox.AiFacts = require(path.join(ROOT, 'data', 'ai-facts.js'));
+  sandbox.AiReference = require(path.join(ROOT, 'data', 'ai-reference.js'));
+  sandbox.AiArtDirection = require(path.join(ROOT, 'data', 'ai-art-direction.js'));
+  sandbox.AiKernel = require(path.join(ROOT, 'data', 'ai-kernel.js'));
+  sandbox.AiCritique = require(path.join(ROOT, 'data', 'ai-critique.js'));
   sandbox.Copy = require(path.join(ROOT, 'data', 'copy.js'));
   sandbox.Copilot = require(path.join(ROOT, 'data', 'copilot.js'));
   vm.createContext(sandbox);

@@ -24,14 +24,15 @@
 
 const Proof = (() => {
 
-  const WEIGHTS = { performance: 30, keyboard: 25, links: 20, images: 10, copy: 10, manifest: 5 };
+  const WEIGHTS = { performance: 27, keyboard: 22, links: 18, images: 9, copy: 9, manifest: 4, aiSearch: 11 };
   const LABELS = {
     performance: 'Performance',
     keyboard: 'Keyboard & screen readers',
     links: 'Links, anchors and assets',
     images: 'Images',
     copy: 'Copy clarity',
-    manifest: 'Integrity'
+    manifest: 'Integrity',
+    aiSearch: 'AI answer visibility'
   };
 
   const esc = (s) => String(s == null ? '' : s)

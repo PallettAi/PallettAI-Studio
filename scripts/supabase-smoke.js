@@ -82,6 +82,37 @@ const check = (name, cond, extra) => {
   localStorage.setItem('pallettai.supabase.session.v1', JSON.stringify(ses));
   check('stale session refreshed via refresh_token', await SUPABASE.restoreSession() === true);
 
+  console.log('== an expired access token refreshes and replays once ==');
+  // The registry forgets every access token it has issued (refresh tokens still
+  // work), the way an hour passing does. Without the retry, an app left open
+  // 401s, clears the session and takes credits/streak/account reads down with it.
+  r = await SUPABASE.signIn('alice@test.local', 'password123');
+  check('signed back in for the refresh-retry checks', r.ok);
+  const token1 = SUPABASE.session().accessToken;
+  const expiredBy = await fetch(URL + '/__expireTokens', { headers: { Authorization: 'Bearer ' + token1 } }).then((x) => x.json()).catch(() => ({}));
+  check('the registry forgot its access tokens', expiredBy.expired > 0, expiredBy);
+  st = await SUPABASE.getMyState();
+  check('expired token → the read is replayed after one refresh', st.ok, st);
+  check('a fresh token replaced the expired one', SUPABASE.signedIn() && SUPABASE.session().accessToken !== token1);
+  // An RPC (the credits/streak/vault path) recovers the same way.
+  const token2 = SUPABASE.session().accessToken;
+  await fetch(URL + '/__expireTokens', { headers: { Authorization: 'Bearer ' + token2 } });
+  const credits = await SUPABASE.getCreditState();
+  check('RPCs recover from an expired access token too', credits.ok && typeof credits.left === 'number', credits);
+  check('the account is never signed out by a routine expiry', SUPABASE.signedIn());
+  // A refresh token that is really gone must fail honestly, once — no loop, and
+  // the 401 still clears the session so the UI can ask for a sign-in.
+  const deadSes = JSON.parse(localStorage.getItem('pallettai.supabase.session.v1'));
+  deadSes.accessToken = 'tok_stale';
+  deadSes.refreshToken = 'rf_not-a-real-account';
+  localStorage.setItem('pallettai.supabase.session.v1', JSON.stringify(deadSes));
+  const denied = await SUPABASE.getCreditState();
+  check('a dead refresh token fails honestly instead of looping', denied.ok === false && denied.offline !== true, denied);
+  check('and that really clears the signed-out session', !SUPABASE.signedIn());
+  // The offline checks below need a session to fail a request on.
+  r = await SUPABASE.signIn('alice@test.local', 'password123');
+  check('signed back in for the offline checks', r.ok);
+
   console.log('== offline + auth failures ==');
   SUPABASE.setConfig(DEAD, KEY);
   r = await SUPABASE.activateLicense('PAL-PRO-SMOKE-0GHS');

@@ -1162,6 +1162,31 @@ const AI = (() => {
     try { if (typeof require === 'function') return require('../data/copy.js'); } catch (e) { /* classic script */ }
     return null;
   }
+  function kernelLib() {
+    if (typeof AiKernel !== 'undefined') return AiKernel;
+    try { if (typeof require === 'function') return require('../data/ai-kernel.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
+  function critiqueLib() {
+    if (typeof AiCritique !== 'undefined') return AiCritique;
+    try { if (typeof require === 'function') return require('../data/ai-critique.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
+  function factsLib() {
+    if (typeof AiFacts !== 'undefined') return AiFacts;
+    try { if (typeof require === 'function') return require('../data/ai-facts.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
+  function referenceLib() {
+    if (typeof AiReference !== 'undefined') return AiReference;
+    try { if (typeof require === 'function') return require('../data/ai-reference.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
+  function artDirectionLib() {
+    if (typeof AiArtDirection !== 'undefined') return AiArtDirection;
+    try { if (typeof require === 'function') return require('../data/ai-art-direction.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
   function aaPaletteIds(ids) {
     const list = Array.isArray(ids) ? ids : [];
     const ok = list.filter((pid) => {
@@ -2252,7 +2277,13 @@ const AI = (() => {
     const brief = (Brief && opts && opts.brief) ? Brief.normalizeBrief(opts.brief) : null;
     const filled = !!(Brief && brief && Brief.briefFilled(brief));
     const studiedIn = Array.isArray(opts && opts.studied) ? opts.studied.filter(Boolean).slice(0, 3) : [];
-    const voice = voiceFrom(brief || { voice: 'warm' });
+    // Brand kernel: an approved client visual system the generator must obey.
+    // A locked tone of voice shapes the copy from the first line, and the
+    // renderer-owned fields are enforced on the finished project below.
+    const Kernel = kernelLib();
+    const kernel = Kernel ? Kernel.normalize(opts && opts.kernel) : null;
+    const kernelVoice = (Kernel && kernel && Kernel.isLocked(kernel, 'voice')) ? kernel.voice : '';
+    const voice = voiceFrom(kernelVoice ? { voice: kernelVoice } : (brief || { voice: 'warm' }));
     const onePager = !!(opts && opts.onePager);
     // a concrete subject beats an ambiguous guess (“dog grooming studio” is
     // pet care first, a creative agency never)
@@ -2489,6 +2520,19 @@ const AI = (() => {
     const transparentNav = opts.layouts !== 'classic' && photoMode !== 'none' && dna.look !== 'minimal' && Math.abs(seed) % 2 === 0;
     const stickyNav = !(dna.look === 'minimal' && Math.abs(seed) % 3 === 0);
 
+    const Facts = factsLib();
+    const References = referenceLib();
+    const ArtDirection = artDirectionLib();
+    const factLedger = Facts && Facts.build
+      ? Facts.build({ brief, website, studied: studiedIn })
+      : null;
+    const referenceGuard = References && References.assess
+      ? References.assess({ site: { tagline, description: desc, sections } }, studiedIn)
+      : null;
+    const imageDirection = ArtDirection && ArtDirection.directionFor
+      ? ArtDirection.directionFor(type.id, dna.look, seed)
+      : null;
+
     const project = {
       id: 'ai_' + Math.random().toString(36).slice(2, 10),
       name: brand + ' — Website',
@@ -2528,7 +2572,10 @@ const AI = (() => {
         voice,
         studied: studiedMeta.length ? studiedMeta : undefined,
         fingerprint: { key: fp.key, seed: fp.seed, salt: fp.salt, prompt: raw },
-        photoGrade
+        photoGrade,
+        factLedger,
+        referenceGuard,
+        imageDirection
       }
     };
     if (filled && !onePager) {
@@ -2548,7 +2595,37 @@ const AI = (() => {
         photoMode: (opts && opts.photoMode) || 'real'
       });
     }
+    // Brand kernel: enforced BEFORE the logo is drawn and before any review pass
+    // runs, so the drawn logo uses the client's own palette and every later pass
+    // can read the lock instead of guessing at it. Nothing below this line may
+    // out-rank a field the creator locked.
+    if (Kernel && kernel) {
+      const enforced = Kernel.apply(project, kernel);
+      project.site.kernel = kernel;
+      project.aiKernel = { name: kernel.name, applied: enforced.applied, locked: Kernel.lockedFields(kernel) };
+    }
     if (!project.site.logo) logo(project);
+    // Art-director pass: grade the exact structured project, repair only the
+    // conservative findings, and keep a small receipt for the Designer. This
+    // is intentionally offline and deterministic; it never rewrites authored
+    // claims or asks a hosted model to invent a correction.
+    const Critique = critiqueLib();
+    if (Critique && typeof critiquePass === 'function') {
+      try {
+        const review = critiquePass(project);
+        if (review) {
+          project.site.selfCritique = {
+            version: 1,
+            score: review.after && review.after.score,
+            letter: review.after && review.after.letter,
+            changed: review.repair ? review.repair.changed : 0,
+            fixes: (review.fixes || []).map((item) => item.id).slice(0, 12),
+            adviceCount: (review.advice || []).length,
+            receipt: review.receipt || ''
+          };
+        }
+      } catch (e) { /* a review must never block generation */ }
+    }
     // Identity pre-fill: prefer business identity stored on this device
     try {
       const rawId = (typeof localStorage!=='undefined') ? JSON.parse(localStorage.getItem('pallettai.settings.v1')||'{}') : null;
@@ -2563,6 +2640,10 @@ const AI = (() => {
         if (id.businessSocial && String(id.businessSocial).trim()) project.site.social = String(id.businessSocial).trim();
       }
     } catch(e) {}
+    // The identity pre-fill only ever writes contact details, so the locked
+    // fields cannot have drifted — but a review pass between the two can change
+    // a palette, so re-assert the lock rather than trusting the order.
+    if (Kernel && kernel) Kernel.apply(project, kernel);
     project.site.photoPass = { status: 'pending', placed: { hero: false, about: false, gallery: 0 } };
     return project;
   }
@@ -2838,7 +2919,11 @@ const AI = (() => {
 
   function generateDirections(prompt, opts = {}) {
     const raw = String(prompt || '').trim() || 'a modern, friendly business';
-    const base = hash(raw.toLowerCase() + 'direction-lab');
+    // A direction lab is an exploration surface, not a deterministic template
+    // picker. Keep explicit seeds reproducible for tests/imports, while the
+    // Studio UI supplies a fresh salt for each opening of the lab.
+    const salt = Number(opts && opts.salt) || 0;
+    const base = hash(raw.toLowerCase() + 'direction-lab|' + salt);
     const first = generateSite(raw, { ...opts, look: DIRECTION_PROFILES[0].look, seed: base });
     const stableName = (opts.name && String(opts.name).trim()) || first.site.name;
     return DIRECTION_PROFILES.map((profile, i) => {
@@ -3219,6 +3304,87 @@ const AI = (() => {
     return { changed: changes.length, changes };
   }
 
+  /*
+    Self-critique pass — generation's own pre-flight.
+
+    Runs the deterministic gate on a freshly built site and repairs only what the
+    gate classifies as safe, with two guards the roadmap called for: repairs that
+    would edit a field locked by the brand kernel are refused, and a repair run
+    that measurably lowers the launch grade is rolled back. A self-fix that ships
+    a regression is worse than no self-fix at all, so the pass is honest about
+    which of the two happened.
+  */
+  function critiquePass(project, opts = {}) {
+    const Critique = critiqueLib();
+    const Kernel = kernelLib();
+    if (!Critique || !project || !project.site) return null;
+    const before = qualityGate(project, opts);
+    const kernel = Kernel ? Kernel.normalize(project.site.kernel) : null;
+    const locked = (Kernel && kernel) ? Kernel.lockedFields(kernel) : [];
+    const decision = Critique.plan(before, { locked });
+    const empty = { changed: 0, changes: [] };
+    if (!decision.fixes.length) {
+      // Even when there is no eligible repair, surface any locked-field
+      // violation. This keeps the receipt honest and lets callers prove that a
+      // brand lock was respected rather than silently skipping the check.
+      const protectedFields = [];
+      if (Kernel && kernel) {
+        Kernel.violations(project, kernel).forEach((violation) => {
+          if (protectedFields.indexOf(violation.field) === -1) protectedFields.push(violation.field);
+        });
+        // A locked field can be the reason a safe finding was withheld even
+        // when the project already happens to match the kernel. Surface that
+        // protection as well; otherwise the receipt loses the important fact
+        // that the palette was deliberately left alone.
+        (decision.advice || []).forEach((item) => {
+          const field = Critique.FIX_TOUCHES_FIELD && Critique.FIX_TOUCHES_FIELD[item.id];
+          if (field && kernel.locks && kernel.locks[field] && protectedFields.indexOf(field) === -1) protectedFields.push(field);
+        });
+        if (protectedFields.length) Kernel.apply(project, kernel);
+      }
+      return {
+        before, after: before, ...decision,
+        repair: empty, reverted: false, protectedFields,
+        receipt: Critique.receipt(before, before, null)
+      };
+    }
+    // Snapshot so a repair that makes the site worse can be undone. Skipped for
+    // projects too large to clone cheaply — the honest failure is no rollback,
+    // never a half-restored project.
+    let snapshot = null;
+    try {
+      const raw = JSON.stringify(project);
+      if (raw && raw.length < 2500000) snapshot = raw;
+    } catch (e) { snapshot = null; }
+    const repair = repairQuality(project);
+    // The repair pass is monolithic: it knows how to tidy a site, not whose brand
+    // it is tidying. So any locked field is re-asserted afterwards. Without this,
+    // planning "do not touch the locked palette" was a promise the executor never
+    // heard — a contrast tidy-up would quietly recolor a client's site.
+    let protectedFields = [];
+    if (Kernel && kernel) {
+      protectedFields = Kernel.violations(project, kernel).map((v) => v.field);
+      if (protectedFields.length) Kernel.apply(project, kernel);
+    }
+    const after = qualityGate(project, opts);
+    let reverted = false;
+    if (Critique.worseThan(before, after) && snapshot) {
+      try {
+        const restored = JSON.parse(snapshot);
+        Object.keys(project).forEach((key) => { delete project[key]; });
+        Object.keys(restored).forEach((key) => { project[key] = restored[key]; });
+        reverted = true;
+      } catch (e) { reverted = false; }
+    }
+    const finalReport = reverted ? before : after;
+    const finalRepair = reverted ? empty : repair;
+    return {
+      before, after: finalReport, ...decision,
+      repair: finalRepair, reverted, protectedFields,
+      receipt: Critique.receipt(before, finalReport, finalRepair)
+    };
+  }
+
   // ============================================================
   // Real photos — keyless, topic-matched photography from the web.
   // Primary: Openverse (openly licensed, with creator/licence metadata).
@@ -3468,11 +3634,13 @@ const AI = (() => {
     const Photos = photoLib();
     const rawScenes = project.aiScenes || TYPE_SCENES[type.id] || TYPE_SCENES.generic;
     const scenes = Photos && Photos.expandScenes ? Photos.expandScenes(rawScenes) : rawScenes;
+    const art = project.site.imageDirection || {};
+    const artSuffix = art.prompt ? ', ' + String(art.prompt).slice(0, 220) : '';
     const queryFor = (key, index, seed) => {
-      if (Photos && Photos.sceneQuery) return Photos.sceneQuery(rawScenes, key === 'gallery' ? 'gallery' : key, index, seed);
+      if (Photos && Photos.sceneQuery) return Photos.sceneQuery(rawScenes, key === 'gallery' ? 'gallery' : key, index, seed) + artSuffix;
       const v = scenes[key] || scenes.hero;
       if (Array.isArray(v)) return v[Math.abs((index || 0)) % v.length] || v[0];
-      return v || 'photo';
+      return (v || 'photo') + artSuffix;
     };
     const out = { hero: false, about: false, gallery: 0, source };
     const hero = s.sections.find((x) => x.type === 'hero');
@@ -3529,7 +3697,7 @@ const AI = (() => {
     // fall back to the chosen source only for slots the creator didn't fill
     if (source === 'none') return out;
     const seedB = (s.fingerprint && s.fingerprint.seed) || hash(String(prompt || '') + ' ' + s.name);
-    const base = imageBase(prompt, type.id);
+    const base = imageBase(prompt, type.id) + artSuffix;
     const usedUrls = [];
     const usedTitles = [];
     Object.keys(filled).forEach((key) => {
@@ -5883,7 +6051,8 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
   const COST = { site: 1, images: 1, enhance: 1, restyle: 1, shuffle: 1, section: 1, translate: 1 };
 
   return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, studySite, isPublicFetchUrl, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, shuffleLook, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatPlanOne, splitCompound, chatHelp, sampleSection, copyOptions, imageBase, photoPicks, polarity, designMention, designAlternatives,
-    nthSecOfType, sectionOrdinal, resolveTarget, positionalMention, followMiss, repeatMiss, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES, applyNicheExtras, addServicesPage, matchNiche };
+    nthSecOfType, sectionOrdinal, resolveTarget, positionalMention, followMiss, repeatMiss, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES, applyNicheExtras, addServicesPage, matchNiche,
+    critiquePass, brandKernel: kernelLib };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = AI;

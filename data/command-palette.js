@@ -18,14 +18,90 @@ const COMMANDS = [
   { id: 'whatsnew', title: "What's new", hint: 'Latest changes and fixes', group: 'Help', action: 'whatsnew', keywords: 'release notes changelog update version' }
 ];
 
+/* Matching is tiered rather than yes/no, because where a query hits says how
+   good the hit is: a title that starts with it beats a title that contains it,
+   which beats a keyword, which beats letters picked out of order. The old
+   filter was one flat substring test, so it could not rank and could not
+   highlight — 'ua' found nothing, and 'ai' returned everything in file order. */
+function normalizeQuery(query) {
+  return String(query == null ? '' : query).trim().toLowerCase();
+}
+
+function wordStartIndex(hay, q) {
+  let i = hay.indexOf(q);
+  while (i !== -1) {
+    if (i === 0 || /[^a-z0-9]/.test(hay.charAt(i - 1))) return i;
+    i = hay.indexOf(q, i + 1);
+  }
+  return -1;
+}
+
+/* Every query letter in order, allowing gaps: 'dsh' finds 'Dashboard'. */
+function subsequenceIndexes(hay, q) {
+  const out = [];
+  let at = 0;
+  for (let i = 0; i < q.length; i++) {
+    const found = hay.indexOf(q.charAt(i), at);
+    if (found === -1) return null;
+    out.push(found);
+    at = found + 1;
+  }
+  return out;
+}
+
+/* Character ranges to mark in a title. Adjacent letters merge, so a direct hit
+   highlights as one phrase and a scattered one highlights per letter. */
+function matchRanges(query, text) {
+  const q = normalizeQuery(query);
+  const hay = String(text == null ? '' : text).toLowerCase();
+  if (!q || !hay) return [];
+  const direct = hay.indexOf(q);
+  if (direct !== -1) return [[direct, direct + q.length]];
+  const idx = subsequenceIndexes(hay, q);
+  if (!idx) return [];
+  const out = [];
+  idx.forEach((i) => {
+    const last = out[out.length - 1];
+    if (last && last[1] === i) last[1] = i + 1;
+    else out.push([i, i + 1]);
+  });
+  return out;
+}
+
+function scoreCommand(query, cmd) {
+  const q = normalizeQuery(query);
+  if (!q) return { score: 0, ranges: [] };
+  if (!cmd) return null;
+  const title = String(cmd.title || '').toLowerCase();
+  const rest = [cmd.hint, cmd.group, cmd.keywords].join(' ').toLowerCase();
+  if (title === q) return { score: 6, ranges: [[0, title.length]] };
+  if (title.indexOf(q) === 0) return { score: 5, ranges: [[0, q.length]] };
+  if (wordStartIndex(title, q) !== -1) return { score: 4, ranges: matchRanges(q, title) };
+  if (title.indexOf(q) !== -1) return { score: 3, ranges: matchRanges(q, title) };
+  if (rest.indexOf(q) !== -1) return { score: 2, ranges: [] };
+  /* Loose matching earns its keep on three letters or more. Below that it stops
+     discriminating and every two-letter query matches half the list. */
+  if (q.length >= 3 && subsequenceIndexes(title, q)) return { score: 1, ranges: matchRanges(q, title) };
+  return null;
+}
+
 function filterCommands(query, commands) {
   const list = commands || COMMANDS;
-  const q = String(query || '').trim().toLowerCase();
-  if (!q) return list.slice();
-  return list.filter((c) => {
-    const hay = [c.title, c.hint, c.group, c.keywords].join(' ').toLowerCase();
-    return hay.indexOf(q) !== -1;
+  const q = normalizeQuery(query);
+  // Copies, so a ranked result can carry its highlight ranges without writing
+  // onto the shared command list.
+  if (!q) return list.map((c) => Object.assign({}, c, { match: [] }));
+  const scored = [];
+  list.forEach((c, i) => {
+    const hit = scoreCommand(q, c);
+    if (hit) scored.push({ cmd: c, score: hit.score, ranges: hit.ranges, i });
   });
+  /* Best tier wins; anything tied keeps the order the list shipped in. Ranking
+     further than that would mean arguing that 'Database' beats 'Dashboard' for
+     'da' on title length, which is not a reason a creator can see. Ties on
+     quality should look like the palette they already know. */
+  scored.sort((a, b) => (b.score - a.score) || (a.i - b.i));
+  return scored.map((s) => Object.assign({}, s.cmd, { match: s.ranges }));
 }
 
 function nextIndex(current, length, delta) {
@@ -34,5 +110,5 @@ function nextIndex(current, length, delta) {
   return n < 0 ? n + length : n;
 }
 
-const CommandPalette = { COMMANDS, filterCommands, nextIndex };
+const CommandPalette = { COMMANDS, filterCommands, nextIndex, scoreCommand, matchRanges, normalizeQuery };
 if (typeof module !== 'undefined' && module.exports) module.exports = CommandPalette;

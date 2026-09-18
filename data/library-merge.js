@@ -44,9 +44,47 @@
 
 const BACKUP_KIND = 'pallettai-library-backup';
 
-// The app's own capture cap (captureRevision keeps 12 snapshots per project).
-// Named here so a change there is a visible change in this file too.
+// The app's own capture cap (captureRevision keeps 12 UNNAMED snapshots per
+// project). Named here so a change there is a visible change in this file too.
 const REV_CAP = 12;
+
+// The field that makes a snapshot a named milestone. Mirrors Milestones.FIELD
+// and RevsPolicy.FIELD; the suite pins all three together rather than trusting
+// a comment. A merge that dropped one while the app called it protected would
+// be the worst place for the two files to disagree.
+const PIN_FIELD = 'pin';
+
+function pinnedOf(rev) {
+  return !!(rev && typeof rev[PIN_FIELD] === 'string' && rev[PIN_FIELD].trim());
+}
+
+/*
+  Two copies of one snapshot, from two machines.
+
+  Identity here is the timestamp, which is how this file has always matched
+  revisions up — and it is not enough any more, because the two copies can
+  differ in whether they are named. Pinning on the laptop and merging on the
+  desktop used to mean whichever side happened to be read first won, so a
+  milestone could arrive and be silently discarded. A name is a decision, so it
+  outranks the unnamed copy; between two names, the later deliberate one wins.
+*/
+function betterCopy(mine, theirs) {
+  if (!pinnedOf(theirs)) return mine;
+  if (!pinnedOf(mine)) return theirs;
+  return (Number(theirs.pinAt) || 0) > (Number(mine.pinAt) || 0) ? theirs : mine;
+}
+
+// Newest-first list, capped at `cap` UNNAMED snapshots — every milestone is
+// kept whatever the cap says, which is the guarantee the app makes.
+function keepNamed(list, cap) {
+  const out = [];
+  let seats = 0;
+  (Array.isArray(list) ? list : []).forEach((rev) => {
+    if (pinnedOf(rev)) { out.push(rev); return; }
+    if (seats < cap) { seats += 1; out.push(rev); }
+  });
+  return out;
+}
 
 // What each stored key holds, so the report can count things instead of only
 // weighing them. Keys the app does not know are reported, not guessed at.
@@ -217,7 +255,7 @@ function inspect(raw, current) {
 */
 function union(currentRaw, incomingRaw, key) {
   const meta = KINDS[key] || { kind: 'raw', label: key, item: 'item' };
-  const out = { ok: false, raw: incomingRaw, added: 0, updated: 0, keptOlder: 0, keptMine: 0, error: '', unchanged: false, capped: 0, note: '' };
+  const out = { ok: false, raw: incomingRaw, added: 0, updated: 0, keptOlder: 0, keptMine: 0, error: '', unchanged: false, capped: 0, milestones: 0, note: '' };
   const mine = parse(currentRaw);
   const theirs = parse(incomingRaw);
   if (!theirs.ok) { out.error = 'the backup copy of ' + meta.label + ' ' + theirs.error; return out; }
@@ -260,29 +298,39 @@ function union(currentRaw, incomingRaw, key) {
     const a = mine.value && typeof mine.value === 'object' && !Array.isArray(mine.value) ? mine.value : {};
     const b = theirs.value && typeof theirs.value === 'object' && !Array.isArray(theirs.value) ? theirs.value : {};
     const merged = {};
-    Object.keys(a).forEach((id) => { merged[id] = Array.isArray(a[id]) ? a[id].slice() : []; });
-    Object.keys(b).forEach((id) => {
-      const list = Array.isArray(b[id]) ? b[id] : [];
-      if (!merged[id]) { merged[id] = list.slice(); out.added += list.length; return; }
-      const seen = new Set(merged[id].map((rev) => String(rev && rev.t || '')));
-      list.forEach((rev) => {
-        const id2 = String(rev && rev.t || '');
-        if (seen.has(id2)) return;
-        seen.add(id2);
-        merged[id].push(rev);
-        out.added += 1;
+    const ids = Object.keys(a);
+    Object.keys(b).forEach((id) => { if (ids.indexOf(id) === -1) ids.push(id); });
+    ids.forEach((id) => {
+      const mineList = Array.isArray(a[id]) ? a[id].filter((rev) => rev && typeof rev === 'object') : [];
+      const theirsList = Array.isArray(b[id]) ? b[id].filter((rev) => rev && typeof rev === 'object') : [];
+      const byTime = new Map();
+      mineList.forEach((rev) => { byTime.set(String(rev.t || ''), rev); });
+      theirsList.forEach((rev) => {
+        const key2 = String(rev.t || '');
+        const had = byTime.get(key2);
+        if (!had) { byTime.set(key2, rev); out.added += 1; return; }
+        const winner = betterCopy(had, rev);
+        if (winner !== had) { byTime.set(key2, winner); out.updated += 1; }
       });
       // Newest first, then the same cap the app applies when capturing — an
-      // unbounded union would breach the library's own size ceiling.
-      merged[id].sort((x, y) => (Number(y && y.t) || 0) - (Number(x && x.t) || 0));
-      if (merged[id].length > REV_CAP) { out.capped += merged[id].length - REV_CAP; merged[id] = merged[id].slice(0, REV_CAP); }
+      // unbounded union would breach the library's own size ceiling. The cap
+      // counts unnamed snapshots only.
+      const list = Array.from(byTime.values()).sort((x, y) => (Number(y && y.t) || 0) - (Number(x && x.t) || 0));
+      const kept = keepNamed(list, REV_CAP);
+      out.capped += list.length - kept.length;
+      out.milestones += kept.filter(pinnedOf).length;
+      merged[id] = kept;
     });
     const raw = JSON.stringify(merged);
     out.ok = true;
     out.raw = raw;
     out.unchanged = raw === currentRaw;
     out.total = Object.keys(merged).reduce((n, id) => n + merged[id].length, 0);
-    if (out.capped) out.note = out.capped + ' older ' + (out.capped === 1 ? 'snapshot was' : 'snapshots were') + ' dropped past the ' + REV_CAP + '-per-project limit';
+    if (out.capped) out.note = out.capped + ' older unnamed ' + (out.capped === 1 ? 'snapshot was' : 'snapshots were') + ' dropped past the ' + REV_CAP + '-per-project limit';
+    if (out.milestones) {
+      out.note = (out.note ? out.note + ' ' : '') + out.milestones + ' named milestone'
+        + (out.milestones === 1 ? ' is' : 's are') + ' kept, and never counted against that limit.';
+    }
     return out;
   }
 
@@ -354,7 +402,7 @@ function planMerge(inspection, current, options) {
   return out;
 }
 
-const LibraryMerge = { BACKUP_KIND, KINDS, REV_CAP, inspect, summarise, union, planMerge, bytes, stampOf, keyOf };
+const LibraryMerge = { BACKUP_KIND, KINDS, REV_CAP, PIN_FIELD, pinnedOf, keepNamed, betterCopy, inspect, summarise, union, planMerge, bytes, stampOf, keyOf };
 
 if (typeof window !== 'undefined') window.LibraryMerge = LibraryMerge;
 if (typeof module !== 'undefined' && module.exports) module.exports = LibraryMerge;

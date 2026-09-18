@@ -23,6 +23,12 @@ const AI = loadAI();
 console.log('== Family map ==');
 assert(Compose.familyFor('food', 'pizzeria') === 'menu-first', 'pizzeria is menu-first');
 assert(Compose.familyFor('home', 'plumber') === 'proof-first', 'plumber is proof-first');
+assert(Compose.DESIGN_GRAMMARS['menu-first'].visual === 'image-led', 'menu-first has an image-led grammar');
+const plan = Compose.compositionPlan('food', 'pizzeria', 17, ['hero', 'table', 'gallery', 'features', 'cta', 'contact']);
+assert(plan.family === 'menu-first' && plan.lead === 'product', 'composition plan records the niche grammar');
+assert(plan.firstContent === 'table' && plan.hasSignatureBlock === true, 'composition plan records the first content beat and signature block');
+assert(plan.version === 2 && Array.isArray(plan.contracts) && plan.contracts.length === 6, 'composition plan carries typed contracts');
+assert(plan.novelty && plan.novelty.score > 0 && plan.novelty.signature.indexOf('hero>') === 0, 'composition plan carries a novelty score and signature');
 
 console.log('\n== Food home is menu/gallery first ==');
 const pizza = AI.generateSite('wood fired pizza restaurant', { onePager: true, photoMode: 'real' });
@@ -55,6 +61,9 @@ const specA = AI.randomLogoSpec({ site: { name: 'LeakStop', palette: 'paper', fo
 const specB = AI.randomLogoSpec({ site: { name: 'LeakStop', palette: 'paper', font: 'inter', fingerprint: { seed: 42 } } });
 assert(specA.style === specB.style && specA.shape === specB.shape && specA.seed === specB.seed, 'same fingerprint seed → same logo spec');
 assert(pizza.site.logo && String(pizza.site.logo).indexOf('data:image/svg') === 0, 'generateSite attaches a logo');
+assert(pizza.site.composition && pizza.site.composition.family === 'menu-first', 'generated site stores its composition grammar');
+assert(pizza.site.composition.contracts.some((c) => c.type === 'table' && c.purpose === 'decide'), 'generated composition explains the menu block purpose');
+assert(pizza.site.composition.novelty && pizza.site.composition.novelty.score >= 0, 'generated composition stores a measurable novelty score');
 
 if (failed) {
   console.error('\nai-compose-smoke FAILED — ' + failed + ' failure(s)');

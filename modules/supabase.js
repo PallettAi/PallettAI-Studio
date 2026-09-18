@@ -176,22 +176,11 @@ const SUPABASE = (() => {
       const s = loadSes();
       if (!api.isConfigured() || !s) return { ok: false, msg: 'Sign in to change your password.' };
       try {
-        const res = await _request(base() + '/auth/v1/user', {
+        await _readResponse(base() + '/auth/v1/user', () => ({
           method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: anon(),
-            Authorization: 'Bearer ' + s.accessToken
-          },
+          headers: _authHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ password: String(password || '') })
-        }, options, TIMEOUTS.auth);
-        const j = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          const e = new Error(j.msg || j.error_description || j.message || 'Could not update password.');
-          e.code = j.error_code || j.code || 'request_failed';
-          e.status = res.status;
-          throw e;
-        }
+        }), options, TIMEOUTS.auth, 'Could not update password.');
         return { ok: true };
       } catch (e) { return _err(e); }
     },
@@ -289,19 +278,33 @@ const SUPABASE = (() => {
     // Push one project snapshot. Returns { ok, outcome, updatedAt (epoch ms) }.
     // The payload is passed through unchanged — the registry validates its
     // shape and size, so a bad or oversized payload surfaces honestly.
-    async saveProjectBackup(projectId, name, payload, options) {
+    async saveProjectBackup(projectId, name, payload, options, localUpdatedAt) {
       const s = loadSes();
       if (!api.isConfigured() || !s) return { ok: false, msg: 'Sign in to back projects up to the vault.' };
       try {
         const j = await _rpc('save_project_backup', {
           p_project_id: String(projectId || '').slice(0, 80),
           p_name: String(name || '').slice(0, 200),
-          p_payload: payload
+          p_payload: payload,
+          // Server-side version guard: when this push overwrites a DIFFERENT
+          // historical state, the RPC archives the stored payload first.
+          // (JSON.stringify drops undefined, so absent stays absent.)
+          p_local_updated_at: Number.isFinite(localUpdatedAt) ? Math.round(localUpdatedAt) : undefined
         }, options, TIMEOUTS.write);
+        // The RPC answers with an outcome, not an HTTP status, for the cases it
+        // decides itself — a too-large payload comes back as 200 + outcome
+        // 'too-large' from PostgREST, and reporting that as a successful save
+        // would stamp a baseline for a project that was never stored. Only an
+        // explicit 'saved' is a save.
+        const outcome = (j && j.outcome) || 'saved';
+        if (outcome === 'too-large') return { ok: false, outcome, tooLarge: true, msg: 'This project is too large for the vault — remove some embedded photos and try again.' };
+        if (outcome === 'bad-input') return { ok: false, outcome, msg: 'The registry refused this project — check it and try again.' };
+        if (outcome === 'not-signed-in') return { ok: false, outcome, msg: 'Session expired — please sign in again.' };
         const at = j.updatedAt ? Date.parse(j.updatedAt) : 0;
-        return { ok: true, outcome: j.outcome || 'saved', updatedAt: Number.isFinite(at) ? at : null };
+        return { ok: true, outcome, updatedAt: Number.isFinite(at) ? at : null };
       } catch (e) {
         const r = _err(e);
+        // Some proxies reject an oversized body before the RPC ever runs.
         if (e && e.status === 413) return { ok: false, msg: 'This project is too large for the vault — remove some embedded photos and try again.', tooLarge: true };
         return r;
       }
@@ -333,6 +336,52 @@ const SUPABASE = (() => {
         }));
         return { ok: true, backups };
       } catch (e) { return _err(e); }
+    },
+
+    // Cloud vault version history (schema.sql Part 6b): the rolling per-project
+    // archive the server writes on overwrite/delete, plus explicit conflict
+    // copies. List returns metadata only; get returns the full payload.
+    async listProjectBackupVersions(projectId, options) {
+      const s = loadSes();
+      if (!api.isConfigured() || !s) return { ok: false, msg: 'Not signed in.' };
+      try {
+        const j = await _rpc('list_project_backup_versions', { p_project_id: String(projectId || '').slice(0, 80) }, options, TIMEOUTS.read);
+        return { ok: true, versions: Array.isArray(j && j.versions) ? j.versions : [] };
+      } catch (e) { return _err(e); }
+    },
+
+    async getProjectBackupVersion(projectId, versionId, options) {
+      const s = loadSes();
+      if (!api.isConfigured() || !s) return { ok: false, msg: 'Not signed in.' };
+      try {
+        const j = await _rpc('get_project_backup_version', {
+          p_project_id: String(projectId || '').slice(0, 80),
+          p_version_id: Math.round(Number(versionId) || 0)
+        }, options, TIMEOUTS.read);
+        if (j && j.outcome === 'not-found') return { ok: false, msg: 'That version is no longer in the archive (it keeps the newest 10).' };
+        return { ok: true, payload: (j && j.payload) || null, createdAt: (j && j.createdAt) || null, reason: (j && j.reason) || '' };
+      } catch (e) { return _err(e); }
+    },
+
+    // Explicit archive write (the merge engine files 'conflict' copies here).
+    async saveProjectBackupVersion(projectId, payload, reason, options) {
+      const s = loadSes();
+      if (!api.isConfigured() || !s) return { ok: false, msg: 'Not signed in.' };
+      try {
+        const j = await _rpc('save_project_backup_version', {
+          p_project_id: String(projectId || '').slice(0, 80),
+          p_payload: payload,
+          p_reason: String(reason || 'pre-save').slice(0, 20)
+        }, options, TIMEOUTS.write);
+        const outcome = (j && j.outcome) || 'saved';
+        if (outcome === 'saved') return { ok: true, outcome };
+        if (outcome === 'too-large') return { ok: false, outcome, tooLarge: true, msg: 'This snapshot is too large for the archive.' };
+        return { ok: false, outcome, msg: 'The registry refused this snapshot.' };
+      } catch (e) {
+        const r = _err(e);
+        if (e && e.status === 413) return { ok: false, msg: 'This snapshot is too large for the archive.', tooLarge: true };
+        return r;
+      }
     },
 
     // ---------- daily streak (registry-decided, anti-cheat) ----------
@@ -412,13 +461,9 @@ const SUPABASE = (() => {
       const s = loadSes();
       if (!api.isConfigured() || !s) return { ok: false, fallback: true, msg: 'Sign in to use DeepL.' };
       try {
-        const res = await _request(base() + '/functions/v1/translate', {
+        const res = await _authedResponse(base() + '/functions/v1/translate', () => ({
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: anon(),
-            Authorization: 'Bearer ' + s.accessToken
-          },
+          headers: _authHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
             texts: Array.isArray(texts) ? texts : [],
             target: String(target || 'ES'),
@@ -428,7 +473,7 @@ const SUPABASE = (() => {
             // (one charge, not two) while still metering direct callers.
             ref: String((options && options.ref) || '')
           })
-        }, options, TIMEOUTS.write);
+        }), options, TIMEOUTS.write);
         const j = await res.json().catch(() => ({}));
         if (!res.ok || !j || j.ok !== true || !Array.isArray(j.texts)) {
           return { ok: false, fallback: true, msg: (j && j.error) || 'DeepL unavailable' };
@@ -447,15 +492,11 @@ const SUPABASE = (() => {
       const s = loadSes();
       if (!api.isConfigured() || !s) return { ok: false, msg: 'Sign in to upgrade.' };
       try {
-        const res = await _request(base() + '/functions/v1/dodo-checkout', {
+        const res = await _authedResponse(base() + '/functions/v1/dodo-checkout', () => ({
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: anon(),
-            Authorization: 'Bearer ' + s.accessToken
-          },
+          headers: _authHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ plan: String(planId || ''), returnUrl: String(returnUrl || '') })
-        }, options, TIMEOUTS.write);
+        }), options, TIMEOUTS.write);
         const j = await res.json().catch(() => ({}));
         // "not switched on yet" and "broken" are different answers and the
         // customer deserves the true one: the first is fixed with a license key,
@@ -547,12 +588,61 @@ const SUPABASE = (() => {
     return j;
   }
 
-  async function _readResponse(url, init, options, timeoutMs, message) {
-    const res = await _request(url, init, options, timeoutMs);
+  // Bearer headers for an authenticated call, built at REQUEST time. A token
+  // captured when the caller was constructed would be the token the server just
+  // rejected, so every authenticated request rebuilds them through here.
+  function _authHeaders(extra) {
+    const s = loadSes();
+    return Object.assign(
+      { apikey: anon(), Authorization: 'Bearer ' + (s ? s.accessToken : '') },
+      extra || {}
+    );
+  }
+
+  // One authenticated request plus the single recovery every caller needs: a 401
+  // from an access token that outlived its hour is refreshed and the request
+  // replayed exactly once. Without this, an app left open signs itself out over
+  // routine background work (a vault autosave, a credit read, a streak refresh).
+  async function _authedResponse(url, makeInit, options, timeoutMs) {
+    let res = await _request(url, makeInit(), options, timeoutMs);
+    if (res.status === 401 && await _refreshSession()) {
+      res = await _request(url, makeInit(), options, timeoutMs);
+    }
+    return res;
+  }
+
+  // Single-flight refresh: several views can 401 in the same instant and must not
+  // each spend the refresh token or race each other's session write. The caller's
+  // signal is deliberately NOT threaded through, so one view closing cannot abort
+  // a refresh another view is waiting on.
+  let refreshInFlight = null;
+  function _refreshSession() {
+    if (refreshInFlight) return refreshInFlight;
+    const s = loadSes();
+    if (!s || !s.refreshToken || !api.isConfigured()) return Promise.resolve(false);
+    refreshInFlight = (async () => {
+      try {
+        const j = await _post('token?grant_type=refresh_token', { refresh_token: s.refreshToken }, null, TIMEOUTS.auth);
+        api._adopt(j, s.email, s.uid);
+        return true;
+      } catch (e) {
+        // A really-dead refresh token still fails honestly: the replayed request
+        // 401s and _err() clears the session, exactly as before.
+        return false;
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
+    return refreshInFlight;
+  }
+
+  async function _readResponse(url, makeInit, options, timeoutMs, message) {
+    const res = await _authedResponse(url, makeInit, options, timeoutMs);
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
       const e = new Error(j.message || j.msg || message);
-      e.code = j.code || 'request_failed';
+      // Auth endpoints report `error_code`; REST reports `code`.
+      e.code = j.code || j.error_code || 'request_failed';
       e.status = res.status;
       throw e;
     }
@@ -560,28 +650,23 @@ const SUPABASE = (() => {
   }
 
   async function _get(path, options, timeoutMs) {
-    const s = loadSes();
     const url = base() + '/rest/v1/' + path;
-    const request = () => _readResponse(url, {
-      headers: { apikey: anon(), Authorization: 'Bearer ' + (s ? s.accessToken : '') }
-    }, options, timeoutMs || TIMEOUTS.read, 'Request failed');
+    const request = () => _readResponse(url, () => ({ headers: _authHeaders() }), options, timeoutMs || TIMEOUTS.read, 'Request failed');
+    const s = loadSes();
     return _dedupeRead(url + '\n' + (s ? s.accessToken : ''), request, options);
   }
 
   async function _rpc(fn, args, options, timeoutMs, dedupeRead) {
-    const s = loadSes();
     const url = base() + '/rest/v1/rpc/' + fn;
-    const request = () => _readResponse(url, {
+    const body = JSON.stringify(args || {});
+    const request = () => _readResponse(url, () => ({
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: anon(),
-        Authorization: 'Bearer ' + (s ? s.accessToken : '')
-      },
-      body: JSON.stringify(args || {})
-    }, options, timeoutMs || TIMEOUTS.write, 'Registry request failed');
+      headers: _authHeaders({ 'Content-Type': 'application/json' }),
+      body
+    }), options, timeoutMs || TIMEOUTS.write, 'Registry request failed');
+    const s = loadSes();
     return dedupeRead
-      ? _dedupeRead(url + '\n' + (s ? s.accessToken : '') + '\n' + JSON.stringify(args || {}), request, options)
+      ? _dedupeRead(url + '\n' + (s ? s.accessToken : '') + '\n' + body, request, options)
       : request();
   }
 

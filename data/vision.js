@@ -1052,10 +1052,25 @@ const Vision = (function () {
           copyOptions: D.copyOptions
         });
       } catch (e) { findings = []; }
+      const repairPlan = findings.filter((f) => f && f.visual && f.visual.kind).map((f) => ({
+        id: f.id,
+        kind: f.visual.kind,
+        page: f.visual.page || '',
+        reversible: true,
+        executable: !!(f.visual.alternative || (f.visual.palettes && f.visual.palettes.length) || f.visual.newWidth || f.visual.to),
+        reason: f.fix || ''
+      }));
+      const viewportSummary = readings.reduce((out, r) => {
+        const key = r && r.target ? r.target : 'unknown';
+        out[key] = (out[key] || 0) + 1;
+        return out;
+      }, {});
       return {
         ok: true,
         reason: '',
         findings: findings,
+        repairPlan: repairPlan,
+        viewportSummary: viewportSummary,
         pages: readings,
         measured: readings.length,
         expected: wanted,

@@ -17,6 +17,9 @@
 //   GET /__advance?days=N   advance the virtual UTC clock (server-side day)
 //   GET /__grantShield      +1 streak shield for the bearer's account (max 2)
 //   GET /__grantTrial?hours=N  grant hours of Pro trial (referral/wheel semantics)
+//   GET /__expireTokens      forget every issued access token (refresh tokens
+//                            still work) — exercises the client's one-refresh-
+//                            then-retry path for an hour-old session
 //   GET /__forceWheel?shields=N  mark a pending Day-7 wheel (debug)
 //   GET /__forceSpin?seg=N  force the next spin pick 1..12 (debug)
 //   GET /__state            dump the bearer's streak/claims/spins/credit rows (debug)
@@ -68,6 +71,15 @@ const users = new Map();      // uid -> { email, password, profile, codes, redem
 const licenses = new Map();   // code -> license row (seeded like schema.sql)
 const tokens = new Map();     // token -> uid
 const vault = new Map();      // key `${uid}:${projectId}` -> { owner_id, project_id, project_name, payload, updated_at, deleted_at } (mirrors schema.sql Part 6)
+const vaultVersions = new Map(); // key `${uid}:${projectId}` -> [{ id, payload, created_at, reason }] (mirrors schema.sql Part 6b)
+let vaultVersionSeq = 1;
+function archiveVersion(uid, pid, payloadObj, reason) {
+  const k = uid + ':' + pid;
+  const arr = vaultVersions.get(k) || [];
+  arr.push({ id: vaultVersionSeq++, owner_id: uid, project_id: pid, payload: payloadObj, created_at: new Date().toISOString(), reason });
+  while (arr.length > 10) arr.shift(); // keep the newest 10, like the SQL self-prune
+  vaultVersions.set(k, arr);
+}
 
 // virtual UTC clock for the streak feature (advance via /__advance?days=N)
 let virtualNow = Date.now();
@@ -435,6 +447,14 @@ const server = http.createServer((req, res) => {
       u.profile.trial_expires_at = new Date(base + hours * 3600e3).toISOString();
       return json(res, 200, { ok: true, trial_expires_at: u.profile.trial_expires_at });
     }
+    if (req.method === 'GET' && p === '/__expireTokens') {
+      // debug hook: forget every issued ACCESS token, the way an hour passing
+      // does in the real project. Refresh tokens still work, so an authenticated
+      // call has exactly one honest way through: refresh, then replay.
+      const expired = tokens.size;
+      tokens.clear();
+      return json(res, 200, { ok: true, expired });
+    }
 
     if (req.method === 'GET' && p === '/rest/v1/profiles') {
       return json(res, 200, [u.profile]);
@@ -482,10 +502,20 @@ const server = http.createServer((req, res) => {
       if (!pid || pid === 'null') return json(res, 200, { outcome: 'bad-input', reason: 'project-id' });
       const payload_ = payload.p_payload;
       if (!payload_ || typeof payload_ !== 'object' || Array.isArray(payload_)) return json(res, 200, { outcome: 'bad-input', reason: 'payload' });
+      // Mirrors schema.sql Part 6 exactly: the ceiling is measured in UTF-8
+      // bytes (`octet_length`) and the RPC answers 200 with an outcome, the way
+      // a PostgREST jsonb function does — a 413 here would be a lie the real
+      // deployment does not tell, and it would hide the client's outcome check.
       const text = JSON.stringify(payload_);
-      if (text.length > 6291456) return json(res, 413, { code: '413', message: 'payload too large' });
+      if (Buffer.byteLength(text) > 6291456) return json(res, 200, { outcome: 'too-large', maxBytes: 6291456 });
       const key = u.id + ':' + pid;
       const prev = vault.get(key);
+      // Version guard (mirrors schema.sql): overwriting a DIFFERENT historical
+      // state archives the stored payload first; same-state re-saves never spam.
+      if (prev && !prev.deleted_at && payload.p_local_updated_at != null
+          && String(payload.p_local_updated_at) !== String(prev.payload && prev.payload.updatedAt)) {
+        archiveVersion(u.id, pid, prev.payload, 'pre-save');
+      }
       const row = { owner_id: u.id, project_id: pid, project_name: String(payload.p_name || '').slice(0, 200), payload: payload_, updated_at: new Date().toISOString(), deleted_at: null };
       vault.set(key, row);
       return json(res, 200, { outcome: 'saved', updatedAt: row.updated_at, resurrected: !!(prev && prev.deleted_at) });
@@ -495,7 +525,10 @@ const server = http.createServer((req, res) => {
       if (!pid) return json(res, 200, { outcome: 'bad-input', reason: 'project-id' });
       const key = u.id + ':' + pid;
       const row = vault.get(key);
-      if (row && !row.deleted_at) row.deleted_at = new Date().toISOString();
+      if (row && !row.deleted_at) {
+        archiveVersion(u.id, pid, row.payload, 'pre-delete'); // deletion is recoverable from history
+        row.deleted_at = new Date().toISOString();
+      }
       return json(res, 200, { outcome: 'deleted' });
     }
     if (req.method === 'GET' && p === '/rest/v1/project_backups') {
@@ -503,6 +536,29 @@ const server = http.createServer((req, res) => {
         .filter((r) => r.owner_id === u.id)
         .map((r) => ({ project_id: r.project_id, project_name: r.project_name, payload: r.payload, updated_at: r.updated_at, deleted_at: r.deleted_at }));
       return json(res, 200, rows);
+    }
+    if (req.method === 'POST' && p === '/rest/v1/rpc/save_project_backup_version') {
+      const pid = String(payload.p_project_id || '').trim().slice(0, 80);
+      if (!pid || pid === 'null') return json(res, 200, { outcome: 'bad-input', reason: 'project-id' });
+      const vp = payload.p_payload;
+      if (!vp || typeof vp !== 'object' || Array.isArray(vp)) return json(res, 200, { outcome: 'bad-input', reason: 'payload' });
+      if (Buffer.byteLength(JSON.stringify(vp)) > 6291456) return json(res, 200, { outcome: 'too-large', maxBytes: 6291456 });
+      const reason = ['pre-save', 'conflict', 'pre-delete'].indexOf(payload.p_reason) !== -1 ? payload.p_reason : 'pre-save';
+      archiveVersion(u.id, pid, vp, reason);
+      return json(res, 200, { outcome: 'saved' });
+    }
+    if (req.method === 'POST' && p === '/rest/v1/rpc/list_project_backup_versions') {
+      const pid = String(payload.p_project_id || '').trim().slice(0, 80);
+      const arr = vaultVersions.get(u.id + ':' + pid) || [];
+      return json(res, 200, { outcome: 'ok', versions: [...arr].reverse().map((v) => ({ id: v.id, createdAt: v.created_at, reason: v.reason, bytes: Buffer.byteLength(JSON.stringify(v.payload)) })) });
+    }
+    if (req.method === 'POST' && p === '/rest/v1/rpc/get_project_backup_version') {
+      const pid = String(payload.p_project_id || '').trim().slice(0, 80);
+      if (!pid) return json(res, 200, { outcome: 'bad-input', reason: 'project-id' });
+      const arr = vaultVersions.get(u.id + ':' + pid) || [];
+      const v = arr.find((x) => x.id === payload.p_version_id);
+      if (!v) return json(res, 200, { outcome: 'not-found' });
+      return json(res, 200, { outcome: 'ok', payload: v.payload, createdAt: v.created_at, reason: v.reason });
     }
     return json(res, 404, { code: '404', message: 'not found' });
   });

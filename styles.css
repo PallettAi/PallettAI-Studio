@@ -26,6 +26,22 @@
   --font:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
   --font-mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,monospace;
   --ease:cubic-bezier(0.22, 0.8, 0.24, 1);
+  --ease-out:cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* Depth, hairline and timing scales. Everything below builds from these so a
+     panel, a tile and a dialog animate on the same clock instead of each
+     component inventing its own .15s / .2s / .18s. */
+  --elev-1:0 1px 2px rgba(2,10,24,.26), 0 2px 8px rgba(2,10,24,.18);
+  --elev-2:0 10px 26px rgba(2,10,24,.34), 0 2px 6px rgba(2,10,24,.22);
+  --elev-3:0 18px 50px rgba(2,10,24,.5);
+  --hair:inset 0 1px 0 rgba(255,255,255,.055);
+  --hair-strong:inset 0 1px 0 rgba(255,255,255,.1);
+  --ring:0 0 0 3px rgba(124,192,248,.3);
+  --tint:rgba(124,192,248,.085);
+  --tint-strong:rgba(124,192,248,.16);
+  --dur-1:.15s;
+  --dur-2:.24s;
+  --dur-3:.4s;
+  color-scheme:dark;
 }
 body.light{
   --bg:#f2f7fc;
@@ -45,6 +61,17 @@ body.light{
   --grad-cta:linear-gradient(120deg,#2f7fd0,#4f9be0);
   --grad-title:linear-gradient(150deg,#08172c 20%,#2f7fd0 60%,#4f9be0 100%);
   --grad-ai:linear-gradient(92deg,#1d5fa8 0%,#2f7fd0 55%,#4f9be0 100%);
+  /* Light mode needs its own depth: a 50%-alpha navy shadow reads as a grey
+     smudge on a white surface, and an inset white highlight is invisible. */
+  --elev-1:0 1px 2px rgba(16,58,104,.07), 0 2px 8px rgba(16,58,104,.06);
+  --elev-2:0 10px 26px rgba(16,58,104,.13), 0 2px 6px rgba(16,58,104,.07);
+  --elev-3:0 18px 50px rgba(20,50,90,.14);
+  --hair:inset 0 1px 0 rgba(255,255,255,.9);
+  --hair-strong:inset 0 1px 0 #fff;
+  --ring:0 0 0 3px rgba(47,127,208,.26);
+  --tint:rgba(47,127,208,.065);
+  --tint-strong:rgba(47,127,208,.13);
+  color-scheme:light;
 }
 
 *{margin:0;padding:0;box-sizing:border-box}
@@ -691,6 +718,26 @@ body.titlebar-inset .project-chip{-webkit-app-region:no-drag}
 .rev-row{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--surface2);border:1px solid var(--border);border-radius:11px;padding:9px 12px;flex-wrap:wrap}
 .rev-row b{font-size:.83rem;color:var(--text)}
 .rev-row small{display:block;color:var(--muted);font-size:.72rem;margin-top:2px}
+/* A milestone is a different kind of row, because it is a different kind of
+   thing in the store: the one row in here that no rule can delete. It reads as
+   named rather than merely present — an accent edge and the name above the
+   timestamp, because the name is the reason the snapshot is still here. */
+.rev-row.rev-named{border-color:color-mix(in srgb,var(--accent) 55%,var(--border));box-shadow:inset 3px 0 0 var(--accent)}
+.rev-mark{display:block;font-size:.72rem;font-weight:700;color:var(--accent);margin-bottom:3px;letter-spacing:.01em}
+.rev-acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.rev-row.rev-naming{gap:10px}
+.rev-row.rev-naming input[type=text]{flex:1;min-width:170px;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:6px 10px;color:var(--text);font-size:.8rem}
+.rev-row.rev-naming input[type=text]:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 20%,transparent)}
+.rev-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:12px}
+.rev-note{color:var(--muted);font-size:.75rem;line-height:1.45}
+.rev-note.warn{color:#eab308}
+/* The client report: a paper document previewed on white, because that is what
+   it is. A dark frame behind a white page is the one thing that makes a
+   printable deliverable look wrong in the preview and right on paper. */
+.care-rep-preview{border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#fff;margin:4px 0 0}
+.care-rep-preview iframe{display:block;width:100%;height:430px;border:none;background:#fff}
+.care-rep-actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+.care-rep-note{color:var(--muted);font-size:.82rem;line-height:1.5;margin:10px 0 0}
 .rev-list{display:flex;flex-direction:column;gap:8px;margin-top:6px}
 
 /* referral code display */
@@ -801,6 +848,12 @@ body.titlebar-inset .project-chip{-webkit-app-region:no-drag}
 .acc-signed .acc-row{margin-top:0}
 .acc-signed .set-row{margin-top:12px}
 .conn-host{font-size:.74rem;color:var(--muted);font-family:ui-monospace,Consolas,monospace;word-break:break-all;line-height:1.4}
+/* Cloud backup card: a status line, a usage line, then the actions. Written rows
+   rather than one blob of text so the two readings never run together. */
+.vault-status,.vault-usage{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:10px;font-size:.8rem;color:var(--text)}
+.vault-status small,.vault-usage small{color:var(--muted);font-size:.72rem}
+.vault-usage{padding-top:8px;border-top:1px dashed var(--border)}
+.vh-diff{max-height:340px;overflow:auto}
 
 /* ============ Layout catalog ============ */
 .lt-item{align-items:stretch}
@@ -1111,37 +1164,16 @@ body.no-motion .confetti{display:none}
 }
 
 /* ============================================================
-   Dashboard redesign — live metric band + insight row (real data)
+   Dashboard metric band + insight row (real data)
+   ------------------------------------------------------------
+   The band is ONE system. An earlier pass styled the same markup twice — a
+   `.stat-card` with its own gradient orb and a later `.metric` strip that
+   supersedes it — and app.js only ever renders `.metric`, so the louder design
+   was dead weight. The strip wins: a hairline box of three equal cells, mono
+   labels, one number each. Anything that needs to be louder than that belongs
+   on the card, not in the rail.
    ============================================================ */
-.dash-stats{
-  display:grid;grid-template-columns:repeat(auto-fit,minmax(218px,1fr));gap:14px;
-  margin:-4px 0 6px;
-}
-.stat-card{
-  position:relative;overflow:hidden;display:flex;flex-direction:column;gap:9px;
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-  padding:16px 18px 15px;transition:.18s;
-}
-.stat-card:hover{transform:translateY(-2px);border-color:var(--primary);box-shadow:var(--shadow)}
-.stat-card::after{content:'';position:absolute;right:-26px;top:-34px;width:110px;height:110px;border-radius:50%;
-  background:var(--grad);opacity:.07;filter:blur(8px)}
-.stat-card .sc-top{display:flex;align-items:center;justify-content:space-between;gap:10px;position:relative;z-index:1}
 .sc-label{font-size:.68rem;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);font-weight:800}
-.sc-ico{width:30px;height:30px;border-radius:9px;flex:none;display:grid;place-items:center;font-size:.95rem;
-  background:var(--surface2);border:1px solid var(--border);transition:.18s}
-.stat-card:hover .sc-ico{border-color:var(--primary);box-shadow:0 0 0 3px rgba(124,192,248,.14)}
-.stat-card .sc-value{font-size:1.85rem;font-weight:900;letter-spacing:-.03em;line-height:1;color:var(--text);position:relative;z-index:1}
-.stat-card .sc-value small{font-size:.58em;font-weight:800;color:var(--muted);letter-spacing:0;margin-left:2px}
-.stat-card .sc-sub{font-size:.73rem;color:var(--muted);line-height:1.45;position:relative;z-index:1}
-.stat-card.sc-ai .sc-ico{color:#bfe6ff}
-.stat-card.sc-projects .sc-ico{color:#bcdfff}
-.stat-card.sc-store .sc-ico{color:#6ee7b7}
-.stat-card.sc-ai .sc-value{color:#d8f0ff}
-.stat-card.sc-store .sc-value{color:#a7f3d0}
-.stat-card.sc-projects .sc-value{color:#d8ecff}
-body.light .stat-card.sc-ai .sc-value{color:#0e7490}
-body.light .stat-card.sc-store .sc-value{color:#047857}
-body.light .stat-card.sc-projects .sc-value{color:#2f7fd0}
 
 /* insight row — AI usage chart + recent activity */
 .dash-insight{
@@ -1374,8 +1406,7 @@ body.light .toast{background:rgba(255,255,255,.94)}
 .chat-panel{background:linear-gradient(145deg,rgba(5,20,42,.97),rgba(3,12,28,.98));border-color:rgba(169,216,255,.25);box-shadow:0 30px 90px rgba(0,0,0,.55),0 0 36px rgba(47,127,208,.13)}
 
 /* Existing stat and insight cards now sit naturally in the same system */
-.stat-card,.ins-card{border-color:rgba(169,216,255,.16);background:linear-gradient(145deg,rgba(159,212,255,.1),rgba(159,212,255,.03) 60%),rgba(3,14,32,.9);box-shadow:inset 0 1px 0 rgba(159,212,255,.11),0 16px 40px rgba(0,0,0,.18)}
-.stat-card:hover{border-color:rgba(201,231,255,.58);box-shadow:0 18px 42px rgba(0,0,0,.3),0 0 22px rgba(124,192,248,.11)}
+.ins-card{border-color:rgba(169,216,255,.16);background:linear-gradient(145deg,rgba(159,212,255,.1),rgba(159,212,255,.03) 60%),rgba(3,14,32,.9);box-shadow:inset 0 1px 0 rgba(159,212,255,.11),0 16px 40px rgba(0,0,0,.18)}
 
 @media(max-width:760px){
   .view{padding:20px 15px 54px}
@@ -1704,3 +1735,245 @@ textarea:focus-visible,
 .sch-expired{border-left-color:var(--muted);opacity:.72}
 .sch-invalid{border-left-color:var(--danger)}
 .sch-invalid span{color:var(--danger)}
+
+
+/* ============================================================
+   Design language v2 — depth, motion, feedback
+   ------------------------------------------------------------
+   Additive on purpose: no rule here changes a token v1 owns, and every colour
+   is either an existing token or one of the new scales in :root, so the light
+   theme needs no second rule set. Grouped by the primitive being improved
+   rather than by the screen it shows up on.
+   ============================================================ */
+
+/* ---------- Text detail ---------- */
+::selection{background:color-mix(in srgb,var(--primary) 34%,transparent)}
+input,textarea,select{caret-color:var(--accent)}
+/* Numbers re-render in place all over this app (counts, byte totals, credits,
+   timers). Proportional digits make a changing number shift its neighbours,
+   so every figure that ticks gets tabular ones. */
+.metrics-strip .sc-value,.care-dial b,.ch-val,.ch-lbl,.act-time,.tool-credit b,
+.bill-receipt dd,.rev-row small,.care-grade,.credits-bar + span{font-variant-numeric:tabular-nums}
+
+/* ---------- One focus ring, on the things you can actually reach ---------- */
+.btn:focus-visible,.icon-btn:focus-visible,.nav-item:focus-visible,.tool-action:focus-visible,
+.pw-btn:focus-visible,.db-tab:focus-visible,.settings-tab:focus-visible,.care-row:focus-visible,
+.act-item:focus-visible,.cmd-list li:focus-visible,.msg .m-act button:focus-visible,
+.icon-cell:focus-visible,.pw-group:focus-within{
+  outline:2px solid color-mix(in srgb,var(--primary) 72%,transparent);
+  outline-offset:2px;
+}
+
+/* ---------- Buttons ---------- */
+.btn{
+  transition:background var(--dur-1) var(--ease),border-color var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease),transform var(--dur-1) var(--ease-out),box-shadow var(--dur-2) var(--ease);
+}
+.btn:hover:not(:disabled){transform:translateY(-1px)}
+.btn:active:not(:disabled){transform:translateY(0) scale(.985)}
+/* The primary button is the only loud control in the app, so it gets the depth
+   to match: a resting hairline and a lift, not a permanent glow. */
+.btn.primary{box-shadow:var(--elev-1),inset 0 1px 0 rgba(255,255,255,.42)}
+.btn.primary:hover{box-shadow:0 10px 24px color-mix(in srgb,var(--primary) 28%,transparent),inset 0 1px 0 rgba(255,255,255,.55)}
+.btn.ghost:hover,.btn.secondary:hover{background:var(--tint);box-shadow:var(--hair)}
+.btn.danger:hover{background:color-mix(in srgb,var(--danger) 20%,transparent);box-shadow:var(--hair)}
+.btn:disabled{box-shadow:none}
+.btn .ui-icon{width:15px;height:15px}
+.icon-btn{transition:background var(--dur-1) var(--ease),border-color var(--dur-1) var(--ease),
+  color var(--dur-1) var(--ease),transform var(--dur-1) var(--ease-out)}
+.icon-btn:hover{background:var(--tint);transform:translateY(-1px)}
+.icon-btn:active{transform:translateY(0) scale(.95)}
+
+/* ---------- Sidebar rail ----------
+   The active view used to be a slightly lighter box; the same weight of box is
+   also what a hover looks like, so the current location was easy to lose. It
+   now gets a gradient edge marker and the icon keeps a tint after it settles. */
+.side-nav{position:relative}
+.nav-item{border-radius:9px;position:relative}
+/* The marker sits in the rail's own padding gutter, not against the window
+   edge: at left:-15px it landed at x=-1 and showed as a 2px sliver, which reads
+   as a rendering artefact rather than as a location. */
+.nav-item::before{
+  content:'';position:absolute;left:-8px;top:50%;width:3px;height:0;border-radius:99px;
+  background:var(--grad);opacity:0;transform:translateY(-50%);
+  transition:height var(--dur-2) var(--ease-out),opacity var(--dur-2) var(--ease);
+}
+.nav-item.active::before{height:20px;opacity:1;box-shadow:0 0 12px color-mix(in srgb,var(--primary) 55%,transparent)}
+.nav-item .nav-ico{transition:color var(--dur-2) var(--ease),transform var(--dur-2) var(--ease-out)}
+.nav-item:hover .nav-ico{color:var(--accent);transform:translateY(-1px)}
+.nav-item.active{background:linear-gradient(100deg,var(--tint-strong),var(--surface) 72%);box-shadow:var(--hair)}
+.nav-item.active .nav-ico{color:var(--text)}
+@media(max-width:760px){
+  .nav-item::before{left:50%;top:auto;bottom:0;width:0;height:2px;border-radius:3px 3px 0 0;transform:translateX(-50%)}
+  .nav-item.active::before{width:18px;height:2px;box-shadow:none}
+}
+
+/* ---------- Top bar ----------
+   It is sticky over a scrolling column, so it needs to look lifted exactly
+   when content is passing underneath it. The class comes from the UI shell,
+   which watches the real scroll container (.main), not the window. */
+.topbar{transition:box-shadow var(--dur-2) var(--ease),border-color var(--dur-2) var(--ease),background var(--dur-2) var(--ease)}
+body.scrolled .topbar{
+  background:color-mix(in srgb,var(--bg) 88%,transparent);
+  border-bottom-color:color-mix(in srgb,var(--primary) 24%,var(--border));
+  box-shadow:var(--elev-2);
+}
+.topbar h1{letter-spacing:-.026em}
+
+/* ---------- Metric band ----------
+   app.js already handed each cell an icon and then threw it away; the tile now
+   shows it, and the two cells that navigate say so on hover. */
+.metrics-strip .metric{position:relative;transition:background var(--dur-1) var(--ease)}
+.metrics-strip .metric .sc-top{align-items:flex-start;gap:10px}
+.metrics-strip .metric .sc-ico{
+  display:grid;place-items:center;width:28px;height:28px;flex:none;border-radius:8px;
+  background:var(--tint);border:1px solid var(--border);color:var(--accent);
+  transition:border-color var(--dur-2) var(--ease),transform var(--dur-2) var(--ease-out);
+}
+.metrics-strip .metric .sc-ico .ui-icon{width:14px;height:14px}
+.metrics-strip .metric:hover .sc-ico{transform:translateY(-1px);border-color:color-mix(in srgb,var(--primary) 55%,transparent)}
+.metrics-strip .metric .sc-value{font-size:1.5rem;font-weight:700;letter-spacing:-.035em;color:var(--text);line-height:1.15}
+.metrics-strip .metric .sc-value small{font-size:.62em;font-weight:700;color:var(--muted);margin-left:2px}
+.metrics-strip .metric[data-go]{cursor:pointer}
+.metrics-strip .metric[data-go]::after{
+  content:'↗';position:absolute;right:14px;bottom:11px;font-size:.8rem;color:var(--accent);
+  opacity:0;transform:translate(-3px,3px);transition:opacity var(--dur-2) var(--ease),transform var(--dur-2) var(--ease-out);
+}
+.metrics-strip .metric[data-go]:hover::after{opacity:1;transform:none}
+.metrics-strip .metric.sc-store .sc-ico{color:#6ee7b7}
+body.light .metrics-strip .metric.sc-store .sc-ico{color:#047857}
+
+/* ---------- Rows ---------- */
+.act-item,.care-row,.rev-row,.work-row,.ins-card,.tile-mark{
+  transition:background var(--dur-1) var(--ease),border-color var(--dur-1) var(--ease),
+    transform var(--dur-1) var(--ease-out),box-shadow var(--dur-2) var(--ease);
+}
+.care-row:hover,.rev-row:hover,.work-row:hover{transform:translateY(-1px);box-shadow:var(--elev-1)}
+.act-item:hover{transform:translateX(2px)}
+
+/* ---------- Toast ----------
+   Long results (a self-critique receipt, a publish summary) were being squeezed
+   into a 99px pill that had to be swallowed in one go. This is a card: icon,
+   wrapping text, and a bar that drains in step with the auto-hide timer so a
+   long message never vanishes mid-sentence without warning. */
+.toast{
+  display:flex;align-items:flex-start;gap:11px;
+  padding:12px 16px 12px 13px;border-radius:14px;border:1px solid var(--border);
+  max-width:min(560px,calc(100vw - 32px));
+  background:color-mix(in srgb,var(--surface) 94%,transparent);
+  backdrop-filter:blur(12px);
+  box-shadow:var(--elev-2),var(--hair-strong);
+  font-weight:600;font-size:.87rem;line-height:1.45;
+  opacity:0;overflow:hidden;
+  transition:transform var(--dur-3) var(--ease-out),opacity var(--dur-2) var(--ease),visibility 0s linear 0s;
+}
+/* The idle toast is hidden from assistive tech (see the a11y rules above), and
+   that has to happen after it has finished fading rather than on the same
+   frame, or the fade-out is never seen. */
+.toast:not(.show){transition:transform var(--dur-3) var(--ease-out),opacity var(--dur-2) var(--ease),visibility 0s linear var(--dur-3)}
+.toast.show{opacity:1}
+.toast-ico{
+  width:24px;height:24px;flex:none;margin-top:1px;border-radius:8px;display:grid;place-items:center;
+  background:var(--tint);border:1px solid var(--border);color:var(--accent);
+}
+.toast-ico .ui-icon{width:13px;height:13px}
+.toast-body{min-width:0;white-space:pre-wrap;word-break:break-word}
+.toast.ok .toast-ico{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,transparent);background:color-mix(in srgb,var(--ok) 14%,transparent)}
+.toast.warn .toast-ico{color:#fbbf24;border-color:color-mix(in srgb,#fbbf24 45%,transparent);background:color-mix(in srgb,#fbbf24 14%,transparent)}
+.toast.err .toast-ico{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 45%,transparent);background:color-mix(in srgb,var(--danger) 14%,transparent)}
+.toast-bar{position:absolute;left:0;right:0;bottom:0;height:2px;pointer-events:none}
+.toast-bar span{display:block;height:100%;transform-origin:left center;background:var(--grad);opacity:.9}
+.toast.ok .toast-bar span{background:linear-gradient(90deg,var(--ok),#6ee7b7)}
+.toast.warn .toast-bar span{background:linear-gradient(90deg,#fbbf24,#fde68a)}
+.toast.err .toast-bar span{background:linear-gradient(90deg,var(--danger),#ff9aae)}
+.toast.show .toast-bar span{animation:toastBar var(--toast-ms,3000ms) linear forwards}
+@keyframes toastBar{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+
+/* ---------- Modal ---------- */
+.modal-backdrop{background:color-mix(in srgb,#020814 62%,transparent);backdrop-filter:blur(9px) saturate(115%)}
+.modal-card{box-shadow:var(--elev-3),var(--hair-strong);animation:modalIn var(--dur-2) var(--ease-out)}
+@keyframes modalIn{from{opacity:0;transform:translateY(12px) scale(.984)}to{opacity:1;transform:none}}
+.modal-head{padding-bottom:13px;border-bottom:1px solid var(--border);margin-bottom:16px}
+.modal-head h3{letter-spacing:-.02em}
+
+/* ---------- Command palette ---------- */
+.cmd-root{padding-top:12vh}
+.cmd-panel{border-radius:18px;box-shadow:var(--elev-3),var(--hair-strong);animation:cmdIn var(--dur-2) var(--ease-out)}
+@keyframes cmdIn{from{opacity:0;transform:translateY(-8px) scale(.99)}to{opacity:1;transform:none}}
+.cmd-panel input{padding:17px 20px 14px}
+.cmd-panel input::placeholder{color:color-mix(in srgb,var(--muted) 84%,transparent)}
+.cmd-list li{gap:14px;align-items:center;padding:10px 12px}
+.cmd-list li b{font-weight:600;font-size:.9rem;flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmd-list li small{flex:0 1 auto;min-width:0;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Matched letters are marked by the filter, so the highlight has to survive a
+   dark surface without becoming a highlight bar. */
+.cmd-list li mark{background:transparent;color:var(--accent);font-weight:800;
+  text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--accent) 42%,transparent);text-underline-offset:2px}
+.cmd-list li.active{background:var(--tint-strong);box-shadow:var(--hair)}
+.cmd-list li.active small{color:color-mix(in srgb,var(--text) 76%,transparent)}
+.cmd-list li .cmd-go{flex:none;font-size:.85rem;color:var(--accent);opacity:0;transform:translateX(-3px);
+  transition:opacity var(--dur-2) var(--ease),transform var(--dur-2) var(--ease-out)}
+.cmd-list li.active .cmd-go{opacity:1;transform:none}
+.cmd-hint{border-top:1px solid var(--border);background:color-mix(in srgb,var(--surface2) 55%,transparent)}
+
+/* ---------- Key caps ---------- */
+kbd{
+  font:600 .67rem var(--font-mono);background:var(--surface2);color:var(--text);
+  border:1px solid var(--border);border-radius:5px;padding:2px 6px;white-space:nowrap;
+  box-shadow:0 1px 0 color-mix(in srgb,var(--text) 14%,transparent),var(--hair);
+}
+
+/* ---------- Shortcut sheet (? ) ---------- */
+.sheet-root{position:fixed;inset:0;z-index:170;display:grid;place-items:center;padding:24px}
+.sheet-root[hidden]{display:none}
+.sheet-scrim{position:absolute;inset:0;background:color-mix(in srgb,#020814 60%,transparent);backdrop-filter:blur(8px) saturate(115%)}
+.sheet-card{
+  position:relative;width:min(680px,100%);max-height:80vh;overflow:auto;
+  background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:22px 24px;
+  box-shadow:var(--elev-3),var(--hair-strong);animation:modalIn var(--dur-2) var(--ease-out);
+}
+.sheet-card h3{font-size:1.05rem;letter-spacing:-.02em;margin-bottom:4px}
+.sheet-card p{color:var(--muted);font-size:.82rem;margin-bottom:18px}
+.sheet-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px 26px}
+.sheet-group h4{font-family:var(--font-mono);font-size:.62rem;letter-spacing:.15em;text-transform:uppercase;
+  color:var(--muted);margin-bottom:9px}
+.sheet-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:5px 0}
+.sheet-row span{font-size:.84rem}
+.sheet-keys{display:flex;gap:5px;flex:none}
+.sheet-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:20px;
+  padding-top:14px;border-top:1px solid var(--border);color:var(--muted);font-size:.76rem}
+
+/* ---------- View transitions ----------
+   A view swap is a new screen, and the browser can cross-fade it for free. Only
+   the view pane is named; the root's own snapshots are left unelevated so the
+   rail and the top bar stay perfectly still while the page changes under them. */
+.view.active{view-transition-name:app-view}
+@media (prefers-reduced-motion: no-preference){
+  ::view-transition-old(root),::view-transition-new(root){animation:none}
+  ::view-transition-old(app-view){animation:vtOut .16s var(--ease) both}
+  ::view-transition-new(app-view){animation:vtIn .24s var(--ease-out) both}
+  @keyframes vtOut{to{opacity:0;transform:translateY(-4px)}}
+  @keyframes vtIn{from{opacity:0;transform:translateY(6px)}}
+}
+
+/* ---------- Compact density ----------
+   Settings ▸ density already tightens panels and cards. The metric band and the
+   new overlays are part of the same workspace, so they tighten with it —
+   otherwise the setting would thin everything except the pieces added last. */
+body.ui-compact .metrics-strip .metric{padding:10px 13px;min-height:64px}
+body.ui-compact .metrics-strip .metric .sc-value{font-size:1.32rem}
+body.ui-compact .view{padding:22px 26px 64px}
+body.ui-compact .toast{padding:10px 14px 10px 11px}
+body.ui-compact .toast-ico{width:21px;height:21px}
+body.ui-compact .cmd-list li{padding:8px 11px}
+body.ui-compact .sheet-card{padding:18px 20px}
+body.ui-compact .sheet-row{padding:2px 0}
+body.ui-compact .sheet-grid{gap:14px 22px}
+
+/* ---------- Scrollbars ----------
+   A thicker track with a transparent border gives the thumb padding, so it no
+   longer looks like a painted stripe against the panel it floats over. */
+::-webkit-scrollbar{width:12px;height:12px}
+::-webkit-scrollbar-thumb{background:var(--surface2);border:3px solid transparent;background-clip:content-box;border-radius:99px}
+::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--primary) 42%,var(--surface2));background-clip:content-box}
+::-webkit-scrollbar-thumb:active{background:var(--primary);background-clip:content-box}

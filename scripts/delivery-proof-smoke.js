@@ -233,11 +233,11 @@ console.log('\n4. Export manifest');
 
       // absent audits must not drag the score down: a site with no images
       // should not be marked down for having none
-      // (90×30 + 80×25) / 55 = 85.45 → 85. Scoring the three absent audits as
+      // (90×27 + 80×22) / 49 = 85.5 → 86. Scoring the absent audits as
       // zero would give 47, which is the failure this guards against.
       const partial = Proof.grade({ performance: { score: 90 }, keyboard: { score: 80 } });
-      ok('an absent audit is removed from the weighting, not scored zero', partial.score === 85, String(partial.score));
-      ok('the weighting is reported, not hidden', partial.weight === 55 && partial.full === false, JSON.stringify({ w: partial.weight }));
+      ok('an absent audit is removed from the weighting, not scored zero', partial.score === 86, String(partial.score));
+      ok('the weighting is reported, not hidden', partial.weight === 49 && partial.full === false, JSON.stringify({ w: partial.weight }));
       ok('an empty report does not claim a grade', Proof.grade({}).score === 0);
 
       const full = Proof.grade(audits);

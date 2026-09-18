@@ -1144,7 +1144,7 @@ create policy "own vault rows" on public.project_backups
 -- All writes flow through this security-definer RPC (no direct table grants),
 -- locked per (account, project) so a double-click or two devices racing to
 -- save the same project can never interleave two half-written payloads.
-create or replace function public.save_project_backup(p_project_id text, p_name text, p_payload jsonb)
+create or replace function public.save_project_backup(p_project_id text, p_name text, p_payload jsonb, p_local_updated_at bigint default null)
 returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
@@ -1170,6 +1170,19 @@ begin
 
   perform pg_advisory_xact_lock(hashtext('pallettai.vault:' || auth.uid()::text || ':' || v_id)::bigint);
 
+  -- Version guard: overwriting a DIFFERENT historical state (the stored
+  -- payload's own updatedAt differs from the incoming one) archives the
+  -- stored state first, so last-writer-wins never destroys work silently.
+  -- Idempotent retries and re-saves of the same state never spam the archive.
+  if p_local_updated_at is not null then
+    select * into v_row from public.project_backups
+    where owner_id = auth.uid() and project_id = v_id;
+    if found and v_row.deleted_at is null
+       and p_local_updated_at::text is distinct from (v_row.payload ->> 'updatedAt') then
+      perform public.save_project_backup_version(v_id, v_row.payload, 'pre-save');
+    end if;
+  end if;
+
   insert into public.project_backups (owner_id, project_id, project_name, payload, updated_at)
   values (auth.uid(), v_id, v_name, v_payload, now())
   on conflict (owner_id, project_id) do update
@@ -1193,6 +1206,7 @@ returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   v_id text := left(btrim(coalesce(p_project_id, '')), 80);
+  v_row public.project_backups%rowtype;
 begin
   if auth.uid() is null then
     return jsonb_build_object('outcome', 'not-signed-in');
@@ -1202,6 +1216,14 @@ begin
   end if;
 
   perform pg_advisory_xact_lock(hashtext('pallettai.vault:' || auth.uid()::text || ':' || v_id)::bigint);
+
+  -- Deleting archives the live payload first: another device (or this one)
+  -- can bring the project back from history after the tombstone.
+  select * into v_row from public.project_backups
+  where owner_id = auth.uid() and project_id = v_id and deleted_at is null;
+  if found then
+    perform public.save_project_backup_version(v_id, v_row.payload, 'pre-delete');
+  end if;
 
   update public.project_backups set deleted_at = now()
   where owner_id = auth.uid() and project_id = v_id and deleted_at is null;
@@ -1219,5 +1241,147 @@ grant execute on function public.delete_project_backup(text) to authenticated;
 -- No INSERT/UPDATE/DELETE grants: writes exist only via the RPCs above.
 revoke all on table public.project_backups from anon, public;
 grant select on table public.project_backups to authenticated;
+
+-- ============================================================
+-- PART 6b — Cloud vault version history
+-- A rolling per-project archive behind every vault write. The save
+-- and delete RPCs in Part 6 archive the state they overwrite or
+-- tombstone (version guard, server-side); the merge engine files a
+-- 'conflict' version here when two devices truly diverge. Newest
+-- 10 rows per project are kept — the archive insert self-prunes.
+--
+-- Restore is deliberately NOT a server-side overwrite: the client
+-- pulls a version payload, merges it as "newer local" and pushes it
+-- back through save_project_backup — the same audited write path as
+-- every other save, and the push itself archives the overwritten
+-- state (so a restore is itself undoable). Idempotent re-runnable.
+-- ============================================================
+
+-- ---------- 32. project_backup_versions: rolling archive ----------
+create table if not exists public.project_backup_versions (
+  id bigserial primary key,
+  owner_id uuid not null references auth.users (id) on delete cascade,
+  project_id text not null,
+  payload jsonb not null,
+  created_at timestamptz not null default now(),
+  reason text not null default 'pre-save'
+    check (reason in ('pre-save', 'conflict', 'pre-delete'))
+);
+create index if not exists project_backup_versions_owner_project_idx
+  on public.project_backup_versions (owner_id, project_id, id desc);
+
+alter table public.project_backup_versions enable row level security;
+
+drop policy if exists "own vault version rows" on public.project_backup_versions;
+create policy "own vault version rows" on public.project_backup_versions
+  for all using (auth.uid() = owner_id)
+  with check (auth.uid() = owner_id);
+
+-- ---------- 33. save_project_backup_version RPC: append + self-prune ----------
+-- Single archive path. The advisory lock is the same key the save/delete
+-- RPCs take (xact-level locks are re-entrant for the same transaction),
+-- so a version row and its sibling vault row can never interleave.
+create or replace function public.save_project_backup_version(
+  p_project_id text, p_payload jsonb, p_reason text default 'pre-save'
+)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_id text := left(btrim(coalesce(p_project_id, '')), 80);
+  v_reason text := coalesce(p_reason, 'pre-save');
+  v_trimmed bigint;
+begin
+  if auth.uid() is null then
+    return jsonb_build_object('outcome', 'not-signed-in');
+  end if;
+  if v_id = '' or v_id = 'null' then
+    return jsonb_build_object('outcome', 'bad-input', 'reason', 'project-id');
+  end if;
+  if v_payload is null or jsonb_typeof(v_payload) <> 'object' then
+    return jsonb_build_object('outcome', 'bad-input', 'reason', 'payload');
+  end if;
+  if v_reason not in ('pre-save', 'conflict', 'pre-delete') then
+    v_reason := 'pre-save';
+  end if;
+  -- Same per-project ceiling as the live row.
+  if octet_length(v_payload::text) > 6291456 then
+    return jsonb_build_object('outcome', 'too-large', 'maxBytes', 6291456);
+  end if;
+
+  perform pg_advisory_xact_lock(hashtext('pallettai.vault:' || auth.uid()::text || ':' || v_id)::bigint);
+
+  insert into public.project_backup_versions (owner_id, project_id, payload, created_at, reason)
+  values (auth.uid(), v_id, v_payload, now(), v_reason);
+
+  -- Keep the newest 10. The archive is insurance, not storage.
+  with ranked as (
+    select id, row_number() over (order by id desc) as rn
+    from public.project_backup_versions
+    where owner_id = auth.uid() and project_id = v_id
+  )
+  delete from public.project_backup_versions v
+  where v.id in (select id from ranked where rn > 10);
+  get diagnostics v_trimmed = row_count;
+
+  return jsonb_build_object('outcome', 'saved', 'kept', 10 - greatest(v_trimmed, 0));
+end $$;
+
+-- ---------- 34. list_project_backup_versions RPC: newest first ----------
+create or replace function public.list_project_backup_versions(p_project_id text)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_id text := left(btrim(coalesce(p_project_id, '')), 80);
+begin
+  if auth.uid() is null then
+    return jsonb_build_object('outcome', 'not-signed-in');
+  end if;
+  if v_id = '' or v_id = 'null' then
+    return jsonb_build_object('outcome', 'bad-input', 'reason', 'project-id');
+  end if;
+  return jsonb_build_object('outcome', 'ok', 'versions', coalesce((
+    select jsonb_agg(jsonb_build_object(
+             'id', v.id, 'createdAt', v.created_at, 'reason', v.reason,
+             'bytes', octet_length(v.payload::text))
+           order by v.id desc)
+    from public.project_backup_versions v
+    where v.owner_id = auth.uid() and v.project_id = v_id
+  ), '[]'::jsonb));
+end $$;
+
+-- ---------- 35. get_project_backup_version RPC: one payload (owner-scoped) ----------
+create or replace function public.get_project_backup_version(p_project_id text, p_version_id bigint)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_id text := left(btrim(coalesce(p_project_id, '')), 80);
+  v_row public.project_backup_versions%rowtype;
+begin
+  if auth.uid() is null then
+    return jsonb_build_object('outcome', 'not-signed-in');
+  end if;
+  if v_id = '' or v_id = 'null' or p_version_id is null or p_version_id <= 0 then
+    return jsonb_build_object('outcome', 'bad-input', 'reason', 'project-id');
+  end if;
+  select * into v_row from public.project_backup_versions
+  where owner_id = auth.uid() and project_id = v_id and id = p_version_id;
+  if not found then
+    return jsonb_build_object('outcome', 'not-found');
+  end if;
+  return jsonb_build_object('outcome', 'ok', 'payload', v_row.payload,
+                            'createdAt', v_row.created_at, 'reason', v_row.reason);
+end $$;
+
+-- ---------- 36. Permissions ----------
+revoke all on function public.save_project_backup_version(text, jsonb, text) from public, anon;
+revoke all on function public.list_project_backup_versions(text) from public, anon;
+revoke all on function public.get_project_backup_version(text, bigint) from public, anon;
+grant execute on function public.save_project_backup_version(text, jsonb, text) to authenticated;
+grant execute on function public.list_project_backup_versions(text) to authenticated;
+grant execute on function public.get_project_backup_version(text, bigint) to authenticated;
+
+-- The client only ever reads version payloads through the RPCs above.
+revoke all on table public.project_backup_versions from anon, public;
+grant select on table public.project_backup_versions to authenticated;
 
 notify pgrst, 'reload schema';
