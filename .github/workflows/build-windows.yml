@@ -1,18 +1,13 @@
 name: Build and publish PallettAI Studio for Windows
 
-# Tag-triggered Windows releases are deliberately disabled for now.
-#
-# Both workflows read the same CSC_LINK secret, but macOS needs an Apple .p12
-# while Windows needs a .pfx — a single secret cannot be both. So a `v*` tag
-# also fired this workflow, which then failed its own credential guard and left
-# a red X on every release. Run it manually from the Actions tab instead: a
-# manual run uploads artifacts and does not publish a release.
-#
-# Re-add a `push: { tags: ['v*'] }` trigger once there is a Windows code-
-# signing certificate. Give Windows its own secret (e.g. WIN_CSC_LINK) rather
-# than sharing CSC_LINK, so tagging cannot sign a build with the wrong cert.
+# Windows participates in tagged releases as an unsigned test build until a
+# dedicated Windows certificate is configured. It must still publish its
+# installer and latest.yml beside the signed/optionally notarized Mac assets,
+# otherwise Windows installations cannot update from the public feed.
 on:
   workflow_dispatch:
+  push:
+    tags: ['v*']
 
 # The Studio source can live in its own repository. Releases are published to
 # the public website repository so pallettai.org/downloads has stable links.
@@ -52,25 +47,12 @@ jobs:
             exit 1
           }
 
-      - name: Require signing credentials for tagged releases
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Build Windows installer (NSIS x64)
         env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for name in CSC_LINK CSC_KEY_PASSWORD; do
-            if [ -z "${!name:-}" ]; then
-              echo "Missing required Actions secret: $name"
-              exit 1
-            fi
-          done
-
-      - name: Build & sign Windows installer (NSIS x64)
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          # Optional: set WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD when a Windows
+          # code-signing certificate is available. Do not reuse the Apple .p12.
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: npm run dist:win -- --publish never
 
       # This step used to be decorative, and that is worth spelling out because it
