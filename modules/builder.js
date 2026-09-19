@@ -80,10 +80,24 @@ body.photo-grade{
       ? 'linear-gradient(135deg,#0b1020 0%,#161c33 55%,#1d2447 100%)'
       : 'linear-gradient(135deg,#f6f1e7 0%,#efe6d6 55%,#e7dccd 100%)';
     const fg = isDark ? '#eef0ff' : '#2a2318';
+    /*
+      What goes under the site's name.
+
+      On Free and Pro this panel is our attribution and the ◆ is our mark, which
+      is the deal. On Pro+ it is the client's site and nothing of ours may reach
+      it, so the mark goes and the line becomes the site's own tagline — or
+      nothing at all. The panel itself stays either way: it is filling a media
+      column, and an empty column looks broken rather than unbranded.
+    */
+    const white = whiteLabel();
+    const mark = white ? '' : `<span style="font-size:3rem;letter-spacing:.02em;opacity:.5;display:block;margin-bottom:14px">◆</span>`;
+    const line = white
+      ? String(((p.site || {}).tagline || '')).trim()
+      : 'Built with ' + (typeof Whitelabel !== 'undefined' ? Whitelabel.PRODUCT : 'PallettAI') + ' Studio';
+    const caption = line ? `<p style="color:${isDark ? 'rgba(238,240,255,.7)' : 'rgba(42,35,24,.6)'};max-width:520px">${esc(line)}</p>` : '';
     return `<div class="hero-placeholder" style="background:${bg};color:${fg};width:100%;height:100%;min-height:380px;border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px;font-family:inherit">
-        <span style="font-size:3rem;letter-spacing:.02em;opacity:.5;display:block;margin-bottom:14px">◆</span>
-        <h1 style="font-size:clamp(1.8rem,4.5vw,3rem);font-weight:700;margin:0 0 10px;line-height:1.1">${esc(name)}</h1>
-        <p style="color:${isDark ? 'rgba(238,240,255,.7)' : 'rgba(42,35,24,.6)'};max-width:520px">Built with PallettAI Studio</p>
+        ${mark}<h1 style="font-size:clamp(1.8rem,4.5vw,3rem);font-weight:700;margin:0 0 10px;line-height:1.1">${esc(name)}</h1>
+        ${caption}
       </div>`;
   }
 
@@ -121,8 +135,20 @@ body.photo-grade{
   // form when the nav's Contact link is worked out.
   function visiblePages() { return _ctx.pages.filter((pg) => pg && pg.hidden !== true); }
 
-  // Current build context (set while a page is being rendered).
-  let _ctx = { pages: [], page: null };
+  // Current build context (set while a page is being rendered).    let _ctx = { pages: [], page: null };
+
+  /*
+    Who the export is FOR.
+
+    `proExport` is the Pro+ promise (no badge and, since this pass, no brand
+    text of ours anywhere a client can see); the studio's own name and site are
+    what replace ours when they have set them. Held here rather than threaded
+    through the renderers because the section renderers take (project, section,
+    index) and nothing else, and widening that signature to carry a settings
+    object would touch all of them to serve two.
+  */
+  let _plan = { whiteLabel: false, studioName: '', studioUrl: '' };
+  const whiteLabel = () => _plan.whiteLabel === true;
 
   // A working link to a contact form: this page's own contact section when it
   // has one, else the first other page that does (multi-page sites), else the
@@ -206,6 +232,28 @@ body.photo-grade{
   // tag in it.
   function cfgJson(cfg) {
     return JSON.stringify(cfg).replace(/</g, '\\u003c');
+  }
+
+  // The signature every install ships with, and the one string a Pro+ export
+  // must not end up with by accident. data/whitelabel.js owns the module that
+  // knows about branding; this constant is the fallback for a build that loads
+  // without it.
+  const OUR_SIGNATURE = 'Made by PallettAI';
+
+  /*
+    The storage namespace an exported site writes under.
+
+    These keys are read by the SITE, in the visitor's browser, and disclosed in
+    the SITE's own cookie policy — so they are named after the client, not after
+    us. The derivation lives in data/whitelabel.js and data/legal.js reads the
+    same function, because a cookie policy that names a key the site does not
+    write (or misses one it does) is the single most common lie on a small
+    business site. The local fallback keeps a headless build working.
+  */
+  function storageFor(project) {
+    if (typeof Whitelabel !== 'undefined' && Whitelabel.storageKeys) return Whitelabel.storageKeys(project);
+    const p = String((project && project.site && project.site.name) || 'site').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 24) || 'site';
+    return { prefix: p, theme: p + '_theme_', themeGlob: p + '_theme_*', consent: p + '_cookies_ok', cart: p + '_cart_', cartGlob: p + '_cart_*' };
   }
 
   function deliveryFor(site) {
@@ -1364,8 +1412,25 @@ body.photo-grade{
 
   function buildFooter(p, settings) {
     const year = new Date().getFullYear();
-    const made = settings.brandFooter !== false
-      ? `<p class="made-by">${esc(settings.brandFooterText || 'Made by PallettAI')}${safeHref(settings.brandLink) ? ` · <a href="${esc(safeHref(settings.brandLink))}" target="_blank" rel="noopener">${esc(String(settings.brandLink).replace(/^https?:\/\//, ''))}</a>` : ''}</p>`
+    /*
+      The footer signature.
+
+      It defaults to our name and our domain, which is right on Free — it is
+      the attribution — and wrong on Pro+, where the tier is sold as unbranded
+      delivery. So on a Pro+ export our SHIPPED DEFAULT is treated as unset: it
+      becomes the studio's own business name and site from Settings, or it
+      disappears. A signature the studio typed themselves is always honoured,
+      including if they deliberately type our name: this rescues people from a
+      default, it does not overrule a decision.
+    */
+    const rawText = String(settings.brandFooterText == null ? '' : settings.brandFooterText).trim();
+    const ours = !rawText || rawText === OUR_SIGNATURE;
+    const whiteLabelExport = settings.proExport === true;
+    const studio = String(settings.studioName || '').trim();
+    const text = (whiteLabelExport && ours) ? studio : (rawText || OUR_SIGNATURE);
+    const link = (whiteLabelExport && ours) ? String(settings.studioUrl || '').trim() : String(settings.brandLink || '').trim();
+    const made = (settings.brandFooter !== false && (text || link))
+      ? `<p class="made-by">${esc(text)}${safeHref(link) ? ` · <a href="${esc(safeHref(link))}" target="_blank" rel="noopener">${esc(String(link).replace(/^https?:\/\//, ''))}</a>` : ''}</p>`
       : '';
     const socials = (Array.isArray(p.site.socials) && p.site.socials.length
       ? p.site.socials.map((so) => `<a class="social" href="${esc(safeHref(so.url, '#'))}" target="_blank" rel="noopener" aria-label="Social">${esc(so.icon || '•')}</a>`).join('')
@@ -2191,7 +2256,7 @@ ${motionCSS(p)}
     // client dark/light theme toggle
     const themeBtn = $('.theme-btn');
     if (themeBtn) {
-      const KEY = 'pallettai_theme_' + (CFG.projectName || 'site');
+      const KEY = (CFG.storage && CFG.storage.theme ? CFG.storage.theme : 'site_theme_') + (CFG.projectName || 'site');
       const apply = (mode) => {
         document.body.classList.toggle('theme-light', mode === 'light');
         document.body.classList.toggle('theme-dark', mode === 'dark');
@@ -2210,15 +2275,16 @@ ${motionCSS(p)}
 
     // cookie banner — and the consent decision that makes it mean something
     if (CFG.cookieBanner) {
+      const CONSENT = (CFG.storage && CFG.storage.consent) || 'site_cookies_ok';
       let choice = null;
-      try { choice = localStorage.getItem('pallettai_cookies_ok'); } catch (err) { choice = null; }
+      try { choice = localStorage.getItem(CONSENT); } catch (err) { choice = null; }
       // '1' accepted, '0' declined. Either answer is remembered, so nobody is
       // asked twice and a decline is never quietly turned into a yes.
       if (choice !== '1' && choice !== '0') {
         const b = document.createElement('div');
         b.className = 'cookie-banner';
         b.innerHTML = '<span>🍪 This site uses cookies to measure visits. You can accept or decline.</span>';
-        const remember = (value) => { try { localStorage.setItem('pallettai_cookies_ok', value); } catch (err) {} };
+        const remember = (value) => { try { localStorage.setItem(CONSENT, value); } catch (err) {} };
         const ok = document.createElement('button');
         ok.className = 'btn solid small'; ok.textContent = 'Accept';
         ok.addEventListener('click', () => {
@@ -2537,7 +2603,7 @@ ${motionCSS(p)}
     // shop cart
     const cart = $('#cart');
     if (cart) {
-      const KEY = 'pallettai_cart_' + (CFG.projectName || 'site');
+      const KEY = (CFG.storage && CFG.storage.cart ? CFG.storage.cart : 'site_cart_') + (CFG.projectName || 'site');
       let items = [];
       try { items = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (err) { items = []; }
       // Guarded like every other storage read in the export: the preview renders
@@ -2779,11 +2845,18 @@ ${motionCSS(p)}
     const pages = normalizePages(project);
     const page = targetPage || pages.find((pg) => pg.id === project.site.activePageId) || pages[0];
     if (!page) return '';
+    const prior = _plan;
     _ctx = { pages, page };
+    _plan = {
+      whiteLabel: settings.proExport === true,
+      studioName: String(settings.studioName || ''),
+      studioUrl: String(settings.studioUrl || '')
+    };
     try {
       return pageHTML(project, settings, page, pages);
     } finally {
       _ctx = { pages: [], page: null };
+      _plan = prior;
     }
   }
 
@@ -2864,10 +2937,14 @@ ${motionCSS(p)}
     });
 
     const pal2 = DB.getPalette(p.site.palette);
+    const storageKeys = storageFor(p);
     const cfg = {
       proAnimations: (p.suites || []).includes('animation'),
       motion: motionOn(p),
       projectName: (p.site.name || 'site').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      // The keys this site stores under — named after the client, disclosed by
+      // the client's own cookie policy (see storageFor above).
+      storage: storageKeys,
       darkSite: pal2.dark === true,
       cookieBanner: settings.cookieBanner === true,
       forms: deliveryFor(p.site),
@@ -2921,7 +2998,7 @@ ${motionCSS(p)}
         ? `var t=document.createElement('script');t.defer=true;t.setAttribute('data-domain',${id});t.src='https://plausible.io/js/script.js';document.head.appendChild(t);`
         : `var t=document.createElement('script');t.async=true;t.src='https://www.googletagmanager.com/gtag/js?id='+encodeURIComponent(${id});document.head.appendChild(t);window.dataLayer=window.dataLayer||[];window.gtag=function(){window.dataLayer.push(arguments);};window.gtag('js',new Date());window.gtag('config',${id});`;
       return `<script>(function(){var on=false;window.__paiAnalytics=function(){if(on)return;on=true;${load}};`
-        + `var ok=false;try{ok=localStorage.getItem('pallettai_cookies_ok')==='1'}catch(e){}`
+        + 'var ok=false;try{ok=localStorage.getItem(' + JSON.stringify(storageKeys.consent) + ')===\'1\'}catch(e){}'
         + `if(ok)window.__paiAnalytics();})();<\/script>`;
     })();
 
@@ -3476,7 +3553,7 @@ ${customJs}
       + '.step{background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:16px 20px;margin:14px 0}</style></head><body>'
       + '<h1>Editing ' + nm + '</h1>'
       + '<p>You do not need any special software. Your website files include a built-in editor.</p>'
-      + '<div class="step"><strong>1.</strong> Open your site (for example <code>index.html</code>). A purple <strong>\u270f\ufe0f Edit text</strong> button sits in the bottom-right corner.</div>'
+      + '<div class="step"><strong>1.</strong> Open your site (for example <code>index.html</code>). A light-blue <strong>\u270f\ufe0f Edit text</strong> button sits in the bottom-right corner.</div>'
       + '<div class="step"><strong>2.</strong> Click it, then click any heading or paragraph on the page and type your changes.</div>'
       + '<div class="step"><strong>3.</strong> Click <strong>\ud83d\udcbe Save changes</strong> — your browser downloads the updated page file (e.g. <code>index.html</code>).</div>'
       + '<div class="step"><strong>4.</strong> Upload that downloaded file to your hosting (drag-and-drop on Netlify, or your host\'s file manager) to publish.</div>'

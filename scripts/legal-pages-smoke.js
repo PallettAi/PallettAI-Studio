@@ -196,9 +196,14 @@ console.log('\n3. The cookie table is a fact, not a list of common cookies');
 {
   const rows = (site, settings) => Legal.storageRows(Legal.facts(site, settings));
   const names = (r) => r.map((x) => x[0]).join(',');
+  // The keys the export actually writes, from the same function the builder
+  // uses. Derived from the SITE'S name: this table is printed on the client's
+  // own cookie policy, so the studio's tooling has no business in it.
+  const pk = Legal.storageKeysFor(plain);
+  const rk = Legal.storageKeysFor(rich);
 
   // The theme toggle defaults ON in the Studio and really does write
-  // pallettai_theme_<project>, so the only genuinely storage-free site is one
+  // <site>_theme_<project>, so the only genuinely storage-free site is one
   // with the toggle, the banner, the shop and analytics all off.
   const bareSite = project(Object.assign({}, plainSite, { themeToggle: false }));
   const bare = rows(bareSite, { legalPages: true });
@@ -206,20 +211,24 @@ console.log('\n3. The cookie table is a fact, not a list of common cookies');
   ok('the empty table still has one honest row, not zero', bare[0][0] === '\u2014');
 
   ok('the theme toggle is listed by default, because it is on by default',
-    names(rows(plain, { legalPages: true })).indexOf('pallettai_theme_*') !== -1);
+    names(rows(plain, { legalPages: true })).indexOf(pk.themeGlob) !== -1);
+  ok('the storage is named after the client, not us', pk.themeGlob === 'bramblebakery_theme_*', pk.themeGlob);
+  ok('the consent key is named after the client too', pk.consent === 'bramblebakery_cookies_ok', pk.consent);
   ok('the theme toggle is dropped when the site turns it off',
     names(rows(bareSite, { legalPages: true })).indexOf('theme') === -1);
 
   const ga = rows(rich, { legalPages: true, analyticsId: 'G-1', analyticsProvider: 'ga4', cookieBanner: true });
-  ok('the consent flag is listed when the banner is on', names(ga).indexOf('pallettai_cookies_ok') !== -1);
+  ok('the consent flag is listed when the banner is on', names(ga).indexOf(rk.consent) !== -1);
   ok('GA4 cookies are listed', names(ga).indexOf('_ga') !== -1 && names(ga).indexOf('_ga_*') !== -1);
   const gaNoBanner = rows(rich, { legalPages: true, analyticsId: 'G-1', analyticsProvider: 'ga4' });
   ok('the consent flag is NOT listed when no banner asks for it',
-    names(gaNoBanner).indexOf('pallettai_cookies_ok') === -1);
+    names(gaNoBanner).indexOf(rk.consent) === -1);
+  ok('no policy table anywhere names the tool', !/pallettai_/i.test(names(ga) + names(gaNoBanner) + names(rows(rich, { legalPages: true, cookieBanner: true }))));
   ok('GA4 cookies are still listed with no banner', names(gaNoBanner).indexOf('_ga') !== -1);
 
   const shop = rows(project(plainSite, { suites: ['shop'] }), { legalPages: true });
-  ok('the basket storage appears once a shop is added', names(shop).indexOf('pallettai_cart_*') !== -1);
+  ok('the basket storage appears once a shop is added', names(shop).indexOf(pk.cartGlob) !== -1);
+  ok('the basket key is the client\u2019s namespace as well', pk.cartGlob === 'bramblebakery_cart_*', pk.cartGlob);
 
   ok('every row is a 4-column entry',
     [bare, ga, shop].every((set) => set.every((r) => Array.isArray(r) && r.length === 4)));
@@ -302,7 +311,8 @@ console.log('\n5. Analytics waits for consent, and only then');
     gated.indexOf('<script async src="https://www.googletagmanager.com/gtag/js') === -1);
   ok('with the banner on, no dataLayer is created up front', gated.indexOf('dataLayer=window.dataLayer||[];function') === -1);
   ok('the tag is held behind a starter the banner can call', gated.indexOf('__paiAnalytics') !== -1);
-  ok('the starter reads the stored consent answer', gated.indexOf("localStorage.getItem('pallettai_cookies_ok')") !== -1);
+  ok('the starter reads the stored consent answer', gated.indexOf('localStorage.getItem(' + JSON.stringify(Legal.storageKeysFor(plain).consent) + ')') !== -1);
+  ok('and the key it reads belongs to the client, not us', gated.indexOf('pallettai_') === -1);
   ok('the tag is only built from the configured id', gated.indexOf('G-ABC123') !== -1);
   ok('the loader runs once, not per click', gated.indexOf('if(on)return;on=true') !== -1);
   ok('an already-accepted visitor still gets analytics', gated.indexOf("==='1'") !== -1);

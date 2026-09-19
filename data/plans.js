@@ -62,7 +62,7 @@ const PLANS = {
         '1 pinned milestone per project — a named snapshot that is never pruned',
         '“Made with PallettAI” badge on exports'
       ],
-      limits: { projects: 2, sectionsPerSite: 10, aiCredits: 7, milestones: 1 }
+      limits: { projects: 2, sectionsPerSite: 10, aiCredits: 7, milestones: 1, starters: 0 }
     },
     {
       id: 'pro', name: 'Pro', price: 9, period: 'month', popular: true,
@@ -78,9 +78,10 @@ const PLANS = {
         'Unlimited AI Studio generations',
         'AI image generation',
         '10 pinned milestones per project — name the build the client approved',
+        'Your own starters — save a finished site as the starting point for the next client (up to 24, no client details in them)',
         'Priority support'
       ],
-      limits: { projects: Infinity, sectionsPerSite: Infinity, aiCredits: Infinity, milestones: 10 }
+      limits: { projects: Infinity, sectionsPerSite: Infinity, aiCredits: Infinity, milestones: 10, starters: 24 }
     },
     {
       id: 'proplus', name: 'Pro+', price: 19, period: 'month', popular: false,
@@ -95,7 +96,7 @@ const PLANS = {
         '25 pinned milestones per project — a signed-off version kept for every site you look after',
         'White-label Site Care report to hand a client, with your branding on it'
       ],
-      limits: { projects: Infinity, sectionsPerSite: Infinity, aiCredits: Infinity, milestones: 25 }
+      limits: { projects: Infinity, sectionsPerSite: Infinity, aiCredits: Infinity, milestones: 25, starters: 24 }
     }
   ],
 

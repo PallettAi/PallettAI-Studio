@@ -68,7 +68,7 @@ The shell is verified the same way as the rest of the app — `node scripts/ui-p
 
 ## Plans & subscriptions
 
-**Currency: GBP.** All pricing, template pricing sections, shop carts and AI-generated copy are in pounds sterling (£). The studio's plans are **Free · Pro £9/mo · Pro+ £19/mo**. Free gets the core library (22 fonts, 19 layouts, 4 free databases, map/weather/embed/booking widgets); Pro unlocks the Premium Font Pack (14 faces), 6 premium catalog layouts, the Data Widgets suite (live crypto / GitHub / FX sections), 3 extra online databases, unlimited projects, unbranded site exports and reusable brand presets (save up to 12 visual systems across projects); Pro+ adds a white-label client handoff ZIP with no PallettAI attribution in the hosting guide or brand kit. Pro+ is a delivery tier, not a team-seat or shared-workspace plan. Gating is enforced at every entry point — library, database panel, section editor variants, copilot, integrations and brand presets.
+**Currency: GBP.** All pricing, template pricing sections, shop carts and AI-generated copy are in pounds sterling (£). The studio's plans are **Free · Pro £9/mo · Pro+ £19/mo**. Free gets the core library (22 fonts, 19 layouts, 4 free databases, map/weather/embed/booking widgets); Pro unlocks the Premium Font Pack (14 faces), 6 premium catalog layouts, the Data Widgets suite (live crypto / GitHub / FX sections), 3 extra online databases, unlimited projects, reusable brand presets (save up to 12 visual systems across projects) and **your own starters** — up to 24 finished builds you can start the next client from, carrying the pages, sections and look but never the previous client's name, contacts, copy or photos unless you ask for them; Pro+ adds a white-label client handoff ZIP, the white-label Site Care report, and an **export with no PallettAI anywhere a client can see** — not the badge, not the footer signature, and not the cookie policy's own storage table, which now names the site's local storage after the client (`willowcafe_theme_*`) rather than after us. Pro+ is a delivery tier, not a team-seat or shared-workspace plan. Gating is enforced at every entry point — library, database panel, section editor variants, copilot, integrations, brand presets and starters.
 
 | | Free | Pro (£9/mo) | Pro+ (£19/mo) |
 |---|---|---|---|
@@ -78,7 +78,9 @@ The shell is verified the same way as the rest of the app — `node scripts/ui-p
 | Suites | Animation + Contact Pro | All | All |
 | AI Studio | 7 credits | Unlimited | Unlimited |
 | Brand systems | — | Save up to 12 | Save up to 12 |
-| Exports | "Made with PallettAI" badge | Unbranded site export | White-label client handoff ZIP |
+| Your own starters | — | Up to 24 | Up to 24 |
+| Exports | “Made with PallettAI” badge | Same badge, unlimited exports | **No trace of us anywhere a client can see** |
+| Delivery | — | — | White-label handoff ZIP, invoice and Site Care report |
 
 Upgrade via in-app checkout (demo) or license keys: `PAL-PRO-XXXX-XXXX` / `PAL-PROPLUS-XXXX-XXXX` — no demo keys are shipped with the app. **Signed in? Keys verify against the registry**: `activate_license` binds the key to your account (one account per key), stamps the activation, and writes the plan + expiry onto your profile — so your plan follows you across devices, and revoked/expired keys are refused with honest messages. Existing `PAL-AGENCY-*` keys are migrated to Pro+ for continuity; Agency is no longer offered as a plan. Signed out, keys use the local checksum path.
 
@@ -292,6 +294,31 @@ Site Care reads every project and tells the studio which client site needs a cal
 - It is honest about its limits: nothing here measures page speed, mobile rendering, hosting or ranking, and the report says so rather than implying otherwise.
 
 Both suites run inside `npm run release:check` (`scripts/milestones-smoke.js`, `scripts/care-report-smoke.js`).
+
+### Then: making the promise true, and a starting point of your own
+
+Two more passes, both of them closing a gap between what a tier said and what it did.
+
+### Pro+ · "Unbranded" now means unbranded
+
+Removing the badge was never the whole promise. Three things a client could see still carried our name, and none of them were in the code that removes the badge (`data/whitelabel.js`, and the checks in `scripts/whitelabel-smoke.js`):
+
+- **The footer signature.** Every export filled the site's footer with “Made by PallettAI · pallettai.org” from the shipped default — on a Pro+ build that default is now treated as *unset*: the signature becomes the studio's own business name and site from Settings, or disappears. A signature the studio typed themselves is always honoured; the shipped default is the one string that cannot be told apart from “never touched”.
+- **The no-photo panel.** A hero or About section with no image draws an on-theme panel; on Free it says “Built with PallettAI Studio” under our ◆ and that is the deal, and on Pro+ it now shows the site's own tagline with no mark at all. The panel itself stays — an empty media column looks broken, not unbranded.
+- **The cookie policy's storage table.** The exported site's own scripts wrote `pallettai_theme_*`, `pallettai_cookies_ok` and `pallettai_cart_*`, and its generated cookie policy disclosed exactly those names — our brand, printed in the client's privacy page. Both sides now read one function that derives the namespace from the site's own name (`willowcafe_theme_*`), so the keys belong to the client and the policy still lists precisely what the site sets. This applies on every plan, because it is the client's site on every plan.
+- **Before delivery.** Every export, handoff and publish runs the check and, if our name is still in it, shows the findings with a one-click fix (“Use my studio details”) beside the option to ship anyway. It is soft on purpose — it is the studio's site and their call — but it is never silent, and dismissing it is remembered per revision so it does not nag about content that has not changed.
+
+The developer-visible fingerprints (`data-pai-build`, `pai-*` class names, `--pai-sched-h`) are reported as information rather than renamed: they are invisible to a visitor, and the build stamp is what the client-review round-trip reads.
+
+### Pro · Starters, and a delivery pack that names the right party
+
+**Your own starters** (`data/starters.js`). The two ways to start a client site were both wrong: duplicating a finished project carries the last client's name, phone, address, domain, photos and meta description into the new build — and nothing looks empty, so it is found by the new client rather than by the studio — while a built-in template is a shape that is not theirs. A starter keeps the pages, the section order, the layouts, the design, the locked brand kernel and the suites, and leaves the identity, the logo, the images and the words behind. “Keep the copy” is offered, off by default, because a studio building the same kind of site twice may genuinely want their own boilerplate. Pro and Pro+ keep 24, from one table (`Starters.LIMITS`) that the plan page and the suite both read; the shelf lives in Templates, where a project begins, and a starter is saved from the ★ on a project card. Starters are part of a library backup and merge across machines like a brand preset.
+
+**The delivery pack** now names the studio, not the website. The handoff invoice was billing under the project's own name (“Willow Cafe Site — website design & build”), with a line telling the client to ask “your designer” who that was — and it read a variable that does not exist in its scope, so entering an invoice amount threw and no handoff ZIP was built at all. The invoice, the hosting guide and the brand kit now print the studio's business name, email, phone and site from Settings, and say what to fill in when they are empty.
+
+**Smaller things.** The brand-preset cap no longer silently deletes the oldest system when you save a thirteenth — it refuses and offers to replace a named one instead, which matters on the tier that sells “up to 12”. The client how-to page no longer describes the **Edit text** button as purple when it is light blue.
+
+These run inside `npm run release:check` (`scripts/whitelabel-smoke.js`, `scripts/starters-smoke.js`).
 
 ## Fixes shipped (2026-09-06)
 

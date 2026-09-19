@@ -93,6 +93,10 @@ const KINDS = {
   'pallettai.assets.v1': { kind: 'list', label: 'Assets', item: 'asset' },
   'pallettai.sectionPresets.v1': { kind: 'list', label: 'Section presets', item: 'preset' },
   'pallettai.brandPresets.v1': { kind: 'list', label: 'Brand presets', item: 'brand preset' },
+  // Starters merge on their id and their createdAt, exactly like a brand preset:
+  // the same shelf on two machines is a union, and the newer copy of the same
+  // starter wins. A starter that only exists on one side always survives.
+  'pallettai.starters.v1': { kind: 'list', label: 'Starters', item: 'starter' },
   'pallettai.briefs.v1': { kind: 'list', label: 'Briefs', item: 'brief' },
   'pallettai.revisions.v1': { kind: 'revisions', label: 'Autosave history', item: 'snapshot' },
   'pallettai.settings.v1': { kind: 'settings', label: 'Settings', item: 'setting' },

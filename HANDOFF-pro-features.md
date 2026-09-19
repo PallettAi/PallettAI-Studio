@@ -111,6 +111,127 @@ model for pasting into an email.
 
 No git operations. The sibling `pallettai-win-build` worktree was left untouched.
 
+---
+
+# Second pass — the promise, and a starting point of your own
+
+`scripts/whitelabel-smoke.js` — **50 checks pass**. `scripts/starters-smoke.js`
+— **90 checks pass**. Full `npm run release:check` passes. Nothing was committed.
+
+## Why these
+
+- **Pro+ sold “Unbranded exports (no studio badge)” and that sentence was
+  false.** The badge was removed and three other client-visible things carried
+  our name: the footer signature (from the shipped default), the panel a
+  photo-less hero or About section draws, and the storage keys the exported site
+  wrote — which its own generated cookie policy then disclosed. A studio paying
+  £19/month for white-label delivery could not see any of it, and no test
+  covered it: `badge-attribution-smoke` asserted only that
+  `/pallettai-badge/` was absent.
+- **Pro sold “unlimited everything”, which is Free without limits.** Its
+  buyers build the same site shape repeatedly; the two ways to start were
+  duplicating a finished project (which carries the last client's identity,
+  copy and photos into the new build, and looks full the whole time) or a
+  built-in template that is not their shape. Pro now owns the shelf.
+
+## Pro+ · White-label, actually (`data/whitelabel.js`)
+
+One module owns two jobs: derive a neutral storage namespace for an exported
+site, and scan a built export for brand text. Severity is the whole design — the
+same fact is an error on Pro+ and a note on Free, because on Free the
+attribution is the deal.
+
+| Where | Before | Now |
+| --- | --- | --- |
+| Footer signature (`builder.js` `buildFooter`) | our shipped default on every page, on every plan | on Pro+ the default is treated as **unset**: the studio's own business name/site, or nothing. A string the studio typed is always honoured |
+| No-photo panel (`heroPlaceholder`) | “Built with PallettAI Studio” + our ◆ | on Pro+ the site's own tagline, no mark. The panel stays: an empty media column looks broken, not unbranded |
+| Site storage keys | `pallettai_theme_*`, `pallettai_cookies_ok`, `pallettai_cart_*` | derived from the site's own name (`willowcafe_theme_*`) on **every** plan — it is the client's site on every plan |
+| Cookie policy table (`legal.js` `storageRows`) | disclosed our key names | reads the same function the builder writes with, so the policy cannot disagree with the site |
+| Before delivery | nothing checked | every export, handoff and publish scans and shows the findings with **Use my studio details**, or lets the studio ship anyway. Dismissal is remembered per revision |
+
+Developer-visible fingerprints (`data-pai-build`, `pai-*` classes, `--pai-sched-h`)
+are reported as information and **not** renamed: they are invisible to a visitor,
+and `review-smoke.js` and `concierge-schedule-smoke.js` pin the exact strings
+because the client-review round-trip and the schedule bar read them. Renaming
+them is a real option later, and it is the one remaining gap between “nothing a
+client can see” and “nothing at all”.
+
+One deliberate behaviour worth knowing: on Pro+, typing our exact shipped
+default into the footer text field does nothing, because it is
+indistinguishable from never having touched it. Anything else is honoured —
+including, if a studio insists, our name in words of their own — and the scan
+then reports it as the breach it is.
+
+## Pro · Starters (`data/starters.js`)
+
+A starter is a project with the client taken out. `fromProject` strips
+`IDENTITY` (business name, tagline, description, contacts, hours, area, domain,
+SEO description, og image, logo, form endpoint, chat widget, WhatsApp, analytics
+id, schema type, socials), and — unless **Keep this copy and photos** is ticked —
+every section's `COPY` (`title`, `subtitle`, `text`, `extra`, `badge`) and `ASSET`
+(`image`, `alt`, `video`, `poster`), plus each card's text and image. What
+survives is the shape: pages and their order, section types and order, layouts,
+animations, card counts and icons, palette, fonts, design numbers, hero layout,
+the locked brand kernel and the suites.
+
+`instantiate` builds a new project with fresh ids for every page and section
+(ids are passed in, so the app's own `uid()` is used and a test can reproduce
+it), keeps `site.sections` aliased to the active page, and stamps `createdAt`/
+`updatedAt` at the moment of the build rather than the moment the starter was
+saved.
+
+Tier: Free 0, Pro 24, Pro+ 24, in one table that `plans.js` advertises
+(`limits.starters`) and the suite cross-checks. The shelf renders in Templates
+(the place a project begins), saves from the ★ on a project card, is in the
+library backup, and merges across machines as a `list` kind by id + createdAt.
+
+## Bugs found on the way
+
+1. **The handoff invoice threw and took the whole ZIP with it.** Its line item
+   read `${esc(p.name || 'website')}` where `p` exists in no enclosing scope, so
+   entering a client name or an amount raised a `ReferenceError` inside the click
+   handler — and because the invoice card is rendered while the file list is
+   built, **no handoff ZIP was produced at all**. The invoice is one of the four
+   things the Pro+ pack advertises. Fixed, and the card now names the studio as
+   the biller.
+2. **The brand-preset cap silently deleted the oldest system.**
+   `brandPresets.unshift(next); if (length > 12) pop();` — twice. Saving a
+   thirteenth preset removed a customer's first client's whole visual system
+   with no message. Now `saveBrandPreset` refuses and the dialog names the row it
+   would have to give up.
+3. **The client how-to page described the Edit button as purple** when
+   `.pai-edit-btn` is `#7cc0f8`. It ships in every handoff ZIP.
+4. **`README.md` claimed Pro gets “unbranded site exports”.** It does not —
+   `proExport` is `isProPlus()`, and the exported-site footer kept our name on
+   Pro too. The README table and paragraph now match the code.
+
+## Honest caveats
+
+- **The neutral storage namespace renames a visitor's stored preference once.**
+  An already-deployed site exported before this change keeps reading the old key
+  until it is re-exported, and one theme choice or basket is lost when it is.
+  That is the price of the client's own name in their own privacy page.
+- **Copy is blanked, not templated.** A structure-only starter arrives with the
+  right pages and sections and no words, which the quality gate will correctly
+  flag as empty sections until the studio fills them in. Inventing filler copy
+  would be worse: it is the thing that gets published by mistake.
+- **`Keep this copy and photos` is a one-way switch per starter.** It is
+  recorded on the starter (`keepCopy`) and shown on its card, but flipping it
+  later means saving a new starter.
+- **The starters shelf is not in the cloud vault** — it travels in a library
+  backup and across a merge, like brand presets, but not automatically between
+  machines.
+
+## Files touched
+
+`data/whitelabel.js` (new) · `data/starters.js` (new) · `modules/builder.js` ·
+`data/legal.js` · `data/plans.js` · `data/library-merge.js` · `app.js` ·
+`styles.css` · `index.html` · `scripts/whitelabel-smoke.js` (new) ·
+`scripts/starters-smoke.js` (new) · `scripts/legal-pages-smoke.js` ·
+`scripts/release-check.js` · `README.md`.
+
+No git operations. The sibling `pallettai-win-build` worktree was left untouched.
+
 ## Suggested next steps (not built)
 
 1. **Scan history and a trend line** for the care report (store key + schema +

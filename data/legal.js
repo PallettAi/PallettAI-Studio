@@ -121,6 +121,10 @@ const Legal = (() => {
 
     return {
       site, s, suites,
+      // The keys the export actually writes (see builder.js storageFor). Named
+      // after the client, because this table is printed on the client's own
+      // cookie policy — the studio's tooling has no business being in it.
+      storage: storageKeysFor(project),
       name: String(site.name || (project && project.name) || 'this business').replace(/\s+—\s+Website$/, ''),
       email: String(site.email || '').trim(),
       phone: String(site.phone || '').trim(),
@@ -219,6 +223,20 @@ const Legal = (() => {
       + 'If you are not happy with our response you can complain to the data protection authority in your country.';
   }
 
+  /*
+    The same storage namespace the builder writes under.
+
+    data/whitelabel.js derives it from the site's own name, and this file must
+    agree with it exactly: a policy that lists a key the site never sets, or
+    omits one it does, is the most common lie on a small business site. The
+    local fallback keeps this file honest if it is loaded without the module.
+  */
+  function storageKeysFor(project) {
+    if (typeof Whitelabel !== 'undefined' && Whitelabel.storageKeys) return Whitelabel.storageKeys(project);
+    const p = String((project && project.site && project.site.name) || 'site').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 24) || 'site';
+    return { prefix: p, theme: p + '_theme_', themeGlob: p + '_theme_*', consent: p + '_cookies_ok', cart: p + '_cart_', cartGlob: p + '_cart_*' };
+  }
+
   // ---- cookie rows -----------------------------------------------------------
   // Only storage the export actually sets earns a row. A "cookies" table full of
   // entries the site never writes is the single most common lie on a small site.
@@ -226,9 +244,10 @@ const Legal = (() => {
   function storageRows(fx) {
     const rows = [];
     const local = (name, purpose, duration) => rows.push([name, 'Local storage', purpose, duration]);
-    if (fx.hasCookieBanner) local('pallettai_cookies_ok', 'Remembers your cookie choice so we do not ask again', 'Until you clear your browser storage');
-    if (fx.hasThemeToggle) local('pallettai_theme_*', 'Remembers whether you prefer the light or dark version of this site', 'Until you clear your browser storage');
-    if (fx.shopOn) local('pallettai_cart_*', 'Keeps the contents of your basket while you browse', 'Until you clear your browser storage');
+    const keys = fx.storage || storageKeysFor(null);
+    if (fx.hasCookieBanner) local(keys.consent, 'Remembers your cookie choice so we do not ask again', 'Until you clear your browser storage');
+    if (fx.hasThemeToggle) local(keys.themeGlob, 'Remembers whether you prefer the light or dark version of this site', 'Until you clear your browser storage');
+    if (fx.shopOn) local(keys.cartGlob, 'Keeps the contents of your basket while you browse', 'Until you clear your browser storage');
 
     if (fx.hasAnalytics && fx.analyticsProvider === 'ga4') {
       rows.push(['_ga', 'Cookie', 'Distinguishes one visitor from another so we can count visits', 'Up to 2 years']);
@@ -424,7 +443,7 @@ const Legal = (() => {
   return {
     KINDS, LABELS, NOTE,
     enabled, facts, pages, page, attach, footerLinks,
-    storageRows, clausesFor, dateStamp, esc,
+    storageRows, storageKeysFor, clausesFor, dateStamp, esc,
     formProvider, embedHost
   };
 })();
