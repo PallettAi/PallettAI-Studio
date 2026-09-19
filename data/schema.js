@@ -168,6 +168,7 @@ const REGISTRY = {
   'pallettai.assets.v1': { label: 'Assets', current: 2, migrations: { 1: assetsToV2 } },
   'pallettai.sectionPresets.v1': { label: 'Section presets', current: 1 },
   'pallettai.brandPresets.v1': { label: 'Brand presets', current: 1 },
+  'pallettai.starters.v1': { label: 'Starters', current: 1 },
   'pallettai.briefs.v1': { label: 'Briefs', current: 1 },
   'pallettai.settings.v1': { label: 'Settings', current: 1 },
   // A first-run flag ('1'), written to localStorage only and never to the store.

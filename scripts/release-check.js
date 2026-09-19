@@ -134,6 +134,10 @@ const SMOKES = [
   ['scripts/ai-kernel-smoke.js', 'AI brand kernel smoke'],
   ['scripts/ai-critique-smoke.js', 'AI self-critique smoke'],
   ['scripts/ai-next-upgrades-smoke.js', 'AI provenance, reference-distance & art-direction smoke'],
+  ['scripts/ai-director-smoke.js', 'Local AI Director, semantic routing & plan validation smoke'],
+  ['scripts/ai-originality-smoke.js', 'AI originality fingerprint, distance & repair smoke'],
+  ['scripts/bg-jobs-smoke.js', 'Background jobs smoke (queue, retry, cancel & project isolation)'],
+  ['scripts/crashreport-smoke.js', 'Crash reporting smoke (consent, scrubbing & bounded retry)'],
   // The wording engine: two clients in one industry must never be handed
   // word-for-word identical sites, and a client's own proofs must drive copy.
   ['scripts/copy-smoke.js', 'Copy engine smoke'],
@@ -174,6 +178,10 @@ const SMOKES = [
   // document goes wrong on its own: it lies, it arrives broken, or a client's
   // own words get edited into markup.
   ['scripts/care-report-smoke.js', 'Client care report smoke (truthful, self-contained, escaped)'],
+  // Every export path runs the brand check before delivery, so the two ways it
+  // can go wrong are both failures: it can miss our name, or it can block a
+  // studio who has read the warning and chosen to ship anyway.
+  ['scripts/whitelabel-smoke.js', 'White-label smoke (the export, not the intent)'],
   // The badge writes a user's own referral code into every site they sell, so
   // the suite is as much about it not being a way IN as about the link working.
   ['scripts/badge-attribution-smoke.js', 'Attribution badge smoke'],
@@ -413,6 +421,10 @@ function checkBuilder() {
   // machine. Merging is now the default direction, and the rule it must keep —
   // nothing that exists only on one side is dropped — is checked key by key.
   runScript(['scripts/library-merge-smoke.js'], 'Library merge smoke (backup inspection, union, replace)');
+  // A starter's promise is what it leaves behind, so this suite is mostly about
+  // absence: no client name, contacts, domain, logo, copy or photo may travel,
+  // and the shelf's size must match the tier table that advertises it.
+  runScript(['scripts/starters-smoke.js'], 'Personal starters smoke (what must never travel)');
   runScript(['scripts/templates-view-smoke.js'], 'Templates view smoke');
   runScript(['scripts/streak-placement-smoke.js'], 'Streak placement smoke');
   runScript(['scripts/dodo-checkout-smoke.js'], 'Dodo checkout smoke');

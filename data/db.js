@@ -1527,6 +1527,8 @@ DB.defaultSettings = {
   autosave: true,
   autosaveMs: 2000,
   confirmDelete: true,
+  crashReportingEnabled: false, // opt-in only; scrubbed, rate-limited, no project content
+  crashReportDsn: '',           // ingest endpoint override; the default ships in the build
   startupView: 'dashboard',
   dashboardShowJobTray: true,
   dashboardShowMetrics: true,

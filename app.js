@@ -85,6 +85,23 @@ const App = (() => {
       next.push(row);
       localStorage.setItem(DIAG_KEY, JSON.stringify(next));
     } catch (e) { /* diagnostics must never affect the application */ }
+    // Opt-in upload (Settings ▸ Studio ▸ Crash reporting — OFF by default).
+    // CrashReport scrubs messages (emails, keys, URLs) BEFORE anything is
+    // buffered, and only a scrubbed, rate-limited summary leaves the device.
+    try {
+      if (crashReporter) {
+        crashReporter.record({
+          type: kind,
+          scope: 'renderer',
+          message: error && (error.message || error.reason) || String(error || 'Unknown error'),
+          installation: crashInstallId,
+          session: crashSessionId,
+          appVersion: appVersion(),
+          platform: (navigator && navigator.userAgent ? navigator.userAgent : '').slice(0, 60)
+        });
+        crashReporter.flush().catch(() => {});
+      }
+    } catch (e) { /* reporting must never affect the application */ }
   }
   if (typeof window !== 'undefined') {
     window.addEventListener('error', (e) => recordDiagnostic('error', e.error || e.message));
@@ -99,6 +116,7 @@ const App = (() => {
     seeded: 'pallettai.seeded.v1',
     revs: 'pallettai.revisions.v1',
     brandPresets: 'pallettai.brandPresets.v1',
+    starters: 'pallettai.starters.v1',
     briefs: 'pallettai.briefs.v1'
   };
 
@@ -447,6 +465,224 @@ const App = (() => {
       catch (e) { toast('Could not save this brand preset — storage is full.', false); }
     }
   }
+  /* ============================================================
+     Starters — begin the next project from one you already built
+     ------------------------------------------------------------
+     The two ways to start a client site today are both wrong: duplicating a
+     finished project carries the last client's name, phone, photos and meta
+     description into the new build (and nothing looks empty, so it is only
+     noticed when the new client sees the old one's number), and a built-in
+     template is a shape that is not theirs.
+
+     A starter is the middle: the pages, the section order and the look, with
+     the previous client left behind. Pro owns the shelf; the tier lock is in
+     data/starters.js (LIMITS) and asserted by the suite, because a feature list
+     that promises more than the module allows is a refund.
+     ============================================================ */
+  const Start = (typeof Starters !== 'undefined') ? Starters : null;
+  let starters = [];
+
+  async function hydrateStarters() {
+    let raw = null;
+    if (bootStoreOK) {
+      try { raw = await AppStore.get(LS.starters); }
+      catch (e) { bootStoreOK = false; }
+    }
+    if (raw == null) {
+      try { raw = localStorage.getItem(LS.starters); } catch (e) { raw = null; }
+      if (raw != null && bootStoreOK) {
+        try { await AppStore.put(LS.starters, raw); localStorage.removeItem(LS.starters); }
+        catch (e) { bootStoreOK = false; }
+      }
+    }
+    try {
+      const parsed = JSON.parse(raw || '[]');
+      starters = Array.isArray(parsed)
+        ? parsed.map((s) => (Start ? Start.normalize(s) : null)).filter(Boolean).slice(0, Start ? Start.MAX : 24)
+        : [];
+    } catch (e) { starters = []; }
+  }
+  function persistStarters() {
+    starters = starters.map((s) => (Start ? Start.normalize(s) : null)).filter(Boolean).slice(0, Start ? Start.MAX : 24);
+    if (bootStoreOK) AppStore.schedule(LS.starters, () => JSON.stringify(starters));
+    else {
+      try { localStorage.setItem(LS.starters, JSON.stringify(starters)); }
+      catch (e) { toast('Could not save this starter \u2014 storage is full.', false); }
+    }
+  }
+  function starterShelf() {
+    if (!Start) return { items: [], used: 0, limit: 0, tier: 'Free', remaining: 0, atLimit: false, message: '' };
+    return Start.report(starters, planState().plan);
+  }
+
+  /*
+    Save the open project as a starter.
+
+    The dialog asks the one question that decides whether this is safe to reuse:
+    do you want the copy and the photos as well? It is OFF by default, and the
+    label says what off means, because the failure mode of getting this wrong is
+    a client reading the previous client's words on their own site.
+  */
+  function openStarterSave(p) {
+    const shelf = starterShelf();
+    if (!shelf.limit) { openPricing(); return toast('Your own starters are a Pro feature \ud83d\udd12', false); }
+    if (shelf.atLimit) return toast(shelf.message, false);
+    const suggested = String((p.name || '').replace(/ Site$/, '')).trim() || 'Starter';
+    openModal('Save as a starter', `
+      <p style="color:var(--muted);margin-bottom:12px">A starter keeps the pages, the section order and the look, so the next client starts where this one ended. Your shelf holds ${shelf.limit}: ${shelf.used} in use.</p>
+      <div class="field"><label>Starter name</label><input id="stName" maxlength="60" value="${esc(suggested)}" placeholder="e.g. Café one-pager"></div>
+      <label style="display:flex;gap:8px;align-items:flex-start;margin-top:11px;color:var(--muted);font-size:.75rem;line-height:1.45;cursor:pointer"><input type="checkbox" id="stCopy"><span><b style="color:var(--text)">Keep this site's copy and photos</b><br>Leave this off for a client-ready starter: the pages, sections and design are kept, but the business name, contact details, text and every image are left behind. Switch it on only for wording that is yours.</span></label>
+      <div class="quality-actions">
+        <button class="btn primary small" id="stSave">Save starter</button>
+        <button class="btn ghost small" id="stCancel">Cancel</button>
+      </div>`);
+    const cancel = $('#stCancel');
+    if (cancel) cancel.onclick = closeModal;
+    const save = $('#stSave');
+    if (save) save.onclick = () => {
+      const res = Start
+        ? Start.fromProject(p, { name: ($('#stName').value || '').trim(), keepCopy: $('#stCopy').checked, id: uid(), now: Date.now() })
+        : { ok: false, error: 'The starter library is not in this build.' };
+      if (!res.ok) return toast(res.error, false);
+      starters.unshift(res.starter);
+      persistStarters();
+      closeModal();
+      toast('Starter “' + res.starter.name + '” saved \u2b50', true);
+      renderStarters();
+    };
+  }
+
+  function deleteStarter(id) {
+    const s = starters.find((x) => x.id === id);
+    if (!s) return;
+    confirmModal('Remove this starter?', '“' + s.name + '” is removed from your shelf. Projects already built from it are untouched.', () => {
+      starters = starters.filter((x) => x.id !== id);
+      persistStarters();
+      renderStarters();
+      toast('Starter removed');
+    }, 'Remove');
+  }
+
+  // Start a project from a starter. Capacity and tier are checked in the same
+  // order as createProject, so the two doors behave identically.
+  function newFromStarter(id) {
+    const s = starters.find((x) => x.id === id);
+    if (!s) return;
+    if (!ensureProjectCapacity()) return;
+    const res = Start
+      ? Start.instantiate(s, { name: s.name + ' Site', id: uid(), now: Date.now(), uid: uid })
+      : { ok: false, error: 'The starter library is not in this build.' };
+    if (!res.ok) return toast(res.error, false);
+    projects.unshift(res.project);
+    saveProjects();
+    currentId = res.project.id;
+    selectedSec = null;
+    switchView('designer');
+    toast('Started from “' + s.name + '” \u2728\u00a0\u2014 fill in the new client\u2019s details', true);
+  }
+
+  /*
+    The shelf, in the view where a project begins.
+
+    Free sees the shelf and what it is for but not the button: the thing that
+    sells a starter is having built the site you want to reuse, and that has
+    already happened by the time anyone is here.
+  */
+  function renderStarters() {
+    const grid = $('#starterGrid');
+    if (!grid) return;
+    const shelf = starterShelf();
+    const note = $('#starterNote');
+    if (note) {
+      note.textContent = shelf.limit
+        ? shelf.used + ' of ' + shelf.limit + ' saved \u00b7 they carry no client details, copy or photos unless you chose to keep them'
+        : 'Your own starting points are a Pro feature \u2014 save a site once and the next client starts from it';
+    }
+    if (!shelf.items.length) {
+      grid.innerHTML = `<div class="starter-empty">
+        <b>${shelf.limit ? 'No starters yet' : 'Starters are a Pro feature'}</b>
+        <span>Open a finished project and choose \u2605 on its card to save the shape \u2014 pages, sections and design \u2014 without the client's details.</span>
+        <div class="starter-row">
+          <button class="btn ${shelf.limit ? 'primary' : 'ghost'} small" id="starterFromOpen">Save the open project</button>
+          ${shelf.limit ? '' : '<button class="btn primary small" id="starterUpgrade">See plans</button>'}
+        </div>
+      </div>`;
+    } else {
+      grid.innerHTML = shelf.items.map((s) => {
+        const st = s.stats || { pages: 0, sections: 0, types: [] };
+        const kinds = (st.types || []).slice(0, 3).join(' \u00b7 ');
+        return `<div class="card starter-card">
+          <div class="starter-head"><b>${esc(s.name)}</b>${s.keepCopy ? '<span class="chip">copy kept</span>' : '<span class="chip">structure only</span>'}</div>
+          <p class="starter-facts">${st.pages} page${st.pages === 1 ? '' : 's'} \u00b7 ${st.sections} section${st.sections === 1 ? '' : 's'}${kinds ? ' \u00b7 ' + esc(kinds) : ''}</p>
+          <div class="starter-row">
+            <button class="btn primary small" data-st-use="${esc(s.id)}">Start a project</button>
+            <button class="btn ghost small" data-st-del="${esc(s.id)}">Remove</button>
+          </div>
+        </div>`;
+      }).join('');
+    }
+    const open = $('#starterFromOpen');
+    if (open) open.onclick = () => {
+      const c = current();
+      if (!c) return toast('Open the project you want to save first', false);
+      openStarterSave(c);
+    };
+    const up = $('#starterUpgrade');
+    if (up) up.onclick = () => openPricing();
+    $$('#starterGrid [data-st-use]').forEach((b) => b.onclick = () => newFromStarter(b.dataset.stUse));
+    $$('#starterGrid [data-st-del]').forEach((b) => b.onclick = () => deleteStarter(b.dataset.stDel));
+  }
+
+  /*
+    Save a brand preset, and be honest about the cap.
+
+    The cap used to be a silent `pop()`: the thirteenth preset quietly deleted
+    the first, which on Pro+ is a client's entire visual system vanishing with no
+    message and nothing to undo. "Save up to 12 visual systems" is a limit, not a
+    licence to delete one — so this refuses instead, and hands the caller the row
+    it would have had to give up so the studio can choose.
+  */
+  function saveBrandPreset(preset, replaceId) {
+    if (!preset) return { ok: false, reason: 'capture' };
+    const sameName = brandPresets.find((p) => String(p.name || '').toLowerCase() === String(preset.name || '').toLowerCase());
+    const target = sameName || (replaceId ? brandPresets.find((p) => p.id === replaceId) : null);
+    if (target) {
+      preset.id = target.id;
+      preset.createdAt = target.createdAt || preset.createdAt;
+      brandPresets = brandPresets.map((p) => (p.id === target.id ? preset : p));
+      persistBrandPresets();
+      return { ok: true, replaced: true, preset: preset };
+    }
+    if (brandPresets.length >= BRAND_PRESET_LIMIT) {
+      // The list is kept newest-first, so the last row is the oldest system.
+      return { ok: false, atLimit: true, oldest: brandPresets[brandPresets.length - 1] };
+    }
+    brandPresets.unshift(preset);
+    persistBrandPresets();
+    return { ok: true, replaced: false, preset: preset };
+  }
+
+  // The thirteenth preset. Asks which one to give up rather than deciding.
+  function askReplaceBrandPreset(preset, oldest, onDone) {
+    const when = oldest && oldest.createdAt ? ' (' + niceDate(oldest.createdAt) + ')' : '';
+    openModal('All ' + BRAND_PRESET_LIMIT + ' brand presets are in use', `
+      <p>Saving “${esc(preset.name)}” means making room. The oldest system saved on this machine is <b>${esc((oldest && oldest.name) || 'the last one')}</b>${esc(when)}.</p>
+      <div class="quality-actions">
+        <button class="btn danger small" id="bpReplace">Replace “${esc((oldest && oldest.name) || 'it')}”</button>
+        <button class="btn ghost small" id="bpCancel">Keep everything</button>
+      </div>
+      <p style="color:var(--muted);margin-top:10px">Deleting one from the list yourself does the same job — nothing else is touched either way.</p>`);
+    const replace = $('#bpReplace');
+    if (replace) replace.onclick = () => {
+      const res = saveBrandPreset(preset, oldest && oldest.id);
+      closeModal();
+      if (res.ok) { toast('Replaced “' + ((oldest && oldest.name) || '') + '” with “' + preset.name + '” 🎨', true); if (onDone) onDone(); }
+      else toast('That brand preset could not be saved.', false);
+    };
+    const cancel = $('#bpCancel');
+    if (cancel) cancel.onclick = closeModal;
+  }
+
   function brandPresetFromProject(c, name, includeSeo) {
     const s = c.site || {};
     const d = s.design || {};
@@ -551,6 +787,235 @@ const App = (() => {
   const planState = () => PLANS.store.current();
   const isPro = () => PLANS.store.isPro();
   const isProPlus = () => PLANS.store.isProPlus();
+
+  // ================= Crash reporting (opt-in) =================
+  // Bridges the pure CrashReport engine to the network. Enabled only when the
+  // user flips the Settings switch; the DSN default points at the pallettai.org
+  // ingest, and anything the user configures replaces it.
+  let crashReporter = null;
+  let crashSessionId = '';
+  let crashInstallId = '';
+  function initCrashReporter() {
+    if (crashReporter || typeof CrashReport === 'undefined') return;
+    // Mirror consent to the main process, which owns its own handlers.
+    try {
+      const bridge = (typeof window !== 'undefined') ? window.pallettai : null;
+      if (bridge && typeof bridge.setCrashPrefs === 'function') bridge.setCrashPrefs(settings.crashReportingEnabled === true, settings.crashReportDsn || '');
+    } catch (e) { /* browser build has no bridge */ }
+    try {
+      crashSessionId = 'ses-' + Math.random().toString(36).slice(2, 12);
+      crashInstallId = localStorage.getItem('pallettai.installId') || '';
+      if (!crashInstallId) {
+        crashInstallId = 'ins-' + Math.random().toString(36).slice(2, 12);
+        try { localStorage.setItem('pallettai.installId', crashInstallId); } catch (e) { /* volatile id is fine */ }
+      }
+      crashReporter = CrashReport.createReporter({
+        enabled: () => settings.crashReportingEnabled === true,
+        send: (payload) => {
+          const url = CrashReport.storeUrlFromDsn(settings.crashReportDsn || 'https://ingest.pallettai.org/studio-errors');
+          if (!url) return Promise.resolve();
+          return fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Client': 'pallettai-studio/' + appVersion() },
+            body: JSON.stringify(payload)
+          }).then(() => {});
+        }
+      });
+      setInterval(() => { if (crashReporter) crashReporter.flush().catch(() => {}); }, 45000);
+    } catch (e) { crashReporter = null; }
+  }
+
+  // ================= Background job queue (main-process worker via IPC) =====
+  // The renderer enqueues; the Electron main process runs the work so a closed
+  // or reloaded window no longer kills a run. In the browser build the queue
+  // degrades gracefully: the same pure state machine runs in-renderer.
+  const BgJobs = (typeof BackgroundJobs !== 'undefined')
+    ? BackgroundJobs.createQueue({ run: (job, onProgress) => runBackgroundJob(job, onProgress) })
+    : null;
+  let jobWatchStarted = false;
+  function startJobWatch() {
+    if (!BgJobs || jobWatchStarted) return;
+    jobWatchStarted = true;
+    BgJobs.onChange(() => { try { renderJobTray(); } catch (e) { /* tray is cosmetic */ } });
+  }
+  function runBackgroundJob(job, onProgress) {
+    // Job kinds are added as work moves off the renderer. The vault sync is
+    // first because it is already re-entrancy-safe and pure at the edges.
+    if (job.kind === 'vault-sync') {
+      onProgress(25, 'Comparing with the cloud vault…');
+      return syncVault({ queue: true }).then((r) => ({
+        note: r && r.ok ? 'Vault synced' : 'Vault sync finished with warnings'
+      }));
+    }
+    return Promise.resolve({ note: 'Nothing to do' });
+  }
+  function enqueueVaultSyncJob() {
+    if (!BgJobs) return null;
+    if (BgJobs.liveForProject('__workspace__').length) return null; // one pending sync is enough
+    return BgJobs.enqueue({
+      id: 'job-vault-' + Date.now(), kind: 'vault-sync',
+      projectId: '__workspace__', projectName: 'Workspace',
+      label: 'Cloud vault sync', priority: 0
+    });
+  }
+
+  // ================= GitHub repo handoff =================
+  // One tidy commit of the whole export into a repo the agency owns. Tokens
+  // ride the same safeStorage path as the other publish secrets.
+  const GH = () => (typeof GithubPublish !== 'undefined' ? GithubPublish : null);
+  async function githubDeployTo(c, token, owner, repo, isPrivate) {
+    const G = GH();
+    if (!G) throw new Error('The GitHub handoff module is not in this build.');
+    const files = await publishFiles(c);
+    const msg = 'Site update — ' + new Date().toISOString().slice(0, 16).replace('T', ' ') + ' (built with PallettAI Studio)';
+    const desc = (c.site.name || c.name || '') + ' — built with PallettAI Studio';
+    const gh = G.headers(token);
+    const path2 = (p) => G.endpoint('/repos/' + encodeURIComponent(owner) + '/' + encodeURIComponent(repo) + p);
+    // 1. Create the repo (a 422 "already exists" is the normal second run).
+    const mk = await ONLINE.request(G.endpoint('/user/repos'), {
+      method: 'POST', headers: gh,
+      body: JSON.stringify(G.createRepoBody({ name: repo, description: desc, homepage: String(c.site.url || ''), private: isPrivate !== false }))
+    }, { allowHttpError: true, timeoutMs: 20000 });
+    let mkBody = null; try { mkBody = await mk.json(); } catch (e) { /* body optional */ }
+    let existed = false;
+    if (!mk.ok) {
+      const cls = G.classifyError(mk.status, mkBody);
+      if (cls.kind !== 'exists') throw new Error(cls.message);
+      existed = true;
+    }
+    // 2. Resolve the branch head (empty repo → no ref → first commit).
+    let parentSha = '';
+    let baseTree = '';
+    try {
+      const ref = await ONLINE.request(path2('/git/ref/heads/main'), { headers: gh }, { allowHttpError: true, timeoutMs: 15000 });
+      let refBody = null; try { refBody = await ref.json(); } catch (e) {}
+      if (ref.ok && refBody && refBody.object && refBody.object.sha) {
+        parentSha = refBody.object.sha;
+        const cmt = await ONLINE.request(path2('/git/commits/' + parentSha), { headers: gh }, { allowHttpError: true, timeoutMs: 15000 });
+        let cb = null; try { cb = await cmt.json(); } catch (e) {}
+        if (cmt.ok && cb && cb.tree && cb.tree.sha) baseTree = cb.tree.sha;
+      }
+    } catch (e) { /* no ref = empty repo; first commit path below */ }
+    // 3. Tree + commit + branch update.
+    const treeRes = await ONLINE.request(path2('/git/trees'), {
+      method: 'POST', headers: gh,
+      body: JSON.stringify(G.treeFromFiles(files, { parentTreeSha: baseTree }))
+    }, { allowHttpError: true, timeoutMs: 30000 });
+    const tree = await treeRes.json().catch(() => null);
+    if (!treeRes.ok || !tree || !tree.sha) throw new Error(G.classifyError(treeRes.status, tree).message);
+    const commitRes = await ONLINE.request(path2('/git/commits'), {
+      method: 'POST', headers: gh,
+      body: JSON.stringify(G.commitBody({ message: msg, tree: tree.sha, parentSha }))
+    }, { allowHttpError: true, timeoutMs: 20000 });
+    const commit = await commitRes.json().catch(() => null);
+    if (!commitRes.ok || !commit || !commit.sha) throw new Error(G.classifyError(commitRes.status, commit).message);
+    if (parentSha) {
+      const patch = { sha: commit.sha, force: false };
+      let ff = await ONLINE.request(path2('/git/refs/heads/main'), { method: 'PATCH', headers: gh, body: JSON.stringify(patch) }, { allowHttpError: true, timeoutMs: 15000 });
+      if (!ff.ok) {
+        // A non-fast-forward means the repo was touched outside the studio.
+        // The export is the deployment source of truth, so force — after a
+        // second honest attempt with the same headers.
+        patch.force = true;
+        ff = await ONLINE.request(path2('/git/refs/heads/main'), { method: 'PATCH', headers: gh, body: JSON.stringify(patch) }, { allowHttpError: true, timeoutMs: 15000 });
+        if (!ff.ok) throw new Error(G.classifyError(ff.status, null).message);
+      }
+    } else {
+      const mkRef = await ONLINE.request(path2('/git/refs'), {
+        method: 'POST', headers: gh, body: JSON.stringify({ ref: 'refs/heads/main', sha: commit.sha })
+      }, { allowHttpError: true, timeoutMs: 15000 });
+      if (!mkRef.ok) throw new Error(G.classifyError(mkRef.status, null).message);
+    }
+    // 4. Keep the repo's homepage/description true on later pushes.
+    if (existed) {
+      try {
+        await ONLINE.request(path2(''), { method: 'PATCH', headers: gh, body: JSON.stringify(G.updateRepoBody({ homepage: String(c.site.url || ''), description: desc })) }, { allowHttpError: true, timeoutMs: 15000 });
+      } catch (e) { /* metadata is a nicety */ }
+    }
+    return { url: 'https://' + owner + '.github.io/' + repo + '/', repoUrl: 'https://github.com/' + owner + '/' + repo, created: !existed };
+  }
+
+  // ================= Client review links =================
+  const RV_KEY = 'pallettai.reviewlinks.v1';
+  function loadReviewLinks() {
+    try { const v = JSON.parse(localStorage.getItem(RV_KEY) || '{}'); return (v && typeof v === 'object' && !Array.isArray(v)) ? v : {}; } catch (e) { return {}; }
+  }
+  function saveReviewLinks(v) { try { localStorage.setItem(RV_KEY, JSON.stringify(v)); } catch (e) { /* local record only */ } }
+  async function reviewTokenHash(token) {
+    try {
+      if (typeof crypto !== 'undefined' && crypto.subtle && typeof TextEncoder !== 'undefined') {
+        const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(token || '')));
+        return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+      }
+    } catch (e) { /* fall through */ }
+    return '';
+  }
+  async function createClientReviewLink(c) {
+    if (typeof ReviewLinks === 'undefined') return toast('The review-link builder is not in this build', false);
+    if (!SUPABASE.isConfigured() || !SUPABASE.signedIn()) {
+      openModal('Client review link', '<p style="color:var(--muted)">Sign in to the PallettAI registry (Settings ▸ Account &amp; billing) to create review links. The review page ships with your export; client comments land in your registry account.</p>');
+      return;
+    }
+    const tokenHash = await reviewTokenHash('x'); // capability probe before minting anything
+    if (!tokenHash) return toast('This device cannot mint review tokens (no Web Crypto).', false);
+    const link = ReviewLinks.newLink(c.id, c.name, { days: ReviewLinks.DEFAULT_DAYS });
+    const hash = await reviewTokenHash(link.token);
+    const r = await SUPABASE.rpc('create_review_link', { p_project_id: c.id, p_project_name: c.name || '', p_token_hash: hash, p_days: ReviewLinks.DEFAULT_DAYS });
+    if (!r.ok) return toast(r.msg || 'The registry refused the review link.', false);
+    const store = loadReviewLinks();
+    const expiresAt = (r.data && r.data.expiresAt) ? Date.parse(r.data.expiresAt) || link.expiresAt : link.expiresAt;
+    const registryId = (r.data && r.data.id) ? String(r.data.id) : link.id;
+    store[link.id] = { id: link.id, projectId: c.id, projectName: c.name || '', createdAt: link.createdAt, expiresAt, registryId };
+    saveReviewLinks(store);
+    const pages = sitePageFiles(c);
+    const supCfg = (SUPABASE.getConfig && SUPABASE.getConfig()) || null;
+    const reviewHtml = ReviewLinks.buildReviewPage({
+      projectName: c.name || 'Site review',
+      studioName: settings.businessName || '',
+      pages: pages.map((p) => ({ slug: p.slug, title: p.title || p.slug })),
+      link: { id: registryId, expiresAt },
+      supabase: { url: (supCfg && supCfg.url) || '', anonKey: (supCfg && supCfg.anonKey) || '' },
+      pins: [], approvals: []
+    });
+    const fileName = ReviewLinks.reviewFileName(c.name);
+    ZIP.downloadZip(siteSlug(c) + '-review.zip', [{ name: fileName, content: reviewHtml }].concat(pages.map((f) => ({ name: f.slug + '.html', content: f.html }))));
+    const base = String(c.site.url || '').trim().replace(/\/+$/, '');
+    const linkPath = fileName + '#rv=' + link.token;
+    openModal('Client review link created', `
+      <p style="color:var(--muted)"><b>${esc(fileName)}</b> is in <b>${esc(siteSlug(c))}-review.zip</b> with the site pages. Upload both wherever the site is hosted, then send the client this link:</p>
+      <div class="field"><input readonly value="${esc((base ? base + '/' : '') + linkPath)}" onclick="this.select()"></div>
+      <p style="color:var(--muted);font-size:.86rem">The part after <code>#</code> never reaches a server log, and every comment the client leaves is validated against this exact link before it is stored. Link expires ${esc(new Date(expiresAt).toLocaleDateString())} — you can revoke or extend it any time.</p>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn primary small" id="rvCopy">Copy link</button>
+        <button class="btn ghost small" id="rvClose">Done</button>
+      </div>`);
+    const cp = $('#rvCopy');
+    if (cp) cp.onclick = () => { try { navigator.clipboard.writeText((base ? base + '/' : '') + linkPath); toast('Link copied 📋', true); } catch (e) { toast('Copy failed — select the text instead', false); } };
+    const done = $('#rvClose');
+    if (done) done.onclick = closeModal;
+  }
+
+  // ================= Monthly site-health digest =================
+  function openHealthDigest() {
+    if (typeof HealthReport === 'undefined') return toast('The digest builder is not in this build', false);
+    const now = new Date();
+    const month = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+    const rows = projects.map((p) => {
+      const r = careReport(p);
+      return {
+        id: p.id,
+        name: p.name,
+        client: p.clientName || '',
+        plan: p.carePlan === 'monthly' ? 'monthly' : 'none',
+        findings: (r && r.findings ? r.findings : []).map((f) => ({ label: f.msg, detail: f.fix || '' })),
+        changes: []
+      };
+    });
+    const model = HealthReport.build({ month, studioName: settings.businessName || 'My studio', projects: rows });
+    downloadText(HealthReport.fileName(model), HealthReport.page(model, { accent: settings.accent }), 'text/html;charset=utf-8');
+    const attention = model.summary.attention + model.summary.stale;
+    toast(attention ? 'Digest downloaded — ' + attention + ' site' + (attention === 1 ? '' : 's') + ' need a call 📊' : 'Digest downloaded — every site is current 📊', true);
+  }
   function reviewUntilMs() {
     const stored = Number(planState().reviewProPlusUntil) || 0;
     const cloud = cloudProfile && cloudProfile.review_proplus_until
@@ -711,7 +1176,25 @@ const App = (() => {
     // badge falls back to the plain site URL.
     let refCode = '';
     try { refCode = (PLANS.store.refCode && PLANS.store.refCode()) || ''; } catch (e) { refCode = ''; }
-    return { ...settings, proExport: isProPlus(), plan: planState().plan, refCode: refCode };
+    /*
+      The studio's own identity travels with every export.
+
+      The builder needs it because on a Pro+ export our shipped defaults for the
+      footer signature are treated as unset — the signature has to become the
+      studio's name and site, or nothing. It is also what the handoff guide, the
+      invoice and the brand kit print, so a delivery pack that leaves with the
+      wrong party on it is not possible by forgetting a field.
+    */
+    const studioName = String(settings.businessName || '').trim();
+    const studioUrl = String(settings.businessUrl || '').trim();
+    return {
+      ...settings,
+      proExport: isProPlus(),
+      plan: planState().plan,
+      refCode: refCode,
+      studioName: studioName,
+      studioUrl: studioUrl
+    };
   }
 
   // ---------------- undo / redo ----------------
@@ -1250,7 +1733,129 @@ const App = (() => {
     // is the kind of thing that gets trusted at the wrong moment. The callers
     // that report to a client read this back.
     lastAudit = { compiled: compiled && !!html, pages: htmlPages.length };
-    return AI.qualityGate(p, { html, htmlPages });
+    const audit = AI.qualityGate(p, { html, htmlPages });
+    // The brand check rides along on the export that was just compiled rather
+    // than compiling a second one — the same pages, one pass (see whiteLabelFor).
+    if (audit) audit.whiteLabel = whiteLabelFrom(p, htmlPages);
+    return audit;
+  }
+
+  /* ---------------- White-label check ----------------
+    The scored audit judges how a site is BUILT. This is a different question —
+    is this export still carrying OUR name? — and it is deliberately not scored,
+    because a footer signature is not a quality defect on Free (there it is the
+    attribution working as designed) and is a broken promise on Pro+.
+
+    It is the one promise a studio cannot check for themselves: the badge is
+    easy to see, and a default footer signature three screens into Settings is
+    not. So the export is scanned and the answer is shown before delivery.  */
+  function whiteLabelFrom(project, htmlPages) {
+    if (typeof Whitelabel === 'undefined' || !Whitelabel.scan) return null;
+    try {
+      const pages = (htmlPages || []).map((f) => ({ name: f.name, slug: f.slug, html: f.html }));
+      return Whitelabel.scan(pages, { proExport: isProPlus() });
+    } catch (e) { return null; }
+  }
+  function whiteLabelFor(project, audit) {
+    if (audit && audit.whiteLabel) return audit.whiteLabel;
+    try {
+      const pages = Builder.buildSitePages(project, exportSettings()).map((e) => ({
+        name: e.page && e.page.name ? e.page.name : 'Untitled',
+        slug: e.page && e.page.slug ? e.page.slug : '',
+        html: e.html
+      }));
+      return whiteLabelFrom(project, pages);
+    } catch (e) { return null; }
+  }
+
+  // Every finding the scan reports, as the same row the quality gate already
+  // uses, so this reads as part of the audit rather than a second, smaller UI.
+  function whiteLabelHtml(res) {
+    if (!res || !res.findings.length) return '';
+    const rows = res.findings.map((f) => `<div class="quality-issue diag-row diag-${esc(f.level)}">
+          <div class="quality-issue-main"><span>${f.level === 'error' ? '⛔' : f.level === 'warn' ? '\ud83d\udfe1' : '\ud83d\udd35'}</span><div><b>${esc(f.msg)}</b>${f.fix ? `<small>${esc(f.fix)}</small>` : ''}${f.where ? `<small>On: ${esc(f.where)}</small>` : ''}</div></div>
+        </div>`).join('');
+    const head = res.proExport
+      ? 'White-label check' + (res.ok ? ' — clear' : ' — our name is still in this export')
+      : 'Our branding in this export';
+    return `<h4 style="margin:18px 0 8px;font-size:.9rem">${esc(head)}</h4>
+      <div class="quality-list">${rows}</div>`;
+  }
+
+  // The fix the scan names, applied to SETTINGS rather than to the client's
+  // site: the studio's own name is a fact about them, so it belongs in one place
+  // and should not have to be retyped for every project they deliver.
+  function applyWhiteLabelFix() {
+    const name = String(settings.businessName || '').trim();
+    const url = String(settings.businessUrl || '').trim();
+    if (name) {
+      settings.brandFooterText = name;
+      settings.brandFooter = true;
+      if (url) settings.brandLink = url;
+      saveSettings();
+      return { ok: true, msg: 'Footer signature is now “' + name + '” — your own name on every export \u2705' };
+    }
+    settings.brandFooter = false;
+    saveSettings();
+    return { ok: true, msg: 'Footer signature switched off. Add your business name in Settings \u25b8 Your business and it can sign your work instead.' };
+  }
+
+  /*
+    The last look before a Pro+ export leaves.
+
+    Soft by design: it is the studio's site and their call, and a gate that
+    refuses to hand over a client's site at 6pm on a Friday is worse than a
+    footer. What it must never be is silent — that is how a paying customer
+    ships our name to their customer.
+  */
+  // A studio who has read the warning and chosen to ship anyway should not meet
+  // it again for the same content. Keyed on the project, the plan, the number of
+  // mentions and the revision, so it comes back the moment any of those change.
+  let whiteLabelDismissed = '';
+  function whiteLabelKey(project, res) {
+    return [(project && project.id) || '', res && res.proExport ? 'p' : 'f', res ? res.visibleHits : 0, (project && project.updatedAt) || 0].join('|');
+  }
+  function showWhiteLabel(project, res, proceed) {
+    const rows = res.findings.filter((f) => f.level !== 'info').map((f) => `<div class="quality-issue diag-row diag-${esc(f.level)}">
+        <div class="quality-issue-main"><span>${f.level === 'error' ? '⛔' : '\ud83d\udfe1'}</span><div><b>${esc(f.msg)}</b>${f.fix ? `<small>${esc(f.fix)}</small>` : ''}</div></div>
+      </div>`).join('');
+    openModal('Our name is still in this export', `
+      <p>This project is on Pro+, where the promise is an unbranded export — and ${esc(Whitelabel.summary(res))}:</p>
+      <div class="quality-list">${rows}</div>
+      <div class="quality-actions">
+        <button class="btn primary small" id="wlFix">Use my studio details</button>
+        <button class="btn ghost small" id="wlSkip">Export anyway</button>
+      </div>`);
+    const fix = $('#wlFix');
+    if (fix) fix.onclick = () => {
+      const done = applyWhiteLabelFix();
+      closeModal();
+      toast(done.msg, true);
+      proceed();
+    };
+    const skip = $('#wlSkip');
+    if (skip) skip.onclick = () => {
+      whiteLabelDismissed = whiteLabelKey(project, res);
+      closeModal();
+      proceed();
+    };
+  }
+
+  // Synchronous delivery paths: run the check, and show the warning in place of
+  // the export when there is something to say (the studio's answer resumes it).
+  function whiteLabelGate(project, proceed, audit) {
+    const res = whiteLabelFor(project, audit);
+    if (!res || res.ok || whiteLabelDismissed === whiteLabelKey(project, res)) return proceed();
+    showWhiteLabel(project, res, proceed);
+  }
+
+  // Asynchronous paths (publishing) cannot hand over a callback as neatly, so
+  // this answers the question instead: false means "the warning is on screen".
+  function whiteLabelOk(project, audit, resume) {
+    const res = whiteLabelFor(project, audit);
+    if (!res || res.ok || whiteLabelDismissed === whiteLabelKey(project, res)) return true;
+    showWhiteLabel(project, res, resume);
+    return false;
   }
 
   /* ---------------- Pre-flight — the publish-time half of the gate ----------
@@ -1429,6 +2034,7 @@ const App = (() => {
         <span><b>${audit.errors}</b> blocking</span><span><b>${audit.warnings}</b> improvements</span><span><b>${audit.safeFixes}</b> safe repairs</span>
       </div>
       <div class="quality-list">${rows}</div>
+      ${whiteLabelHtml(audit.whiteLabel)}
       ${preflightHtml(pre)}
       ${perfHtml(p)}
       <div class="quality-note">Safe repairs only normalize structure, metadata, IDs, alt text and unsafe links — they never rewrite client claims or delete authored content. Your current version remains undoable.</div>
@@ -2103,7 +2709,12 @@ const App = (() => {
   function scheduleVaultPush() {
     if (!vaultReady() || settings.cloudVaultEnabled === false) return;
     clearTimeout(vaultTimer);
-    vaultTimer = setTimeout(() => { syncVault({ queue: true }).catch(() => {}); }, settings.cloudVaultDelayMs || 4000);
+    vaultTimer = setTimeout(() => {
+      // The background queue (when present) serialises and REPORTS the sync —
+      // same work, visible progress, retries — instead of a silent fire-and-forget.
+      if (typeof enqueueVaultSyncJob === 'function' && enqueueVaultSyncJob()) return;
+      syncVault({ queue: true }).catch(() => {});
+    }, settings.cloudVaultDelayMs || 4000);
   }
   // Resolves once no vault pass is running or queued — what the manual "Back up
   // now" waits on so a background sync can never silently swallow the click.
@@ -2891,6 +3502,17 @@ const App = (() => {
       return;
     }
     const tpl = c.templateId && String(c.templateId).indexOf('ai:') === 0 ? 'AI draft' : ((DB.getTemplate(c.templateId) || {}).name || 'Project');
+    // Live background jobs take the tray when any exist — the creator asked to
+    // know about them — and the current-project card returns when they finish.
+    const jobs = (BgJobs && typeof BgJobs.snapshot === 'function') ? BgJobs.snapshot() : null;
+    if (jobs && (jobs.runningCount > 0 || jobs.live.length)) {
+      const j = jobs.live[0];
+      root.className = 'job-tray live';
+      root.innerHTML = `<div class="job-copy"><span class="job-kicker">Working in the background</span><h2>${esc(j ? j.label : 'Job running')}</h2>
+        <div class="job-progress"><div class="job-progress-fill" style="width:${j ? Math.max(4, j.progress) : 4}%"></div></div>
+        <p>${esc(j && j.note ? j.note : 'Runs even if you close this window and reopen it.')}</p></div>`;
+      return;
+    }
     root.className = 'job-tray';
     root.innerHTML = `<div class="job-copy"><span class="job-kicker">Current job</span><h2>${esc(c.name)}</h2><p>${esc(tpl)} · ${relWhen(c.updatedAt)}</p></div><button class="btn primary" id="jobOpen">Open</button>`;
     const open = $('#jobOpen');
@@ -3130,6 +3752,10 @@ const App = (() => {
     // button and the preview modal's cannot disagree about who gets in.
     $$('#tplGrid [data-use]').forEach((b) => b.onclick = () => createProject(DB.getTemplate(b.dataset.use)));
     $$('#tplGrid [data-prev]').forEach((b) => b.onclick = () => previewTemplate(DB.getTemplate(b.dataset.prev)));
+    // The studio's own starting points sit beside the built-in ones, because
+    // this view is where a project begins — a starter kept somewhere else is a
+    // starter that gets rebuilt by hand instead.
+    renderStarters();
   }
 
   function renderDashboard() {
@@ -3170,6 +3796,7 @@ const App = (() => {
         <div class="work-actions">
           <button class="btn primary small" data-open="${p.id}">Open</button>
           <button class="btn ghost small" data-dup="${p.id}" title="Duplicate">${uiIcon('dup')}</button>
+          <button class="btn ghost small" data-start="${p.id}" title="Save as a starter (Pro)">★</button>
           <button class="btn ghost small" data-bak="${p.id}" title="Backup as JSON">${uiIcon('save')}</button>
           <button class="btn ghost small" data-exp="${p.id}" title="Export">${uiIcon('download')}</button>
           <button class="btn danger small" data-del="${p.id}" title="Delete">${uiIcon('trash')}</button>
@@ -3179,6 +3806,10 @@ const App = (() => {
 
     $$('[data-open]').forEach((b) => b.onclick = () => { currentId = b.dataset.open; switchView('designer'); });
     $$('[data-dup]').forEach((b) => b.onclick = () => duplicateProject(b.dataset.dup));
+    $$('[data-start]').forEach((b) => b.onclick = () => {
+      const p = projects.find((x) => x.id === b.dataset.start);
+      if (p) openStarterSave(p);
+    });
     $$('[data-bak]').forEach((b) => b.onclick = () => backupProject(b.dataset.bak));
     $$('[data-exp]').forEach((b) => b.onclick = () => exportSiteById(b.dataset.exp));
     $$('[data-del]').forEach((b) => b.onclick = () => deleteProject(b.dataset.del));
@@ -4608,8 +5239,9 @@ const App = (() => {
       else downloadHtml(c);
     };
     const audit = qualityReport(c);
-    if (!skipQuality && audit && audit.issues && audit.issues.some((issue) => issue.level !== 'info')) return openQualityGate(go, c);
-    go();
+    const deliver = () => whiteLabelGate(c, go, audit);
+    if (!skipQuality && audit && audit.issues && audit.issues.some((issue) => issue.level !== 'info')) return openQualityGate(deliver, c);
+    deliver();
   }
   function exportSiteById(id, options) {
     const p = projects.find((x) => x.id === id);
@@ -4620,11 +5252,12 @@ const App = (() => {
       else downloadHtml(p);
     };
     const audit = qualityReport(p);
+    const deliver = () => whiteLabelGate(p, go, audit);
     if (!skipQuality && audit && audit.issues && audit.issues.some((issue) => issue.level !== 'info')) {
       currentId = p.id;
-      return openQualityGate(go, p);
+      return openQualityGate(deliver, p);
     }
-    go();
+    deliver();
   }
   function downloadHtml(c) {
     const html = buildHtml(c);
@@ -5289,13 +5922,43 @@ const App = (() => {
   function handoffBrand(c) {
     const pal = DB.getPalette(c.site.palette);
     const f = DB.getFont(c.site.font);
-    return { pal, font: f, pages: Builder.pages(c), multi: Builder.pages(c).length > 1 };
+    /*
+      The studio's own identity, straight from Settings.
+
+      Everything a client receives is the studio's document, so it has to carry
+      the studio's name and a way to reach them: a hosting guide signed by
+      nobody, and an invoice whose only named party is the client, is a pack that
+      makes the person who did the work disappear. Stored once in Settings rather
+      than retyped per project — this is a fact about the studio, not the site.
+    */
+    return {
+      pal,
+      font: f,
+      pages: Builder.pages(c),
+      multi: Builder.pages(c).length > 1,
+      studio: {
+        name: String(settings.businessName || '').trim(),
+        email: String(settings.businessEmail || '').trim(),
+        url: String(settings.businessUrl || '').trim(),
+        phone: String(settings.businessPhone || '').trim()
+      }
+    };
+  }
+
+  // "Prepared by Hearth Studio · hello@hearth.studio" — the one line that makes
+  // the pack the studio's, and on Free keeps the attribution when there is no
+  // studio name to use instead.
+  function handoffPreparedBy(br) {
+    const s = br.studio || {};
+    if (s.name) return 'Prepared by ' + s.name + (s.email ? ' \u00b7 ' + s.email : (s.url ? ' \u00b7 ' + String(s.url).replace(/^https?:\/\//, '') : ''));
+    return isProPlus() ? '' : 'Prepared with \u25c6 PallettAI Studio';
   }
   function handoffPage(c, brIn) {
     const br = brIn || handoffBrand(c);
     const p = c.site;
     const whiteLabel = isProPlus();
-    const credit = whiteLabel ? '' : '<div class="hd-made">Prepared with ◆ PallettAI Studio</div>';
+    const prepared = handoffPreparedBy(br);
+    const credit = prepared ? '<div class="hd-made">' + esc(prepared) + '</div>' : '';
     return `
     <style>
       body{font-family:Georgia,'Times New Roman',serif;background:#f6f4f0;color:#241f1a;margin:0;line-height:1.6}
@@ -5314,7 +5977,7 @@ const App = (() => {
     </style>
     <div class="hd-wrap">
       <h1>${esc(p.name || 'Your website')} — ready to go live</h1>
-      <p class="hd-sub">A short guide for ${esc(c.name)} · prepared ${new Date().toLocaleDateString()}</p>
+      <p class="hd-sub">A short guide for ${esc(c.name)} · prepared ${new Date().toLocaleDateString()}${(br.studio && br.studio.name) ? ' by ' + esc(br.studio.name) : ''}</p>
       <div class="hd-card" id="guide">
         <h2>Putting your site online (10 minutes, free)</h2>
         <p class="hd-note">Everything you need is in the files next to this one${br.multi ? ' — the pages are linked, just upload them together' : ''}. You have three easy options:</p>
@@ -5336,30 +5999,55 @@ const App = (() => {
       <div class="hd-foot"><span>© ${new Date().getFullYear()} ${esc(p.name || 'Your website')}</span>${credit}</div>
     </div>`;
   }
+  /*
+    Who is billing whom.
+
+    Two things were wrong here. The invoice named the PROJECT as the party doing
+    the work ("Willow Cafe Site — website design & build"), so a client received
+    a bill from their own website plus a line telling them to ask "your
+    designer" who that was. And the line item read from a variable (`p`) that
+    does not exist in this function's scope, so entering a client name or an
+    amount threw a ReferenceError inside the click handler and no handoff ZIP was
+    built at all — the invoice is one of the four files the pack promises.
+
+    The studio's own details now come from Settings (one place, not retyped per
+    project), and when they have not been filled in the card says so instead of
+    inventing a party.
+  */
   function handoffInvoiceCard(c, br) {
     const inv = br.invoice;
     if (!inv) return '';
     const pal = br.pal;
+    const studio = br.studio || {};
     const total = '£' + (Number(inv.amount) || 0).toFixed(2);
+    const reach = [studio.email, studio.phone, String(studio.url || '').replace(/^https?:\/\//, '')].filter(Boolean).join(' · ');
+    const biller = studio.name || '';
+    const work = 'website design & build';
     return `
       <div class="hd-card" id="invoice" style="border-color:${pal.primary}">
         <h2>Invoice</h2>
+        <p class="hd-note" style="margin:0 0 10px"><b>From</b> ${esc(biller || 'Your studio — add your business name in Settings')}${reach ? ' · ' + esc(reach) : ''}</p>
         <p><b>${esc(inv.client || c.name)}</b></p>
-        <p class="hd-note">${esc(c.name)} — website design & build · ${inv.date}</p>
-        <table style="width:100%;border-collapse:collapse;margin-top:10px"><tr><td style="padding:8px 0">${esc(c.name)} — ${esc(p.name || 'website')}</td><td style="text-align:right;font-weight:bold">${total}</td></tr><tr><td style="padding:8px 0;border-top:2px solid #eee"><b>Total due</b></td><td style="text-align:right;border-top:2px solid #eee;font-weight:bold;font-size:1.1rem">${total}</td></tr></table>
-        <p class="hd-note" style="margin-top:10px">Payment details & bank reference: ask your designer.</p>
+        <p class="hd-note">${esc(c.name)} — ${esc(work)} · ${esc(inv.date || '')}</p>
+        <table style="width:100%;border-collapse:collapse;margin-top:10px"><tr><td style="padding:8px 0">${esc(c.site && c.site.name ? c.site.name : c.name)} — ${esc(work)}</td><td style="text-align:right;font-weight:bold">${total}</td></tr><tr><td style="padding:8px 0;border-top:2px solid #eee"><b>Total due</b></td><td style="text-align:right;border-top:2px solid #eee;font-weight:bold;font-size:1.1rem">${total}</td></tr></table>
+        <p class="hd-note" style="margin-top:10px">${biller ? 'Payment details & bank reference as agreed with ' + esc(biller) + '.' : 'Payment details: agree the bank reference with your studio before sending this on.'}</p>
       </div>`;
   }
   function openHandoff(options) {
     const c = current();
     if (!c) return toast('Open a project first');
     const skipQuality = !!(options && options.skipQuality);
-    if (!skipQuality) {
-      const audit = qualityReport(c);
-      if (audit && audit.issues && audit.issues.some((issue) => issue.level !== 'info')) {
-        return openQualityGate(() => openHandoff({ skipQuality: true }), c);
-      }
+    const audit = qualityReport(c);
+    // Both gates, in the order that asks the least of the studio: the audit
+    // first, because it can be repaired in place, then the brand check, which is
+    // one setting about them rather than anything wrong with the client's site.
+    if (!skipQuality && audit && audit.issues && audit.issues.some((issue) => issue.level !== 'info')) {
+      return openQualityGate(() => whiteLabelGate(c, () => openHandoffForm(c), audit), c);
     }
+    whiteLabelGate(c, () => openHandoffForm(c), audit);
+  }
+
+  function openHandoffForm(c) {
     openModal('Client handoff', `        <p style="color:var(--muted);margin-bottom:12px">One ZIP with the live site files <b>plus a built-in content editor</b> (clients edit text on their live site — see <code>how-to-edit.html</code>), a hosting guide, the brand kit, and an optional invoice. Pro+ removes PallettAI attribution from the pack.</p>
       <div class="field"><label>Client / business name</label><input id="hoClient" placeholder="e.g. Willow Café Ltd." value="${esc((c.name || '').replace(/ Site$/, ''))}"></div>
       <div class="field"><label>Invoice amount £ (optional — blank = no invoice)</label><input id="hoAmount" type="number" min="0" step="0.01" placeholder="e.g. 450"></div>
@@ -5394,6 +6082,7 @@ const App = (() => {
         <h2 style="font-size:.8rem;text-transform:uppercase;letter-spacing:.14em;color:#999">Contact & social</h2>
         <p style="margin:4px 0">${esc([c.site.email, c.site.phone, c.site.address].filter(Boolean).join(' · ') || '—')}</p>
         ${c.site.socials && c.site.socials.length ? '<p style="margin:4px 0">' + c.site.socials.map((so) => esc(so.icon + ' ' + so.url)).join(' · ') + '</p>' : ''}
+        ${(br.studio && br.studio.name) ? '<p style="color:#999;font-size:.75rem;margin-top:26px">Brand system prepared by ' + esc(br.studio.name) + (br.studio.email ? ' · ' + esc(br.studio.email) : '') + '</p>' : ''}
       </div>`;
       files.push({ name: 'brand-kit.html', content: '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Brand kit</title></head><body>' + kit + '</body></html>' });
       let name;
@@ -5410,7 +6099,8 @@ const App = (() => {
   const SECRET_NEO = 'publish.neocitiesKey';
   const SECRET_VERCEL = 'publish.vercelToken';
   const SECRET_CF = 'publish.cloudflareToken';
-  const SECRETS = [SECRET_NETLIFY, SECRET_NEO, SECRET_VERCEL, SECRET_CF];
+  const SECRET_GH = 'publish.githubToken';
+  const SECRETS = [SECRET_NETLIFY, SECRET_NEO, SECRET_VERCEL, SECRET_CF, SECRET_GH];
   const META_SECRETS = ['netlifyToken', 'neocitiesKey', 'vercelToken', 'cloudflareToken'];
   function loadPublishMeta() {
     try { return JSON.parse(localStorage.getItem(PUB_KEY) || '{}'); } catch (e) { return {}; }
@@ -5430,6 +6120,7 @@ const App = (() => {
         v.neocitiesKey = (await bridge.secretsGet(SECRET_NEO)) || v.neocitiesKey || '';
         v.vercelToken = (await bridge.secretsGet(SECRET_VERCEL)) || v.vercelToken || '';
         v.cloudflareToken = (await bridge.secretsGet(SECRET_CF)) || v.cloudflareToken || '';
+        v.githubToken = (await bridge.secretsGet(SECRET_GH)) || v.githubToken || '';
       } catch (e) { /* keep meta-only */ }
       if (META_SECRETS.some((k) => v[k])) await savePublish(v);
     }
@@ -5445,6 +6136,7 @@ const App = (() => {
         await bridge.secretsSet(SECRET_NEO, v.neocitiesKey || '');
         await bridge.secretsSet(SECRET_VERCEL, v.vercelToken || '');
         await bridge.secretsSet(SECRET_CF, v.cloudflareToken || '');
+        await bridge.secretsSet(SECRET_GH, v.githubToken || '');
       } catch (e) { return false; }
     }
     return ok;
@@ -5618,6 +6310,9 @@ const App = (() => {
       if ((audit && audit.issues && audit.issues.some((issue) => issue.level !== 'info')) || (pre && !pre.ready)) {
         return openQualityGate(() => openPublish({ skipQuality: true }), c);
       }
+      // Publishing puts the site on a live URL, so our name in its footer starts
+      // reaching the client's customers from here on — same check, same fix.
+      if (!whiteLabelOk(c, audit, () => openPublish({ skipQuality: true }))) return;
     }
     const cred = await loadPublish();
     const pages = Builder.pages(c);
@@ -5682,8 +6377,20 @@ const App = (() => {
       </div>
 
       <div class="pub-card">
-        <div class="pub-head"><span class="export-ico">🐙</span><b>GitHub Pages</b><span class="chip">For developers</span></div>
-        <p class="pub-note">Export the site, push the files to a repository, then enable <b>Pages</b> under the repo Settings. Your site appears at <code>yourname.github.io/repo</code>. Full steps are in the handoff ZIP’s hosting guide (🎁 Handoff).</p>
+        <div class="pub-head"><span class="export-ico">🐙</span><b>GitHub</b><span class="chip">Agency handoff · your own repo</span></div>
+        <p class="pub-note">Create a <b>fine-grained</b> personal access token at <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">GitHub → Settings → Personal access tokens</a> with <b>Contents: read &amp; write</b> on the repo (also <b>Administration: write</b> if the token should create the repo). One click commits the whole export to <code>main</code> — enable <b>Pages</b> under the repo's Settings once and the site goes live at <code>owner.github.io/repo</code>.</p>
+        ${cred.githubToken
+          ? `<p class="pub-saved">\u2713 Token saved${cred.githubRepo ? ' — last push to <a href="' + esc(cred.githubRepo) + '" target="_blank" rel="noopener">' + esc(cred.githubRepo.replace(/^https?:\/\//, '')) + '</a>' : ''}</p>`
+          : '<p class="pub-saved" style="color:var(--danger)">No token yet — paste one to enable the handoff.</p>'}
+        <input id="pubGhTok" type="password" placeholder="${cred.githubToken ? 'Token saved — paste a new one to replace' : 'github_pat_…'}" spellcheck="false" autocomplete="off">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <input id="pubGhOwner" placeholder="Owner (you or your org)" value="${esc(cred.githubOwner || '')}" spellcheck="false" autocomplete="off" style="flex:1 1 160px">
+          <input id="pubGhRepo" placeholder="Repo (defaults to the site name)" value="${esc(cred.githubRepoName || '')}" spellcheck="false" autocomplete="off" style="flex:1 1 160px">
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn primary small" id="pubGh">🐙 Commit to GitHub</button>
+          ${cred.githubToken ? '<button class="btn ghost small" id="pubGhForget">Forget token</button>' : ''}
+        </div>
       </div>
       <div id="pubResult" style="display:none;margin-top:8px"></div>`);
     const busy = (b, on, label) => { b.disabled = on; b.textContent = on ? 'Working…' : label; };
@@ -5795,6 +6502,32 @@ const App = (() => {
         toast(err.message || 'Cloudflare publish failed', false);
       } finally { busy(cfBtn, false, '\u2601 Publish to Cloudflare'); }
     };
+
+    const ghBtn = $('#pubGh');
+    if (ghBtn) ghBtn.onclick = async () => {
+      const G = typeof GithubPublish !== 'undefined' ? GithubPublish : null;
+      const typed = ($('#pubGhTok').value || '').trim();
+      const tok = typed || cred.githubToken || '';
+      const owner = ($('#pubGhOwner').value || '').trim();
+      let repo = ($('#pubGhRepo').value || '').trim();
+      if (G && repo && !G.validRepoName(repo)) return toast('Repo names use letters, numbers, dots, dashes.', false);
+      if (!tok) return toast('Paste a GitHub token first', false);
+      if (!owner) return toast('Enter the repo owner', false);
+      if (!repo) repo = G ? G.repoNameFor(c.name) : siteSlug(c);
+      busy(ghBtn, true);
+      try {
+        const r = await githubDeployTo(c, tok, owner, repo, (cred.githubPrivate !== false));
+        const v = await loadPublish();
+        v.githubToken = tok; v.githubOwner = owner; v.githubRepoName = repo; v.githubRepo = r.repoUrl; v.githubUrl = r.url;
+        await savePublish(v);
+        showLive({ url: r.url, provider: 'GitHub Pages' });
+        toast((r.created ? 'Repository created and ' : '') + 'committed to GitHub 🎉 — enable Pages under the repo Settings to go live.', true);
+      } catch (err) {
+        toast(err.message || 'GitHub handoff failed', false);
+      } finally { busy(ghBtn, false, '🐙 Commit to GitHub'); }
+    };
+    const forgetGh = $('#pubGhForget');
+    if (forgetGh) forgetGh.onclick = async () => { const v = await loadPublish(); delete v.githubToken; delete v.githubRepo; delete v.githubUrl; await savePublish(v); toast('GitHub token forgotten'); openPublish({ skipQuality: true }); };
   }
 
   // ---------------- suites ----------------
@@ -5871,6 +6604,10 @@ const App = (() => {
   // baked straight into the generated project when it runs.
   let aiUploads = [];
   let aiSiteUrl = '';
+  // Answers from the optional creative interview remain session-only until a
+  // direction is chosen; the selected project receives a bounded copy for
+  // future Copilot and originality decisions.
+  let creativeBrief = null;
   const AI_CHIPS = [
     { label: 'Tech startup', prompt: 'A modern tech startup building an AI assistant for small businesses, sleek and confident' },
     { label: 'Restaurant', prompt: 'A cozy family restaurant in the city with seasonal dishes and a warm atmosphere' },
@@ -5886,6 +6623,78 @@ const App = (() => {
     { label: 'Music band', prompt: 'A bold indie music band with a gritty, electric live sound' },
     { label: 'Charity', prompt: 'A hopeful community charity foundation focused on clean water' }
   ];
+
+  function originalityResultCard(project) {
+    const o = project && project.site && project.site.originality;
+    if (!o || !Number.isFinite(Number(o.score))) return '';
+    const score = Math.max(0, Math.min(100, Math.round(Number(o.score))));
+    const structural = Math.max(0, Math.min(100, Math.round(Number(o.closestPeerDistance || 0) * 100)));
+    const candidates = Math.max(0, Number(o.candidates) || 0);
+    const rejected = Array.isArray(o.rejectedGrammars) ? o.rejectedGrammars.filter(Boolean).slice(0, 3) : [];
+    return `<div class="originality-report" aria-label="Originality report">
+      <div class="originality-report-head"><div><span class="originality-kicker">CREATIVE REVIEW</span><h4>Originality <strong>${score}/100</strong></h4></div><span class="originality-grammar">${esc(String(o.grammar || 'custom direction').replace(/-/g, ' '))}</span></div>
+      <div class="originality-meter" aria-hidden="true"><span style="width:${score}%"></span></div>
+      <div class="originality-facts"><span><b>${structural}%</b> structural distance</span><span><b>${candidates || '—'}</b> directions compared</span><span><b>${o.referenceSafe === false ? 'Review' : 'Clear'}</b> reference distance</span></div>
+      ${rejected.length ? `<p class="originality-note">Avoided: ${rejected.map((x) => esc(String(x).replace(/-/g, ' '))).join(' · ')}</p>` : '<p class="originality-note">This direction was selected to stay distinct from your existing projects.</p>'}
+      <button class="btn ghost small" id="aiRegenerate">Generate another direction <small>(1 credit)</small></button>
+    </div>`;
+  }
+
+  function strategyReceipt(project) {
+    const site = project && project.site;
+    const plan = site && site.directorPlan;
+    const sig = (plan && plan.signatureMoment) || (site && site.signatureMoment);
+    if (!plan && !sig) return '';
+    const conversion = plan && plan.conversion;
+    const action = conversion && conversion.primaryAction ? conversion.primaryAction : (plan && plan.primaryJob) || 'explore';
+    const required = conversion && Array.isArray(conversion.requiredSections) ? conversion.requiredSections.slice(0, 5) : [];
+    const objections = conversion && Array.isArray(conversion.objections) ? conversion.objections.slice(0, 3) : [];
+    const human = (value) => String(value || '').replace(/[-_]/g, ' ');
+    return `<details class="strategy-receipt" open>
+      <summary><span class="strategy-receipt-mark">◎</span><span><b>Why this site is shaped this way</b><small>Conversion strategy and signature moment</small></span><span class="strategy-chevron">⌄</span></summary>
+      <div class="strategy-receipt-body">
+        <div class="strategy-grid">
+          <div><span>Primary visitor action</span><b>${esc(human(action))}</b></div>
+          <div><span>Signature moment</span><b>${esc((sig && (sig.label || sig.id)) || 'Distinctive composition')}</b></div>
+          <div><span>Proof approach</span><b>${esc((conversion && conversion.proofRole) || 'Explain, then reassure')}</b></div>
+          <div><span>Sections required</span><b>${esc(required.map(human).join(' · ') || 'Hero · content · contact')}</b></div>
+        </div>
+        ${objections.length ? `<p class="strategy-objections"><span>Handled objections</span>${objections.map((x) => `<i>${esc(human(x))}</i>`).join('')}</p>` : ''}
+        <button class="btn ghost small" id="aiRefineStrategy">Refine this strategy <small>(1 credit)</small></button>
+      </div>
+    </details>`;
+  }
+
+  function openStrategyEditor(project) {
+    const site = project && project.site;
+    const plan = site && site.directorPlan;
+    const currentBrief = (site && site.creativeBrief) || creativeBrief || {};
+    if (!plan && !site) return;
+    const signature = (plan && plan.signatureMoment) || (site && site.signatureMoment) || {};
+    const signatureOptions = [
+      ['process-route', 'Process route'], ['menu-reveal', 'Menu reveal'], ['proof-wall', 'Proof wall'],
+      ['case-study', 'Case-study gallery'], ['impact-ledger', 'Impact ledger'], ['story-pulse', 'Story pulse']
+    ];
+    openModal('Refine generation strategy', `
+      <p style="color:var(--muted);line-height:1.5">Choose what the visitor should do and which memorable moment should lead the next version. Your confirmed facts and brand rules stay intact.</p>
+      <div class="strategy-editor-grid">
+        <label><span>Primary visitor action</span><select id="strategyGoal">
+          ${[['learn','Understand what we do'],['trust','See proof and feel confident'],['book','Book or make an appointment'],['buy','Browse prices or buy'],['contact','Request a quote or enquire']].map(([v,l]) => `<option value="${v}"${(currentBrief.goal || plan.primaryJob) === v ? ' selected' : ''}>${l}</option>`).join('')}
+        </select></label>
+        <label><span>Signature moment</span><select id="strategySignature">
+          ${signatureOptions.map(([v,l]) => `<option value="${v}"${(currentBrief.signature || signature.id) === v ? ' selected' : ''}>${l}</option>`).join('')}
+        </select></label>
+      </div>
+      <div class="strategy-editor-foot"><span>This creates a new direction; the current project is not overwritten.</span><div><button class="btn ghost small" id="strategyCancel">Cancel</button><button class="btn primary small" id="strategyApply">Generate revised direction</button></div></div>`);
+    $('#strategyCancel').onclick = closeModal;
+    $('#strategyApply').onclick = () => {
+      creativeBrief = { version: 1, ...(currentBrief || {}), goal: $('#strategyGoal').value, signature: $('#strategySignature').value };
+      closeModal();
+      const input = $('#aiPrompt');
+      if (input && lastAI) input.value = lastAI.prompt;
+      runAI();
+    };
+  }
 
   function renderAI() {
     const cred = PLANS.store.creditsLeft();
@@ -5904,7 +6713,7 @@ const App = (() => {
       <div class="ai-card">
         <h3>Generate a site from a prompt</h3>
         <p class="sub">One click. A complete first draft: logo, ranked photos, and a layout that fits the business. Drop your own photos on the preview to swap them.</p>
-        <textarea id="aiPrompt" placeholder="e.g. A modern bakery in Paris with a cozy, artisanal feel…"></textarea>
+        <textarea id="aiPrompt" placeholder="e.g. A modern bakery in Paris with a cozy, artisanal feel…">${lastAI ? esc(lastAI.prompt) : ''}</textarea>
         <div id="briefStrip" style="display:${briefs.length ? 'flex' : 'none'};gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">
           <span style="font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)">Client briefs</span>
           <div id="briefChips" style="display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:200px"></div>
@@ -5965,6 +6774,7 @@ const App = (() => {
         </details>
         <div class="ai-gen-actions">
           <button class="btn primary ai-run" id="aiRun" ${aiBusy ? 'disabled' : ''}>Generate site</button>
+          <button class="btn ghost ai-interview" id="aiInterview" ${aiBusy ? 'disabled' : ''}>Shape the brief <small>4 questions</small></button>
           <button class="btn ghost ai-directions" id="aiDirections" ${aiBusy ? 'disabled' : ''}>Explore 3 directions <small>(1 credit)</small></button>
           <button class="btn ghost" id="aiSaveBrief" title="Save this prompt and brief for repeat client builds">💾 Save brief</button>
         </div>
@@ -6086,6 +6896,7 @@ const App = (() => {
     }
     renderUploads();
     $('#aiRun').onclick = runAI;
+    $('#aiInterview').onclick = openCreativeInterview;
     $('#aiDirections').onclick = openDirectionLab;
     $('#aiImagesReal').onclick = () => aiImages('real');
     $('#aiImagesAi').onclick = () => aiImages('ai');
@@ -6109,8 +6920,18 @@ const App = (() => {
       const K = kernelLib();
       const kernel = proj.site && proj.site.kernel;
       const kernTag = (K && kernel) ? `<span class="chip" title="${esc(K.promptContract(kernel).join(' '))}">🔒 ${esc(K.describe(kernel))}</span>` : '';
-      res.innerHTML = `<span>✦ “${esc(proj.site.name)}” generated from “${esc(lastAI.prompt.slice(0, 48))}${lastAI.prompt.length > 48 ? '…' : ''}”</span>${nicheTag}${studiedTag}${transTag}${kernTag}<button class="btn ghost small" id="aiLockLook">${(K && kernel) ? '🔓 Unlock this brand' : '🔒 Lock this look'}</button><button class="btn primary small" id="aiOpen">Open in Designer</button>`;
+      res.innerHTML = `<div class="ai-result-line"><span>✦ “${esc(proj.site.name)}” generated from “${esc(lastAI.prompt.slice(0, 48))}${lastAI.prompt.length > 48 ? '…' : ''}”</span><span class="ai-result-tags">${nicheTag}${studiedTag}${transTag}${kernTag}</span></div>${strategyReceipt(proj)}${originalityResultCard(proj)}<div class="ai-result-actions"><button class="btn ghost small" id="aiLockLook">${(K && kernel) ? '🔓 Unlock this brand' : '🔒 Lock this look'}</button><button class="btn primary small" id="aiOpen">Open in Designer</button></div>`;
       $('#aiOpen').onclick = () => { currentId = proj.id; selectedSec = null; switchView('designer'); };
+      const refine = $('#aiRefineStrategy');
+      if (refine) refine.onclick = () => openStrategyEditor(proj);
+      const regenerate = $('#aiRegenerate');
+      if (regenerate) regenerate.onclick = () => {
+        const prompt = lastAI && lastAI.prompt;
+        if (!prompt) return toast('Generate a first direction before asking for another one.');
+        const input = $('#aiPrompt');
+        if (input) input.value = prompt;
+        runAI();
+      };
       $('#aiLockLook').onclick = () => {
         if (kernel) {
           delete proj.site.kernel;
@@ -6311,6 +7132,34 @@ const App = (() => {
     return studied;
   }
 
+  function openCreativeInterview() {
+    const prompt = ($('#aiPrompt') && $('#aiPrompt').value.trim()) || '';
+    if (!prompt) return toast('Write a short brief first so the questions can adapt to it ✍️');
+    const detected = AI.detectType ? AI.detectType(prompt) : null;
+    const label = detected && (detected.name || detected.id) ? String(detected.name || detected.id) : 'your business';
+    openModal('✦ Creative brief interview', `
+      <div class="creative-interview-intro"><span class="direction-lab-mark">✦</span><div><b>Let’s give the generator a point of view.</b><p>Four quick choices, tailored for ${esc(label)}. Nothing here changes your confirmed business facts.</p></div></div>
+      <div class="creative-interview-grid">
+        <label><span>What should a visitor do first?</span><select id="creativeGoal"><option value="learn">Understand what we do</option><option value="trust">See proof and feel confident</option><option value="book">Book or make an appointment</option><option value="buy">Browse prices or buy</option><option value="contact">Request a quote or enquire</option></select></label>
+        <label><span>Who matters most?</span><select id="creativeAudience"><option value="local">Local customers</option><option value="professional">Professional buyers</option><option value="premium">People looking for a premium experience</option><option value="family">Families and everyday customers</option><option value="community">A community or cause</option></select></label>
+        <label><span>Which visual mood feels right?</span><select id="creativePersonality"><option value="editorial">Editorial and considered</option><option value="cinematic">Cinematic and atmospheric</option><option value="tactile">Warm and tactile</option><option value="kinetic">Bold and energetic</option><option value="quiet">Quiet and spacious</option></select></label>
+        <label><span>What should do the convincing?</span><select id="creativeProof"><option value="work">The work, products, or menu</option><option value="reviews">Reviews and results</option><option value="process">The process and expertise</option><option value="story">The founder or story</option><option value="offer">A clear offer and price</option></select></label>
+      </div>
+      <div class="creative-interview-foot"><span>Your answers become a creative constitution for the concept board.</span><div><button class="btn ghost small" id="creativeInterviewCancel">Cancel</button><button class="btn primary small" id="creativeInterviewGo">Show my directions</button></div></div>`);
+    $('#creativeInterviewCancel').onclick = closeModal;
+    $('#creativeInterviewGo').onclick = () => {
+      creativeBrief = {
+        goal: $('#creativeGoal').value,
+        audience: $('#creativeAudience').value,
+        personality: $('#creativePersonality').value,
+        proof: $('#creativeProof').value,
+        version: 1
+      };
+      closeModal();
+      openDirectionLab();
+    };
+  }
+
   function directionOptions(website) {
     const name = ($('#aiName') && $('#aiName').value.trim()) || '';
     const area = ($('#aiArea') && $('#aiArea').value.trim()) || '';
@@ -6328,6 +7177,7 @@ const App = (() => {
       website: website || undefined,
       packId,
       photoMode,
+      creativeBrief: creativeBrief || undefined,
       photos: aiUploads.filter((u) => u && u.data).map((u) => u.data),
       // Direction exploration should be fresh too; otherwise reopening the
       // lab for the same brief presents the same three cards forever.
@@ -6513,18 +7363,15 @@ const App = (() => {
     try {
       const preset = brandPresetFromProject(c, kernel.name + ' brand', false);
       if (preset) {
-        const existing = brandPresets.find((p) => String(p.name || '').toLowerCase() === String(preset.name).toLowerCase());
-        if (existing) {
-          preset.id = existing.id;
-          preset.createdAt = existing.createdAt || preset.createdAt;
-          brandPresets = brandPresets.map((p) => (p.id === existing.id ? preset : p));
-        } else {
-          brandPresets.unshift(preset);
-          if (brandPresets.length > BRAND_PRESET_LIMIT) brandPresets.pop();
+        const res = saveBrandPreset(preset);
+        if (res.ok) {
+          kernel.presetId = preset.id;
+          saved = true;
+        } else if (res.atLimit) {
+          // The lock itself still holds — only the saved copy is skipped. Saying
+          // so beats losing a client's brand system to make room for it.
+          toast('Look locked. All ' + BRAND_PRESET_LIMIT + ' saved brand presets are in use, so this one was not saved — remove one to keep it.', false);
         }
-        persistBrandPresets();
-        kernel.presetId = preset.id;
-        saved = true;
       }
     } catch (e) { /* the lock still holds without a saved preset */ }
     c.site.kernel = kernel;
@@ -6624,7 +7471,10 @@ const App = (() => {
         photoGrade: !!( $('#aiPhotoGrade') && $('#aiPhotoGrade').checked ),
         studied: studied.length ? studied : undefined,
         website: website || undefined,
+        existingProjects: projects.slice(0, 32),
+        originalityRepair: true,
         photoMode,
+        creativeBrief: creativeBrief || undefined,
         // A brand lock is enforced by the engine, not suggested to it.
         kernel: selectedKernel()
       });
@@ -7204,6 +8054,7 @@ const App = (() => {
     ['assets', 'Assets', LS.assets],
     ['presets', 'Section presets', LS.sectionPresets],
     ['brand', 'Brand presets', LS.brandPresets],
+    ['starters', 'Starters', LS.starters],
     ['briefs', 'Briefs', LS.briefs],
     ['settings', 'Settings', LS.settings]
   ];
@@ -7223,6 +8074,7 @@ const App = (() => {
     assets: () => assets.length,
     presets: () => sectionPresets.length,
     brand: () => brandPresets.length,
+    starters: () => starters.length,
     briefs: () => briefs.length
   };
 
@@ -9383,7 +10235,7 @@ const App = (() => {
         <h3>Business identity</h3>
         <p class="sub">Used to pre-fill new projects, templates and AI drafts. Stored only on this device.</p>
         <div class="set-row"><div><label>Business name</label></div><input type="text" id="setBizName" value="${esc(s.businessName||'')}" placeholder="e.g. Hearth Bakery"></div>
-        <div class="set-row"><div><label>Email</label></div><input type="email" id="setBizEmail" value="${esc(s.businessEmail||'')}" placeholder="hello@example.com" autocomplete="email"></div>
+        <div class="set-row"><div><label>Email</label><div class="set-desc">Printed on your handoff guide, invoice and client report.</div></div><input type="email" id="setBizEmail" value="${esc(s.businessEmail||'')}" placeholder="hello@example.com" autocomplete="email"></div>
         <div class="set-row"><div><label>Phone</label></div><input type="tel" id="setBizPhone" value="${esc(s.businessPhone||'')}" placeholder="+44 20 7123 4567"></div>
         <div class="set-row"><div><label>Address</label></div><input type="text" id="setBizAddress" value="${esc(s.businessAddress||'')}" placeholder="123 High Street, London"></div>
         <div class="set-row"><div><label>Website</label></div><input type="url" id="setBizUrl" value="${esc(s.businessUrl||'')}" placeholder="https://example.com"></div>
@@ -9400,6 +10252,7 @@ const App = (() => {
           <label class="switch"><input type="checkbox" id="setBrandFooter" ${s.brandFooter === false ? '' : 'checked'}><span class="slider"></span></label></div>
         <div class="set-row"><div><label>Footer text</label></div><input type="text" id="setBrandText" value="${esc(s.brandFooterText)}"></div>
         <div class="set-row"><div><label>Brand link</label><div class="set-desc">Where the footer signature points.</div></div><input type="text" id="setBrandLink" value="${esc(s.brandLink)}"></div>
+        <div class="set-row"><div><label>Footer signature</label><div class="set-desc">${isProPlus() ? 'Your plan exports unbranded, so the shipped default is ignored here: the signature becomes your business name and site above, or stays off entirely. Type something different and that is used instead.' : 'Signs the sites you build. Every visitor reads this line, so it should be your studio, not ours.'}</div></div><b>${esc(s.brandFooter === false ? 'Off' : (String(s.brandFooterText || '').trim() && String(s.brandFooterText).trim() !== 'Made by PallettAI' ? s.brandFooterText : (isProPlus() ? (String(s.businessName || '').trim() || 'Your business name') : 'Made by PallettAI')))}</b></div>
       </div>
 `) +
       cards('defaults', `
@@ -9480,6 +10333,12 @@ const App = (() => {
           <label class="switch"><input type="checkbox" id="setConfirmDel" ${s.confirmDelete !== false ? 'checked' : ''}><span class="slider"></span></label></div>
         <div class="set-row"><div><label>Guided tour</label><div class="set-desc">Run the welcome tour again any time.</div></div>
           <button class="btn ghost small" id="btnReTour">Run the tour</button></div>
+      </div>
+      <div class="settings-card">
+        <h3>Diagnostics</h3>
+        <p class="sub">Crash reports are off by default. When on, a scrubbed, rate-limited summary (error type and message, app version) helps fix bugs faster.</p>
+        <div class="set-row"><div><label>Send crash reports</label><div class="set-desc">Never includes project text, URLs, tokens or account details.</div></div>
+          <label class="switch"><input type="checkbox" id="setCrashReport" ${s.crashReportingEnabled ? 'checked' : ''}><span class="slider"></span></label></div>
       </div>
       <div class="settings-card">
         <h3>Workspace & startup</h3>
@@ -9579,6 +10438,15 @@ const App = (() => {
     on('#setBizSocial', 'input', (e)=>{ settings.businessSocial=String(e.target.value).slice(0,400); saveSettings(); });
     on('#btnBizApplyOpen', 'click', ()=>{ const c=current(); if(!c) return toast('No project open — create or open one first'); if(typeof c.site==='object'){ if(settings.businessName) c.site.name=String(settings.businessName).trim(); if(settings.businessEmail) c.site.email=String(settings.businessEmail).trim(); if(settings.businessPhone) c.site.phone=String(settings.businessPhone).trim(); if(settings.businessAddress) c.site.address=String(settings.businessAddress).trim(); if(settings.businessUrl) c.site.url=String(settings.businessUrl).trim(); if(settings.businessHours) c.site.hours=String(settings.businessHours).trim(); if(settings.businessSocial) c.site.social=String(settings.businessSocial).trim(); touch(c); toast('Identity applied to open project ✓', true);} });
     on('#setConfirmDel', 'change', (e) => { settings.confirmDelete = e.target.checked; saveSettings(); });
+    on('#setCrashReport', 'change', (e) => {
+      settings.crashReportingEnabled = e.target.checked;
+      saveSettings();
+      try {
+        const bridge = (typeof window !== 'undefined') ? window.pallettai : null;
+        if (bridge && typeof bridge.setCrashPrefs === 'function') bridge.setCrashPrefs(settings.crashReportingEnabled === true, settings.crashReportDsn || '');
+      } catch (err) { /* browser build has no bridge */ }
+      if (e.target.checked) toast('Crash reporting on — thank you. Nothing project-related ever leaves this device.', true);
+    });
     on('#btnReTour', 'click', () => { try { localStorage.removeItem(TOUR_KEY); } catch (e) {} startTour(); toast('Tour restarted 🎓', true); });
     on('#btnResetSettings', 'click', () => {
       settings = { ...DB.defaultSettings };
@@ -10052,6 +10920,13 @@ const App = (() => {
     histCapture();
     try {
       const plan = AI.chatPlan(current().site, text, chatLastEdit);
+      // The local Director adds a private semantic route to the plan. It never
+      // changes the command parser's decision; it only lets the user see which
+      // rendered section the Copilot considered the strongest match.
+      if (plan && typeof AI.copilotRoute === 'function') {
+        const route = AI.copilotRoute(current().site, text);
+        if (route && route.confidence >= 0.82 && !route.ambiguous && route.hits && route.hits[0]) plan.directorRoute = route;
+      }
       await chatApplyPlan(plan, text);
     } catch (err) {
       console.error('Copilot error', err);
@@ -10077,6 +10952,10 @@ const App = (() => {
       catch that" in place of the answer the copilot had actually written.
     */
     if (!acts.length && plan && plan.reply) return chatAdd('bot', esc(plan.reply));
+    if (plan && plan.directorRoute && plan.directorRoute.hits && plan.directorRoute.hits[0]) {
+      const hit = plan.directorRoute.hits[0];
+      chatAdd('bot note', '✦ Director context: strongest match is the ' + esc(hit.type || 'selected') + ' section' + (hit.pageSlug && hit.pageSlug !== 'index' ? ' on ' + esc(hit.pageSlug) : '') + '.');
+    }
     /*
       Say what the plan left out before it runs, not after. A scoped sentence
       the copilot could only take part-way, or a change dropped because of a
@@ -10984,19 +11863,11 @@ const App = (() => {
       const save = $('#brandPresetSave');
       if (save) save.onclick = () => {
         const name = ($('#brandPresetName').value || '').trim() || 'Brand system';
-        const old = brandPresets.find((p) => String(p.name || '').toLowerCase() === name.toLowerCase());
         const next = brandPresetFromProject(c, name, $('#brandPresetSeo').checked);
         if (!next) return toast('Could not capture the current brand system.', false);
-        if (old) {
-          next.id = old.id;
-          next.createdAt = old.createdAt || next.createdAt;
-          brandPresets = brandPresets.map((p) => p.id === old.id ? next : p);
-        } else {
-          brandPresets.unshift(next);
-          if (brandPresets.length > BRAND_PRESET_LIMIT) brandPresets.pop();
-        }
-        persistBrandPresets();
-        toast(old ? 'Brand preset updated 🎨' : 'Brand preset saved 🎨', true);
+        const res = saveBrandPreset(next);
+        if (res.atLimit) return askReplaceBrandPreset(next, res.oldest, render);
+        toast(res.replaced ? 'Brand preset updated 🎨' : 'Brand preset saved 🎨', true);
         render();
       };
       $$('[data-brand-apply]').forEach((b) => b.onclick = () => {
@@ -11422,7 +12293,7 @@ const App = (() => {
     }
 
     root.innerHTML = careIntro()
-      + `<div class="care-sum"><b>${esc(sum)}</b><span>Every project in your workspace, worst first.</span></div>`
+      + `<div class="care-sum"><b>${esc(sum)}</b><span>Every project in your workspace, worst first.</span><span class="care-sum-actions"><select id="carePlanSel" class="care-plan" aria-label="Care plan for the selected site"><option value="none">Not on retainer</option><option value="monthly">Monthly care</option></select><button class="btn small" id="careDigest">Monthly digest</button></span></div>`
       + `<h3 class="view-h">Every site</h3><div class="care-list">${sweep}</div>`
       + `<h3 class="view-h">Report</h3>${report}`;
 
@@ -11440,6 +12311,22 @@ const App = (() => {
       const worst = (rows[0] && rows[0].r) || null;
       toast(worst && worst.findings.length ? 'Re-scanned — ' + worst.findings.length + ' finding' + (worst.findings.length === 1 ? '' : 's') + ' on your worst site' : 'Re-scanned — everything looks current', true);
     };
+    const digestBtn = $('#careDigest');
+    if (digestBtn) digestBtn.onclick = openHealthDigest;
+    const planSel = $('#carePlanSel');
+    if (planSel) {
+      const selProject = projects.find((x) => x.id === careSel);
+      planSel.value = selProject && selProject.carePlan === 'monthly' ? 'monthly' : 'none';
+      planSel.onchange = () => {
+        const p = projects.find((x) => x.id === careSel);
+        if (!p) return;
+        p.carePlan = planSel.value === 'monthly' ? 'monthly' : 'none';
+        touch(p);
+        saveProjects();
+        renderCare();
+        toast(p.carePlan === 'monthly' ? 'Marked as monthly care — the digest counts it as retainer work' : 'Removed from monthly care', true);
+      };
+    }
   }
 
   function careIntro() {
@@ -11831,8 +12718,10 @@ const App = (() => {
     await loadProjects();
     await hydrateRevs();
     loadSettings();
+    initCrashReporter();
     loadCustomPalettes();
     await hydrateBrandPresets();
+    await hydrateStarters();
     await hydrateAssets();
     await hydrateSectionPresets();
     await hydrateBriefs();
@@ -11844,6 +12733,7 @@ const App = (() => {
     if (typeof UIShell !== 'undefined' && UIShell.initAppShell) UIShell.initAppShell();
     seed();
     paintNav();
+    startJobWatch();
     const chatSpark = document.querySelector('.chat-spark');
     if (chatSpark && !chatSpark.innerHTML) chatSpark.innerHTML = uiIcon('chat');
     $('#btnNewProject').onclick = () => switchView('templates');

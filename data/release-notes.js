@@ -4,29 +4,29 @@
 // Bump `version` when you ship. Each entry: version, date, tagline, highlights[].
 // Keep highlights to 3-4 items, written as user-facing wins (not commit logs).
 const RELEASE_NOTES = {
-  version: '0.4.8',
-  date: 'September 18, 2026',
-  tagline: 'Studio now gives every project a distinct creative direction, with safer AI guidance and stronger site intelligence',
+  version: '0.4.9',
+  date: 'September 19, 2026',
+  tagline: 'Studio now turns a brief into a considered creative direction, with reusable systems and safer delivery behind it',
   highlights: [
     {
       icon: 'spark',
-      title: 'Every generation gets a genuinely different direction',
-      desc: 'Studio now varies composition, typography, section rhythm, hero treatment, imagery guidance and motion instead of only changing colours. The chosen direction is saved with the project, so it remains editable and stable after creation.'
+      title: 'Shape the brief before Studio builds',
+      desc: 'A short adaptive interview captures the visitor goal, audience, visual personality and proof available. Studio then presents contrasting creative routes before generation, so the direction is chosen rather than guessed.'
     },
     {
-      icon: 'download',
-      title: 'Restarting to update now actually restarts',
-      desc: 'Installing an update was handing the job to macOS and then waiting to be replaced by a process that never left \u2014 so the updater window sat on \u201cInstalling update\u2026\u201d indefinitely, and the only way through was to force-quit the app. It now says goodbye properly: the updater window goes, the process exits, and macOS swaps the app in the few seconds it always should have taken.'
+      icon: 'gauge',
+      title: 'The AI now explains the structure it chose',
+      desc: 'Every generated project receives a conversion strategy, signature visual moment, proof approach and section plan. The receipt shows the reasoning, and you can refine the visitor action or signature before generating another direction.'
+    },
+    {
+      icon: 'layers',
+      title: 'Start from your own proven systems',
+      desc: 'Pro users can save a finished project as a personal starter. It preserves the pages, sections and design while safely leaving behind the previous client’s details, copy and imagery unless you explicitly choose to keep them.'
     },
     {
       icon: 'lock',
-      title: 'Nothing can lock you out of your own work',
-      desc: 'The update check runs before your workspace appears, so anything that stalls there used to mean a window you could not dismiss and no way into your projects. A few seconds in, that window now offers \u201cSkip the update and open Studio\u201d. Take it and the version you already have opens with everything where you left it; the update is offered again next time you open Studio, so a bad connection costs you a restart rather than access.'
-    },
-    {
-      icon: 'info',
-      title: 'An update tells you which version it is',
-      desc: 'The prompt that asks you to restart now names the version waiting to be installed, instead of asking about \u201ca new version\u201d. If you would rather know what you are getting before you interrupt yourself, it is on the prompt.'
+      title: 'More resilient work, safer delivery',
+      desc: 'Background jobs can retry or resume without overlapping, crash reporting is opt-in and scrubbed before sending, and the release gate now covers these new paths alongside the originality, export and security suites.'
     }
   ]
 };

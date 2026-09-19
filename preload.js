@@ -23,6 +23,9 @@ contextBridge.exposeInMainWorld('pallettai', {
   setTheme: (theme) => ipcRenderer.send('theme-changed', theme),
   secretsGet: (key) => ipcRenderer.invoke('secrets-get', key),
   secretsSet: (key, value) => ipcRenderer.invoke('secrets-set', key, value),
+  // Crash reporting consent mirror: the renderer owns the settings, the main
+  // process owns its own process-level handlers, so the choice is forwarded.
+  setCrashPrefs: (enabled, dsn) => ipcRenderer.send('crash-report-prefs', { enabled: !!enabled, dsn: String(dsn || '') }),
   // OS accent colour (Electron only): hex without '#' (e.g. '22d3ee'), '' when
   // unavailable. onAccent subscribes to live OS accent changes.
   getAccent: () => ipcRenderer.invoke('get-accent'),

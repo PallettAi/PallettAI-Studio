@@ -163,6 +163,16 @@
         <p>Preview a layout, then start it in the Designer. Pro templates unlock with a paid plan.</p>
       </div>
       <div class="tpl-grid" id="tplGrid"></div>
+      <!-- The studio's own starting points, beside the built-in ones: this is
+           where a project begins, so a starter kept anywhere else is a starter
+           that gets rebuilt by hand instead. -->
+      <div class="starter-shelf">
+        <div class="starter-title">
+          <h3>Your starters</h3>
+          <small id="starterNote"></small>
+        </div>
+        <div class="starter-grid" id="starterGrid"></div>
+      </div>
     </section>
 
     <!-- Designer -->
@@ -299,6 +309,8 @@
 <script src="data/ai-facts.js"></script>
 <script src="data/ai-reference.js"></script>
 <script src="data/ai-art-direction.js"></script>
+<script src="data/ai-director.js"></script>
+<script src="data/ai-originality.js"></script>
 <script src="data/ai-kernel.js"></script>
 <script src="data/ai-critique.js"></script>
 <script src="data/copy.js"></script>
@@ -327,6 +339,10 @@
 <script src="data/ogcard.js"></script>
 <script src="data/tokens.js"></script>
 <script src="data/notfound.js"></script>
+<!-- White-label loads before legal.js and builder.js: both of them read the
+     storage namespace it derives, and the cookie policy has to name the same
+     keys the exported site actually writes. -->
+<script src="data/whitelabel.js"></script>
 <script src="data/legal.js"></script>
 <script src="data/readability.js"></script>
 <script src="data/links.js"></script>
@@ -347,7 +363,13 @@
 <script src="data/revs-policy.js"></script>
 <script src="data/library-merge.js"></script>
 <script src="data/milestones.js"></script>
+<script src="data/starters.js"></script>
 <script src="data/care-report.js"></script>
+<script src="data/jobs.js"></script>
+<script src="data/crashreport.js"></script>
+<script src="data/github-publish.js"></script>
+<script src="data/review-links.js"></script>
+<script src="data/health-report.js"></script>
 <script src="vendor/qrcode.js"></script>
 <!-- UI shell: the behaviour behind the look (toast card, metric count-up, view
      cross-fade, top bar lift, shortcut sheet, palette recents). Loads after the

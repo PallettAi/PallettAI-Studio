@@ -1187,6 +1187,16 @@ const AI = (() => {
     try { if (typeof require === 'function') return require('../data/ai-art-direction.js'); } catch (e) { /* classic script */ }
     return null;
   }
+  function directorLib() {
+    if (typeof AiDirector !== 'undefined') return AiDirector;
+    try { if (typeof require === 'function') return require('../data/ai-director.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
+  function originalityLib() {
+    if (typeof AiOriginality !== 'undefined') return AiOriginality;
+    try { if (typeof require === 'function') return require('../data/ai-originality.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
   function aaPaletteIds(ids) {
     const list = Array.isArray(ids) ? ids : [];
     const ok = list.filter((pid) => {
@@ -1405,7 +1415,11 @@ const AI = (() => {
     const tier = opts.tier === 'free' ? 'free' : 'pro';
     const taste = detectTaste(prompt);
     const requestedLook = opts && opts.look && LOOK_STYLE[opts.look] ? opts.look : '';
-    const look = requestedLook || lookFor(type.id, taste, seed);
+    const interviewLook = {
+      editorial: 'editorial', cinematic: 'dark', tactile: 'warm',
+      kinetic: 'bold', quiet: 'minimal'
+    }[opts && opts.creativeBrief && opts.creativeBrief.personality] || '';
+    const look = requestedLook || interviewLook || lookFor(type.id, taste, seed);
     const ls = LOOK_STYLE[look] || LOOK_STYLE.light;
     const freeOK = (f) => tier === 'pro' || !PRO_FONTS.has(f);
 
@@ -2532,6 +2546,19 @@ const AI = (() => {
     const imageDirection = ArtDirection && ArtDirection.directionFor
       ? ArtDirection.directionFor(type.id, dna.look, seed)
       : null;
+    // Director pass: compile a bounded strategy from the client's brief and
+    // provenance ledger. This is local and deterministic; it gives both the
+    // generator and Copilot a shared answer to "who is this for, what do they
+    // need, and what should happen next?" rather than making each pass guess.
+    const Director = directorLib();
+    const directorPlan = Director && Director.compile
+      ? Director.compile({ prompt: raw, brief, typeId: type.id, nicheId: niche && niche.id, seed, factLedger, creativeBrief: opts && opts.creativeBrief })
+      : null;
+    if (directorPlan && Director.validate && !Director.validate(directorPlan).ok) {
+      // Invalid strategy metadata must never block a site or leak partial
+      // instructions into later passes.
+      directorPlan.invalid = true;
+    }
 
     const project = {
       id: 'ai_' + Math.random().toString(36).slice(2, 10),
@@ -2575,7 +2602,12 @@ const AI = (() => {
         photoGrade,
         factLedger,
         referenceGuard,
-        imageDirection
+        imageDirection,
+        directorPlan: directorPlan && !directorPlan.invalid ? directorPlan : undefined,
+        creativeBrief: opts && opts.creativeBrief && typeof opts.creativeBrief === 'object'
+          ? { version: 1, goal: String(opts.creativeBrief.goal || '').slice(0, 30), audience: String(opts.creativeBrief.audience || '').slice(0, 30), personality: String(opts.creativeBrief.personality || '').slice(0, 30), proof: String(opts.creativeBrief.proof || '').slice(0, 30), signature: String(opts.creativeBrief.signature || '').slice(0, 40) }
+          : undefined,
+        originality: undefined
       }
     };
     if (filled && !onePager) {
@@ -2594,6 +2626,16 @@ const AI = (() => {
         layouts: opts.layouts,
         photoMode: (opts && opts.photoMode) || 'real'
       });
+    }
+    // Give the chosen conversion strategy one tangible visual signature. This
+    // changes an existing section's layout only when that layout is supported by
+    // the renderer; facts and copy remain untouched.
+    const signature = directorPlan && directorPlan.signatureMoment;
+    if (signature && signature.target) {
+      const target = (project.site.sections || []).find((sec) => sec && sec.type === signature.target);
+      const supported = typeof DB.layoutsFor === 'function' ? (DB.layoutsFor(signature.target) || []).some((v) => v.id === signature.layout) : true;
+      if (target && supported) target.layout = signature.layout;
+      project.site.signatureMoment = { id: String(signature.id || '').slice(0, 40), label: String(signature.label || '').slice(0, 80), target: String(signature.target).slice(0, 30), layout: String(signature.layout || '').slice(0, 30) };
     }
     // Brand kernel: enforced BEFORE the logo is drawn and before any review pass
     // runs, so the drawn logo uses the client's own palette and every later pass
@@ -2644,6 +2686,29 @@ const AI = (() => {
     // fields cannot have drifted — but a review pass between the two can change
     // a palette, so re-assert the lock rather than trusting the order.
     if (Kernel && kernel) Kernel.apply(project, kernel);
+    // Originality is measured after composition, brand locks and self-critique
+    // have all run. If the result is too close to an existing project, only the
+    // visual direction is remixed; client facts and authored copy remain intact.
+    const Originality = originalityLib();
+    if (Originality && Originality.apply) {
+      const originality = Originality.apply(project, {
+        peers: Array.isArray(opts.existingProjects) ? opts.existingProjects : [],
+        references: studiedIn,
+        seed: seed,
+        repair: opts.originalityRepair !== false
+      });
+      if (originality && originality.report && Originality.validate(originality.report)) {
+        project.site.originality = Object.assign({}, project.site.originality, {
+          reportVersion: 1,
+          score: originality.report.score,
+          grammar: project.site.originality && project.site.originality.grammar,
+          needsRemix: originality.report.needsRemix,
+          referenceSafe: originality.report.reference.safe,
+          closestPeerDistance: originality.report.closestPeerDistance,
+          repaired: !!(originality.repair && originality.repair.changed)
+        });
+      }
+    }
     project.site.photoPass = { status: 'pending', placed: { hero: false, about: false, gallery: 0 } };
     return project;
   }
@@ -6050,7 +6115,16 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
   // credits consumed per action
   const COST = { site: 1, images: 1, enhance: 1, restyle: 1, shuffle: 1, section: 1, translate: 1 };
 
-  return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, studySite, isPublicFetchUrl, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, shuffleLook, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatPlanOne, splitCompound, chatHelp, sampleSection, copyOptions, imageBase, photoPicks, polarity, designMention, designAlternatives,
+  const copilotRoute = (site, message) => {
+    const Director = directorLib();
+    return Director && Director.route ? Director.route(site, message) : { confidence: 0, ambiguous: false, hits: [] };
+  };
+  const originalityReport = (project, peers, references) => {
+    const Originality = originalityLib();
+    return Originality && Originality.audit ? Originality.audit(project, peers, references) : null;
+  };
+
+  return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, studySite, isPublicFetchUrl, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, shuffleLook, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatPlanOne, copilotRoute, originalityReport, splitCompound, chatHelp, sampleSection, copyOptions, imageBase, photoPicks, polarity, designMention, designAlternatives,
     nthSecOfType, sectionOrdinal, resolveTarget, positionalMention, followMiss, repeatMiss, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES, applyNicheExtras, addServicesPage, matchNiche,
     critiquePass, brandKernel: kernelLib };
 })();

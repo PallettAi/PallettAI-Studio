@@ -23,6 +23,82 @@ function main() {
     progress: null
   };
 
+  // ---------------------------------------------------------------- crash reporting
+  // The main process is where a renderer death is OBSERVED. crashReporter
+  // (native minidumps for real crashes) plus process-level handlers for
+  // uncaught exceptions/rejections give the opt-in channel something honest to
+  // send. OFF until the renderer sends crash-reporting-enabled=true — the
+  // renderer owns the settings flag, so it is the single source of truth for
+  // consent, and a fresh install reports nothing at all.
+  let crashReportsEnabled = false;
+  let crashReportDsn = 'https://ingest.pallettai.org/studio-errors';
+  let crashUploads = [];
+  function startCrashReporter() {
+    try {
+      require('electron').crashReporter.start({
+        uploadToServer: false, // JS-side uploader below; never a background channel
+        compress: true
+      });
+    } catch (e) { /* unavailable in this Electron build — the JS channel still works */ }
+    process.on('uncaughtException', (err) => {
+      try { console.error('main uncaught:', err && err.message); } catch (_) {}
+      queueCrashEvent({ type: 'uncaught-exception', message: (err && err.message) || 'uncaught in main' });
+    });
+    process.on('unhandledRejection', (reason) => {
+      queueCrashEvent({ type: 'unhandled-rejection', message: (reason && reason.message) || String(reason || 'unhandled in main') });
+    });
+  }
+  function queueCrashEvent(input) {
+    if (!crashReportsEnabled) return; // consent is set by the renderer's settings
+    try {
+      const CrashReport = require('./data/crashreport.js');
+      crashUploads.push(CrashReport.makeEvent(Object.assign({}, input, {
+        scope: 'main',
+        installation: 'main',
+        session: 'main-' + process.pid,
+        appVersion: app.getVersion(),
+        platform: process.platform + ' electron/' + process.versions.electron
+      })));
+      if (crashUploads.length > 30) crashUploads.splice(0, crashUploads.length - 30);
+      scheduleCrashFlush();
+    } catch (e) { /* reporting must never crash the crash reporter */ }
+  }
+  let crashFlushTimer = null;
+  function scheduleCrashFlush() {
+    if (crashFlushTimer) return;
+    crashFlushTimer = setTimeout(flushCrashEvents, 10000);
+  }
+  // The renderer owns the settings and mirrors the crash-reporting choice here
+  // (validated like every other channel): enabled flag + optional ingest URL.
+  function registerCrashIpc() {
+    ipcMain.on('crash-report-prefs', (event, prefs) => {
+      if (!fromMainFrame(event, win)) return;
+      if (!prefs || typeof prefs !== 'object') return;
+      crashReportsEnabled = prefs.enabled === true;
+      const dsn = String(prefs.dsn || '');
+      if (!dsn) return; // keep the default endpoint when the setting is just a toggle
+      try { crashReportDsn = (new URL(dsn).protocol === 'https:') ? dsn : crashReportDsn; } catch (_) { /* keep last good */ }
+      if (!crashReportsEnabled) crashUploads.length = 0; // consent withdrawn — drop anything unsent
+    });
+  }
+
+  async function flushCrashEvents() {
+    crashFlushTimer = null;
+    if (!crashReportsEnabled || !crashUploads.length) return;
+    const batch = crashUploads.splice(0, crashUploads.length);
+    try {
+      const CrashReport = require('./data/crashreport.js');
+      await fetch(CrashReport.storeUrlFromDsn(crashReportDsn), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ events: batch })
+      });
+    } catch (e) {
+      // Keep the batch for the next flush rather than losing the report.
+      crashUploads = batch.concat(crashUploads).slice(-30);
+    }
+  }
+
   // ---------------------------------------------------------------- window state
   const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
 
@@ -223,7 +299,7 @@ function main() {
     return frame.parent == null || frame === target.webContents.mainFrame;
   };
 
-  const SECRET_KEYS = new Set(['publish.netlifyToken', 'publish.neocitiesKey']);
+  const SECRET_KEYS = new Set(['publish.netlifyToken', 'publish.neocitiesKey', 'publish.vercelToken', 'publish.cloudflareToken', 'publish.githubToken']);
 
   function secretsStorePath() {
     return path.join(app.getPath('userData'), 'publish-secrets.bin');
@@ -870,6 +946,8 @@ function main() {
     }
     initUpdater();
     buildMenu();
+    startCrashReporter();
+    registerCrashIpc();
     registerSecretIpc();
     registerAccentIpc();
     registerThemeIpc();

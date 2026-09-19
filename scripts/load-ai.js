@@ -25,6 +25,8 @@ function loadAI() {
   sandbox.AiFacts = require(path.join(ROOT, 'data', 'ai-facts.js'));
   sandbox.AiReference = require(path.join(ROOT, 'data', 'ai-reference.js'));
   sandbox.AiArtDirection = require(path.join(ROOT, 'data', 'ai-art-direction.js'));
+  sandbox.AiDirector = require(path.join(ROOT, 'data', 'ai-director.js'));
+  sandbox.AiOriginality = require(path.join(ROOT, 'data', 'ai-originality.js'));
   sandbox.AiKernel = require(path.join(ROOT, 'data', 'ai-kernel.js'));
   sandbox.AiCritique = require(path.join(ROOT, 'data', 'ai-critique.js'));
   sandbox.Copy = require(path.join(ROOT, 'data', 'copy.js'));
