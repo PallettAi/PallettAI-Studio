@@ -1354,6 +1354,9 @@ const Copilot = (() => {
     command language.
   */
   const SLASH = [
+    { name: 'director', args: '', help: 'Choose and explain a visual strategy', send: 'try a dark blue palette' },
+    { name: 'critique', args: '', help: 'Audit the site without changing it', send: 'review my site' },
+    { name: 'repair', args: '', help: 'Prepare safe fixes for your approval', send: 'fix everything you can' },
     { name: 'review', args: '', help: 'Audit the site and list what to fix', send: 'review my site' },
     { name: 'fix', args: '', help: 'Repair everything the copilot safely can', send: 'fix everything you can' },
     { name: 'fixall', args: '', help: 'Apply every fix that needs no credits, in one step', send: 'apply every fix you can' },

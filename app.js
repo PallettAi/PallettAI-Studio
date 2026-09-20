@@ -3096,14 +3096,12 @@ const App = (() => {
     });
   }
 
-  /* A view swap is a real navigation, so it is worth the browser's cross-fade
-     where that exists. The DOM work stays in paintView either way: if the
-     transition path is unavailable or throws, the navigation still happens. */
+  /* Keep tab changes on the compositor-friendly CSS fade. The View Transition
+     API snapshots the entire application, including the active editor/preview,
+     and that snapshot is noticeably expensive on older Macs and integrated
+     graphics. paintView still performs the same navigation work; CSS handles a
+     small opacity-only entrance without duplicating the whole app surface. */
   function switchView(name) {
-    if (typeof UIShell !== 'undefined' && UIShell.viewTransition) {
-      UIShell.viewTransition(() => paintView(name));
-      return;
-    }
     paintView(name);
   }
 
@@ -3165,7 +3163,7 @@ const App = (() => {
         $('#btnQuality').onclick = () => openQualityGate();
         const canvasButton = $('#btnAdvancedCanvas');
         if (canvasButton) canvasButton.onclick = () => {
-          if (typeof PallettAIEditors === 'undefined' || !PallettAIEditors.hasGrapes()) return toast('Advanced canvas is unavailable in this build', false);
+          if (typeof PallettAIEditors === 'undefined' || !PallettAIEditors.open) return toast('Advanced canvas is unavailable in this build', false);
           PallettAIEditors.open(c, (project) => { touch(project); saveProjects(); toast('Canvas snapshot saved locally', true); });
         };
         $('#btnExport').onclick = openExportMenu;
@@ -10895,7 +10893,7 @@ const App = (() => {
         // The shortcut has to be built with the app's own KBD constant: this was
         // a plain string, so the first thing a client ever reads from the
         // copilot said "undoable with ${KBD}Z".
-        chatAdd('bot', 'Hi — I\'m your site copilot. Tell me what to change and I\'ll do it live.\n\nTry: “make it glassmorphism”, “make the hero punchier”, “add a pricing section” or “/review”.\n\nI can also audit the whole site and fix what I safely can. Every edit is undoable with <b>' + KBD + 'Z</b> — AI rewrites cost 1 credit.');
+        chatAdd('bot', 'Hi — I\'m your site copilot. Tell me what to change and I\'ll do it live.\n\nTry: “make it glassmorphism”, “make the hero punchier”, “add a pricing section” or “/review”.\n\nFor the advanced skills, try <b>/director</b>, <b>/critique</b> or <b>/repair</b>. I will explain the strategy, audit a safe clone, or prepare changes for your approval. Every edit is undoable with <b>' + KBD + 'Z</b> — AI rewrites cost 1 credit.');
       }
       chatRenderChips();
       const inp = $('#chatInput');
@@ -11114,7 +11112,10 @@ const App = (() => {
     if (!current()) return toast('Open a project first — Copilot edits the open site', false);
     if (chatState.busy) return;
     const inp = $('#chatInput');
-    const text = chatExpandSlash(inp.value);
+    const raw = inp.value.trim();
+    const intelligence = (typeof StudioIntelligence !== 'undefined' && StudioIntelligence.matchCommand)
+      ? StudioIntelligence.matchCommand(raw) : null;
+    const text = intelligence ? raw : chatExpandSlash(raw);
     if (!text) return;
     inp.value = '';
     chatHistPush(text);
@@ -11124,6 +11125,10 @@ const App = (() => {
     chatSetBusy(true);
     histCapture();
     try {
+      if (intelligence) {
+        await chatRunIntelligence(intelligence.skill, intelligence.args);
+        return;
+      }
       const plan = AI.chatPlan(current().site, text, chatLastEdit);
       // The local Director adds a private semantic route to the plan. It never
       // changes the command parser's decision; it only lets the user see which
@@ -11140,6 +11145,66 @@ const App = (() => {
       chatState.busy = false;
       chatSetBusy(false);
       chatRenderChips();
+    }
+  }
+
+  async function chatRunIntelligence(id, args) {
+    const engine = (typeof StudioIntelligence !== 'undefined') ? StudioIntelligence : null;
+    if (!engine || typeof engine.run !== 'function') return chatAdd('bot', 'Studio Intelligence is unavailable in this build.');
+    const meta = engine.skill(id);
+    if (!meta) return chatAdd('bot', 'That skill is not available.');
+    if (meta.cost && !spendCredit()) return;
+    let result;
+    try {
+      result = engine.run(id, current(), args || '');
+    } catch (e) {
+      if (meta.cost) refundCredit();
+      return chatAdd('bot', 'The ' + esc(meta.label) + ' could not finish safely.');
+    }
+    if (!result || !result.ok) {
+      if (meta.cost) refundCredit();
+      return chatAdd('bot', 'The ' + esc(meta.label) + ' could not finish: ' + esc((result && result.error) || 'try again later') + '.');
+    }
+    if (id === 'director') {
+      const r = result.receipt || {};
+      chatAddEl('bot card', `<div class="intel-head"><span class="intel-mark">✦</span><div><b>${esc(result.title)}</b><small>1 credit · preview only · nothing changed</small></div></div><div class="intel-grid"><div><span>Goal</span><b>${esc(r.job || 'learn')}</b></div><div><span>Audience</span><b>${esc((r.audience || []).join(', ') || 'prospective customers')}</b></div><div><span>Signature</span><b>${esc(r.signature || 'clear focal point')}</b></div><div><span>Visual tension</span><b>${esc(r.tension || 'measured contrast')}</b></div></div><p class="intel-note">Prefer ${esc((r.preferred || []).join(' · ') || 'specific detail and visible whitespace')}. Avoid ${esc((r.avoid || []).join(' · ') || 'generic filler')}.</p>`);
+      return;
+    }
+    if (id === 'critique') {
+      const rows = (result.findings || []).map((f) => `<div class="intel-finding"><b>${esc(f.level || 'warn')}</b><span>${esc(f.msg || f.id)}</span></div>`).join('');
+      chatAddEl('bot card', `<div class="intel-head"><span class="intel-mark">◉</span><div><b>${esc(result.title)}</b><small>free audit · clone only · ${esc(result.receipt)}</small></div></div><div class="intel-score"><strong>${esc(result.score)}/100</strong><span>${esc(result.letter || '—')} · ${result.findings.length} finding${result.findings.length === 1 ? '' : 's'}</span></div><div class="intel-findings">${rows || '<div class="intel-clear">✓ No priority findings.</div>'}</div>`);
+      // The existing Vision path is the browser-facing half: when available it
+      // measures the actual rendered export as well as the cloned model. It is
+      // kept separate so an unavailable/offline frame never makes the model
+      // audit look more certain than it is.
+      chatShowVision(current());
+      return;
+    }
+    if (id === 'repair') {
+      const delta = result.after.score - result.before.score;
+      const card = chatAddEl('bot card', `<div class="intel-head"><span class="intel-mark">⚙</span><div><b>Repair plan ready</b><small>preview only · no project changes yet</small></div></div><div class="intel-score"><strong>${esc(result.before.score)} → ${esc(result.after.score)}</strong><span>${delta >= 0 ? '+' : ''}${esc(delta)} quality · ${result.changes.length} safe change${result.changes.length === 1 ? '' : 's'}</span></div><p class="intel-note">${esc(result.receipt)}</p><div class="intel-actions"></div>`);
+      const apply = card && card.querySelector('.intel-actions');
+      if (apply && result.changes.length && result.candidate) {
+        const button = document.createElement('button');
+        button.className = 'btn primary small';
+        button.textContent = 'Apply safe plan';
+        button.onclick = () => {
+          const live = current();
+          if (!live) return;
+          const candidate = result.candidate;
+          Object.keys(live).forEach((key) => { delete live[key]; });
+          Object.keys(candidate).forEach((key) => { live[key] = candidate[key]; });
+          touch(live);
+          saveProjects();
+          copilotAudit = null;
+          renderDesigner();
+          button.disabled = true;
+          button.textContent = 'Applied · undo available';
+          chatAdd('bot ok', '✓ Safe repair plan applied. The whole change is undoable with ' + KBD + 'Z.');
+        };
+        apply.appendChild(button);
+      }
+      return;
     }
   }
 

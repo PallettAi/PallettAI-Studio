@@ -5,6 +5,18 @@ const path = require('path');
 const fs = require('fs');
 
 const isMac = process.platform === 'darwin';
+
+// Some macOS machines (especially older Intel/remote-display sessions) cannot
+// initialise Electron's EGL GPU process. Electron then falls back inconsistently
+// and the Studio can appear as a blank or partially painted window. The app is
+// primarily DOM/CSS work, so prefer a reliable software compositor. An explicit
+// opt-in keeps a hardware-GPU escape hatch for machines where it is known to be
+// healthy.
+if (process.env.PALLETTAI_HARDWARE_ACCELERATION !== '1') {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('disable-gpu');
+}
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
@@ -208,6 +220,19 @@ function main() {
     win.on('resize', scheduleSaveState);
     win.on('move', scheduleSaveState);
     win.on('close', () => { clearTimeout(stateTimer); saveState(); });
+
+    // Keep renderer diagnostics visible in development/source launches. This is
+    // deliberately console-only: it does not collect or upload page content.
+    win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+      const label = ['debug', 'info', 'warning', 'error'][level] || String(level);
+      console.log(`[renderer:${label}] ${message} (${path.basename(String(sourceId || 'index.html'))}:${line})`);
+    });
+    win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+      console.error(`[renderer:load-failed] ${errorCode} ${errorDescription} ${validatedURL}`);
+    });
+    win.webContents.on('render-process-gone', (_event, details) => {
+      console.error(`[renderer:gone] reason=${details && details.reason} exitCode=${details && details.exitCode}`);
+    });
 
     win.loadFile('index.html');
     revealTimer = setTimeout(revealMainWindow, 6000);

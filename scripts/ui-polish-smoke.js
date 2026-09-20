@@ -54,14 +54,14 @@ console.log('== The shell loads where the app can see it ==');
 }
 assert(/UIShell\.initAppShell\(\)/.test(app), 'app.js boots the shell');
 assert(/function paintView\(name\)/.test(app), 'switchView splits out paintView');
-assert(/viewTransition\(\(\) => paintView\(name\)\)/.test(app), 'a view swap goes through the transition when one exists');
+assert(/function switchView\(name\)\s*\{\s*paintView\(name\);\s*\}/.test(app), 'tab changes use the lightweight paint path');
 assert(/UIShell\.toast\(msg, ok\)/.test(app), 'toast() delegates to the status card');
 
 console.log('\n== Every class the shell writes is styled ==');
 ['toast-ico', 'toast-body', 'toast-bar', 'toast.show', 'toast.ok', 'toast.err', 'toast.warn',
   'cmd-go', 'cmd-list li mark',
   'sheet-root', 'sheet-scrim', 'sheet-card', 'sheet-grid', 'sheet-group', 'sheet-row', 'sheet-keys', 'sheet-foot',
-  'body.scrolled', 'view-transition-name:app-view'].forEach((sel) => {
+  'body.scrolled'].forEach((sel) => {
   assert(css.indexOf(sel) !== -1, 'styles.css has .' + sel);
 });
 // And the reverse: the shell must not be decorating rows with a class that
@@ -304,6 +304,9 @@ assert(/UIShell\.reducedMotion\(\)/.test(app) === false, 'app.js does not assume
 assert(/function uishellReducedMotion/.test(uiSrc), 'the shell has one place that decides');
 assert(/prefers-reduced-motion: no-preference/.test(css), 'the view cross-fade is opt-in for motion');
 assert(/body:not\(\.no-motion\) \*/.test(css), 'the in-app motion switch still wins');
+assert(/function uishellLowPower/.test(uiSrc), 'older-device capability detection lives in the shell');
+assert(/body\.low-power/.test(css), 'older-device styling removes expensive visual effects');
+assert(/uishellApplyPerformanceMode\(\)/.test(uiSrc), 'the performance mode is applied during shell boot');
 
 if (failed) {
   console.error('\nui-polish-smoke FAILED — ' + failed + ' failure(s)');

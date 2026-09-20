@@ -151,6 +151,32 @@ function uishellReducedMotion() {
   return false;
 }
 
+/* Older machines should get the same product, not a slower imitation of it.
+   The app is mostly DOM/CSS, so the expensive parts are visual effects rather
+   than the data model: backdrop filters, large shadows and long transitions.
+   Chromium exposes two useful hints; `saveData` catches a user's explicit
+   low-power preference, while the conservative hardware thresholds cover older
+   desktops where deviceMemory is not available. */
+function uishellLowPower() {
+  try {
+    if (typeof navigator === 'undefined') return false;
+    const cores = Number(navigator.hardwareConcurrency || 0);
+    const memory = Number(navigator.deviceMemory || 0);
+    const saveData = !!(navigator.connection && navigator.connection.saveData);
+    return saveData || (memory > 0 && memory <= 4) || (cores > 0 && cores <= 4);
+  } catch (e) {
+    return false;
+  }
+}
+
+function uishellApplyPerformanceMode() {
+  if (typeof document === 'undefined' || !document.body) return false;
+  const low = uishellLowPower();
+  document.body.classList.toggle('low-power', low);
+  document.body.dataset.performanceMode = low ? 'low' : 'full';
+  return low;
+}
+
 /* ============================================================
    DOM side
    ============================================================ */
@@ -549,6 +575,7 @@ function uishellBindKeys() {
 function uishellInitAppShell() {
   if (typeof document === 'undefined' || uishellState.ready) return uishellAnswer('ok');
   uishellState.ready = true;
+  uishellApplyPerformanceMode();
   const jobs = [uishellTopbarScroll, uishellObserveMetrics, uishellInstallPalette, uishellBindKeys];
   jobs.forEach((job) => {
     try { job(); } catch (e) { console.warn('UI shell: ' + job.name + ' failed', e); }
@@ -571,6 +598,8 @@ const UIShell = {
   parseNumeric: uishellParseNumeric,
   formatNumeric: uishellFormatNumeric,
   reducedMotion: uishellReducedMotion,
+  lowPower: uishellLowPower,
+  applyPerformanceMode: uishellApplyPerformanceMode,
   numericTarget: uishellNumericTarget,
   toast: uishellPaintToast,
   countUp: uishellCountUp,

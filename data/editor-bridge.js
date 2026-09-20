@@ -77,6 +77,47 @@
     ];
     try { editor.addComponents(blocks[index] || blocks[0]); } catch (e) {}
   }
+  var runtimePromise = null;
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      var existing = document.querySelector('script[data-pallettai-editor="' + src + '"]');
+      if (existing) {
+        if (existing.dataset.loaded === '1') return resolve();
+        existing.addEventListener('load', resolve, { once: true });
+        existing.addEventListener('error', reject, { once: true });
+        return;
+      }
+      var script = document.createElement('script');
+      script.src = src;
+      script.dataset.pallettaiEditor = src;
+      script.addEventListener('load', function () { script.dataset.loaded = '1'; resolve(); }, { once: true });
+      script.addEventListener('error', function () { reject(new Error('Could not load ' + src)); }, { once: true });
+      document.head.appendChild(script);
+    });
+  }
+  function loadStyle(href) {
+    if (document.querySelector('link[data-pallettai-editor="' + href + '"]')) return;
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    link.dataset.pallettaiEditor = href;
+    document.head.appendChild(link);
+  }
+  function ensureRuntime() {
+    if (runtimePromise) return runtimePromise;
+    loadStyle('node_modules/grapesjs/dist/css/grapes.min.css');
+    loadStyle('node_modules/vvvebjs/css/editor.css');
+    runtimePromise = loadScript('node_modules/grapesjs/dist/grapes.min.js')
+      .then(function () { return loadScript('node_modules/vvvebjs/libs/builder/builder.js'); })
+      .then(function () { return loadScript('node_modules/vvvebjs/libs/builder/undo.js'); })
+      .then(function () { return loadScript('node_modules/vvvebjs/libs/builder/inputs.js'); })
+      .then(function () { return loadScript('node_modules/vvvebjs/libs/builder/components-common.js'); })
+      .then(function () { return loadScript('node_modules/vvvebjs/libs/builder/components-html.js'); })
+      .then(function () { return loadScript('node_modules/vvvebjs/libs/builder/components-elements.js'); })
+      .then(function () { return loadScript('node_modules/vvvebjs/libs/builder/components-bootstrap5.js'); });
+    return runtimePromise;
+  }
+
   function initGrapes(project) {
     var host = document.getElementById('grapesCanvas');
     if (!host || !root.grapesjs) return null;
@@ -110,32 +151,43 @@
     return editor;
   }
   function open(project, onSave) {
-    if (!project) return false;
+    if (!project) return Promise.resolve(false);
     destroy();
     var modal = document.getElementById('editorLabModal');
-    if (!modal) return false;
+    if (!modal) return Promise.resolve(false);
     modal.hidden = false;
     var name = safeText(project.site && project.site.name, 'Untitled site');
     var title = document.getElementById('editorLabTitle');
+    var status = document.getElementById('editorSaveStatus');
     if (title) title.textContent = 'Advanced canvas · ' + name;
+    if (status) status.textContent = 'Loading the visual canvas…';
     renderCatalog();
-    var editor = initGrapes(project);
-    active = { editor: editor, project: project, onSave: onSave };
-    var catalogEl = document.getElementById('editorCatalog');
-    if (catalogEl) catalogEl.onclick = function (event) {
-      var button = event.target.closest('[data-editor-block]');
-      if (button) insertBlock(editor, Number(button.dataset.editorBlock));
-    };
-    var save = document.getElementById('editorLabSave');
-    if (save) save.onclick = function () {
-      var state = snapshot(editor, 'grapesjs');
-      if (!state) return;
-      project.editorCanvas = state;
-      if (typeof onSave === 'function') onSave(project, state);
-      var status = document.getElementById('editorSaveStatus');
-      if (status) status.textContent = 'Canvas snapshot saved to this project';
-    };
-    return true;
+    return ensureRuntime().then(function () {
+      var editor = initGrapes(project);
+      if (!editor) throw new Error('The visual canvas could not initialise');
+      active = { editor: editor, project: project, onSave: onSave };
+      var catalogEl = document.getElementById('editorCatalog');
+      if (catalogEl) catalogEl.onclick = function (event) {
+        var button = event.target.closest('[data-editor-block]');
+        if (button) insertBlock(editor, Number(button.dataset.editorBlock));
+      };
+      var save = document.getElementById('editorLabSave');
+      if (save) save.onclick = function () {
+        var state = snapshot(editor, 'grapesjs');
+        if (!state) return;
+        project.editorCanvas = state;
+        if (typeof onSave === 'function') onSave(project, state);
+        if (status) status.textContent = 'Canvas snapshot saved to this project';
+      };
+      if (status) status.textContent = 'Canvas ready';
+      return true;
+    }).catch(function (error) {
+      if (status) status.textContent = 'Canvas unavailable';
+      if (modal) modal.hidden = true;
+      destroy();
+      try { if (root.toast) root.toast(error && error.message ? error.message : 'The visual canvas could not load', false); } catch (e) {}
+      return false;
+    });
   }
   function close() {
     var modal = document.getElementById('editorLabModal');

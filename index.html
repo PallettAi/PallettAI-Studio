@@ -84,8 +84,6 @@
 <link rel="stylesheet" href="data/editor-bridge.css">
 <!-- Optional local visual editing layer. These are self-hosted pinned packages;
      the existing AI generator and Builder remain the export authority. -->
-<link rel="stylesheet" href="node_modules/grapesjs/dist/css/grapes.min.css">
-<link rel="stylesheet" href="node_modules/vvvebjs/css/editor.css">
 </head>
 <body>
 
@@ -369,6 +367,7 @@
 <script src="data/ai-critique.js"></script>
 <script src="data/copy.js"></script>
 <script src="data/copilot.js"></script>
+<script src="data/studio-intelligence.js"></script>
 <script src="data/vision.js"></script>
 <script src="data/vault.js"></script>
 <script src="data/palette-lab.js"></script>
@@ -425,17 +424,9 @@
 <script src="data/review-links.js"></script>
 <script src="data/health-report.js"></script>
 <script src="data/tools.js"></script>
-<!-- Local-only editor runtimes. VvvebJS is loaded as a component vocabulary;
-     the bridge keeps its namespace separate from GrapesJS and does not let
-     either runtime write directly to the project/export model. -->
-<script src="node_modules/grapesjs/dist/grapes.min.js"></script>
-<script src="node_modules/vvvebjs/libs/builder/builder.js"></script>
-<script src="node_modules/vvvebjs/libs/builder/undo.js"></script>
-<script src="node_modules/vvvebjs/libs/builder/inputs.js"></script>
-<script src="node_modules/vvvebjs/libs/builder/components-common.js"></script>
-<script src="node_modules/vvvebjs/libs/builder/components-html.js"></script>
-<script src="node_modules/vvvebjs/libs/builder/components-elements.js"></script>
-<script src="node_modules/vvvebjs/libs/builder/components-bootstrap5.js"></script>
+<!-- The optional visual-editor runtimes are loaded by data/editor-bridge.js only
+     when Advanced Canvas opens. Keeping them out of the boot path prevents their
+     CSS/global namespaces from affecting the normal Studio shell. -->
 <script src="data/editor-bridge.js"></script>
 <script src="vendor/qrcode.js"></script>
 <!-- UI shell: the behaviour behind the look (toast card, metric count-up, view
