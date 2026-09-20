@@ -128,19 +128,18 @@ function mutateCandidate(project, seed, grammar) {
   const pages = Array.isArray(site.pages) && site.pages.length ? site.pages : [{ sections: site.sections || [] }];
   pages.forEach((page, pageIndex) => {
     if (!Array.isArray(page.sections)) return;
-    // Preserve the first two narrative beats chosen by the composition family
-    // (for example menu/gallery before features for food). Originality should
-    // change the rhythm, never erase the business's signature proof block.
-    const anchors = page.sections.filter((sec) => sec && !['hero', 'cta', 'contact'].includes(sec.type)).slice(0, 2);
+    // Preserve the page's anchors and tail while remixing only the middle.
+    // Hero must remain first and CTA/contact must remain last: an originality
+    // pass may change rhythm, never break the conversion path or the business's
+    // signature proof block.
+    const hero = page.sections.find((sec) => sec && sec.type === 'hero');
+    const tail = page.sections.filter((sec) => sec && (sec.type === 'cta' || sec.type === 'contact'));
+    const body = page.sections.filter((sec) => sec && sec !== hero && sec.type !== 'cta' && sec.type !== 'contact');
+    const anchors = body.slice(0, 2);
     const anchorIds = new Set(anchors);
-    const movable = page.sections.filter((sec) => sec && !['hero', 'cta', 'contact'].includes(sec.type) && !anchorIds.has(sec));
+    const movable = body.filter((sec) => !anchorIds.has(sec));
     const reordered = movable.slice().sort((a, b) => hash([seed, grammar, pageIndex, a.type].join(':')) - hash([seed, grammar, pageIndex, b.type].join(':')));
-    let cursor = 0;
-    page.sections = page.sections.map((sec) => {
-      if (anchorIds.has(sec)) return sec;
-      if (sec && !['hero', 'cta', 'contact'].includes(sec.type)) return reordered[cursor++];
-      return sec;
-    });
+    page.sections = (hero ? [hero] : []).concat(anchors, reordered, tail);
   });
   // Keep the legacy alias in sync: the renderer and older callers read
   // site.sections even when the project also has a pages array.

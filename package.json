@@ -25,7 +25,12 @@
     "url": "https://github.com/PallettAi/pallettai-website.git"
   },
   "dependencies": {
-    "electron-updater": "^6.8.9"
+    "@huggingface/transformers": "4.3.0",
+    "@orama/orama": "3.1.18",
+    "compromise": "14.17.0",
+    "electron-updater": "^6.8.9",
+    "grapesjs": "0.23.6",
+    "vvvebjs": "2.0.9"
   },
   "devDependencies": {
     "electron": "^44.2.0",

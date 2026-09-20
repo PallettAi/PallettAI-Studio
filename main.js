@@ -99,6 +99,33 @@ function main() {
     }
   }
 
+  // ---------------------------------------------------------------- helpers: atomic writes + safeStorage warnings
+  let warnedNoEncryption = false;
+  function encryptionAvailable() {
+    try { return safeStorage.isEncryptionAvailable(); } catch (_) { return false; }
+  }
+  function warnIfPlaintextStore(where) {
+    if (!warnedNoEncryption && !encryptionAvailable()) {
+      warnedNoEncryption = true;
+      console.warn(`[security] safeStorage unavailable — ${where} will be stored in plaintext on disk (mode 0600). OS keychain not accessible; secrets remain gated by file permissions (0600) but not OS-encrypted. Set PALLETTAI_FAIL_CLOSED=1 to refuse plaintext writes.`);
+    }
+  }
+  function failClosedIfNoEncryption(where) {
+    if (!encryptionAvailable() && process.env.PALLETTAI_FAIL_CLOSED === '1') {
+      throw new Error(`${where}: safeStorage unavailable and PALLETTAI_FAIL_CLOSED=1 — refusing plaintext`);
+    }
+  }
+  function writeFileAtomic(filePath, data, mode = 0o600) {
+    const dir = path.dirname(filePath);
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+    const tmp = filePath + '.tmp.' + process.pid + '.' + Date.now();
+    const buf = Buffer.isBuffer(data) ? data : Buffer.from(String(data), 'utf8');
+    fs.writeFileSync(tmp, buf, { mode });
+    try { fs.chmodSync(tmp, mode); } catch (_) {}
+    fs.renameSync(tmp, filePath);
+    try { fs.chmodSync(filePath, mode); } catch (_) {}
+  }
+
   // ---------------------------------------------------------------- window state
   const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
 
@@ -112,9 +139,6 @@ function main() {
 
   function saveState() {
     if (!win || win.isDestroyed()) return;
-    // Start from what is already on disk. This file also carries 'theme' (see
-    // registerThemeIpc), and rebuilding the object from scratch here would drop
-    // it the first time the user moved the window.
     const s = loadState();
     s.isMaximized = win.isMaximized();
     if (!win.isMaximized() && !win.isFullScreen()) {
@@ -123,7 +147,7 @@ function main() {
       const b = loadState().bounds;
       if (b) s.bounds = b;
     }
-    try { fs.writeFileSync(stateFile(), JSON.stringify(s)); } catch (_) {}
+    try { writeFileAtomic(stateFile(), JSON.stringify(s), 0o600); } catch (_) {}
   }
 
   function scheduleSaveState() {
@@ -299,7 +323,7 @@ function main() {
     return frame.parent == null || frame === target.webContents.mainFrame;
   };
 
-  const SECRET_KEYS = new Set(['publish.netlifyToken', 'publish.neocitiesKey', 'publish.vercelToken', 'publish.cloudflareToken', 'publish.githubToken']);
+  const SECRET_KEYS = new Set(['publish.netlifyToken', 'publish.neocitiesKey', 'publish.vercelToken', 'publish.cloudflareToken', 'publish.githubToken', 'online.pixabayKey', 'online.companiesHouseKey']);
 
   function secretsStorePath() {
     return path.join(app.getPath('userData'), 'publish-secrets.bin');
@@ -308,9 +332,11 @@ function main() {
   function readAllSecrets() {
     try {
       const buf = fs.readFileSync(secretsStorePath());
-      if (safeStorage.isEncryptionAvailable()) {
+      if (encryptionAvailable()) {
         return JSON.parse(safeStorage.decryptString(buf));
       }
+      // Plaintext fallback — warn once so a missing keychain does not silently downgrade security
+      warnIfPlaintextStore('publish-secrets.bin');
       return JSON.parse(buf.toString('utf8'));
     } catch (_) {
       return {};
@@ -318,11 +344,14 @@ function main() {
   }
 
   function writeAllSecrets(obj) {
+    failClosedIfNoEncryption('publish-secrets.bin');
     const json = JSON.stringify(obj || {});
-    const payload = safeStorage.isEncryptionAvailable()
+    const useEncryption = encryptionAvailable();
+    if (!useEncryption) warnIfPlaintextStore('publish-secrets.bin');
+    const payload = useEncryption
       ? safeStorage.encryptString(json)
       : Buffer.from(json, 'utf8');
-    fs.writeFileSync(secretsStorePath(), payload, { mode: 0o600 });
+    writeFileAtomic(secretsStorePath(), payload, 0o600);
     return true;
   }
 
@@ -338,9 +367,10 @@ function main() {
   function readSes() {
     try {
       const buf = fs.readFileSync(sesStorePath());
-      if (safeStorage.isEncryptionAvailable()) {
+      if (encryptionAvailable()) {
         return safeStorage.decryptString(buf);
       }
+      warnIfPlaintextStore('supabase-session.bin');
       return buf.toString('utf8');
     } catch (_) {
       return null;
@@ -348,10 +378,13 @@ function main() {
   }
 
   function writeSes(payload) {
-    const buf = safeStorage.isEncryptionAvailable()
+    failClosedIfNoEncryption('supabase-session.bin');
+    const useEncryption = encryptionAvailable();
+    if (!useEncryption) warnIfPlaintextStore('supabase-session.bin');
+    const buf = useEncryption
       ? safeStorage.encryptString(payload)
       : Buffer.from(payload, 'utf8');
-    fs.writeFileSync(sesStorePath(), buf, { mode: 0o600 });
+    writeFileAtomic(sesStorePath(), buf, 0o600);
   }
 
   function deleteSes() {
@@ -375,6 +408,28 @@ function main() {
       if (next) all[name] = next;
       else delete all[name];
       return writeAllSecrets(all);
+    });
+    // Synchronous variants so ONLINE getters and saveSettings can stay synchronous
+    // while still reading/writing the encrypted store in Electron. Same allowlist
+    // and senderFrame checks as the async channels above.
+    ipcMain.on('secrets-get-sync', (event, key) => {
+      if (!fromMainFrame(event, win)) { event.returnValue = ''; return; }
+      const name = String(key || '');
+      if (!SECRET_KEYS.has(name)) { event.returnValue = ''; return; }
+      const all = readAllSecrets();
+      event.returnValue = typeof all[name] === 'string' ? all[name] : '';
+    });
+    ipcMain.on('secrets-set-sync', (event, key, value) => {
+      if (!fromMainFrame(event, win)) { event.returnValue = false; return; }
+      const name = String(key || '');
+      if (!SECRET_KEYS.has(name)) { event.returnValue = false; return; }
+      try {
+        const all = readAllSecrets();
+        const next = String(value == null ? '' : value);
+        if (next) all[name] = next;
+        else delete all[name];
+        event.returnValue = writeAllSecrets(all);
+      } catch (_) { event.returnValue = false; }
     });
     // SafeStorage-backed session store for the Supabase module. These are sync
     // channels because modules/supabase.js reads/writes the session
@@ -438,7 +493,7 @@ function main() {
         const s = loadState();
         if (s.theme === next) return;   // already stored: no write, no churn
         s.theme = next;
-        fs.writeFileSync(stateFile(), JSON.stringify(s));
+        writeFileAtomic(stateFile(), JSON.stringify(s), 0o600);
       } catch (_) { /* a splash in the wrong palette is not worth a crash */ }
     });
   }
@@ -629,6 +684,58 @@ function main() {
   // splash is already saying the restart is happening.
   const UPDATE_QUIT_BEAT_MS = 250;
   const UPDATE_EXIT_GRACE_MS = 5000;
+  // How long Squirrel may take to read the archive before we stop waiting on it
+  // and hand the user back to their work.
+  const UPDATE_STAGE_TIMEOUT_MS = 3 * 60 * 1000;
+
+  /*
+    Waiting for the archive, not for a stopwatch.
+
+    On macOS the bytes reach Squirrel through a proxy server that electron-updater
+    creates INSIDE THIS PROCESS (MacUpdater.setFeedURL → an http server on
+    127.0.0.1 that streams the already-downloaded zip). Squirrel then copies the
+    whole thing into its own staging folder under ~/Library/Caches. So the process
+    has to outlive that transfer.
+
+    It did not. This used to quit on a fixed timer — 250 ms of grace, then a hard
+    app.exit(0) five seconds later — and whenever the copy took longer than five
+    seconds the pipe died mid-stream. The evidence is unambiguous on the machine
+    this was found on: Squirrel's staging folder held a 53 MB fragment of the
+    129 MB archive, ShipIt's log had no install line at all, and electron-updater's
+    own update.zip in the cache was complete — 129 MB downloaded, 129 MB of it
+    re-read locally, and the update thrown away silently at the halfway mark. The
+    next launch then downloaded the same 129 MB again, which is what "the updater
+    is not working" looks like from the outside.
+
+    Electron's own autoUpdater is the one authority on when Squirrel has the file,
+    and MacUpdater itself waits on exactly this event. Note that electron-updater's
+    'update-downloaded' is NOT that moment — it fires just before the transfer
+    starts, so it is the wrong signal to quit on. This flag is set from the native
+    listener instead, and may already be true by the time we arm.
+  */
+  let squirrelHasArchive = false;
+
+  function noteNativeStageSignal() {
+    try {
+      const native = require('electron').autoUpdater;
+      native.on('update-downloaded', () => { squirrelHasArchive = true; });
+    } catch (e) { /* no native updater (Linux/dev): nothing to wait for */ }
+  }
+
+  function squirrelStaged() {
+    // Windows installs from the file electron-updater downloaded itself, so there
+    // is no second transfer to wait for.
+    if (process.platform !== 'darwin' || squirrelHasArchive) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (ok) => { if (settled) return; settled = true; resolve(ok); };
+      let native = null;
+      try { native = require('electron').autoUpdater; } catch (e) { return finish(true); }
+      native.once('update-downloaded', () => finish(true));
+      native.once('error', () => finish(false));
+      setTimeout(() => finish(false), UPDATE_STAGE_TIMEOUT_MS);
+    });
+  }
 
   function quitForUpdate() {
     setTimeout(() => {
@@ -641,14 +748,27 @@ function main() {
     }, UPDATE_QUIT_BEAT_MS);
   }
 
-  // Arm the installer, then leave. Both callers go through here, because a
-  // quitAndInstall without the exit behind it is the deadlock above.
-  function armUpdateAndQuit() {
+  // Arm the installer, then leave — once Squirrel actually has the archive.
+  //
+  // Resolves true when the app is leaving (so the caller must not build the
+  // workspace), false when the hand-off did not complete and the caller should
+  // carry on as normal. Both callers go through here, because a quitAndInstall
+  // without the exit behind it is the deadlock described above, and an exit that
+  // arrives before the transfer is done is the truncated update described in
+  // squirrelStaged().
+  async function armUpdateAndQuit() {
     if (!updater) return false;
     try { updater.quitAndInstall(false, true); } catch (e) {
       // An installer that refuses to arm must not strand the user either: the
       // exit still happens, and the next launch is simply the same version.
       console.error('update install:', e && e.message);
+    }
+    if (!(await squirrelStaged())) {
+      // Leaving now would cut the transfer in half and lose the update without
+      // saying so. Staying open costs the user nothing: the download is already
+      // on disk, autoInstallOnAppQuit finishes it, and the next quit installs it.
+      console.error('update hand-off: Squirrel had not finished reading the archive; staying open');
+      return false;
     }
     quitForUpdate();
     return true;
@@ -686,6 +806,10 @@ function main() {
     try {
       const { autoUpdater } = require('electron-updater');
       updater = autoUpdater;
+      // Start listening for the native "Squirrel has the archive" signal before
+      // anything can arm an install, because the transfer may already have
+      // finished by the time the installer is handed the job.
+      noteNativeStageSignal();
       // Startup owns the download explicitly so the main window cannot appear
       // before the update is installed. Manual checks use this same path.
       updater.autoDownload = false;
@@ -730,7 +854,19 @@ function main() {
           message: next,
           detail: 'Restart now to install it, or it will install when you quit.'
         });
-        if (r === 0) armUpdateAndQuit();
+        if (r !== 0) return;
+        armUpdateAndQuit().then((leaving) => {
+          // Armed but the hand-off did not complete: the update is on disk and
+          // installs when Studio next quits, so say that rather than restarting
+          // into the same version and leaving the user to wonder.
+          if (leaving) return;
+          dialog.showMessageBoxSync(win, {
+            type: 'info',
+            title: 'PallettAI Studio',
+            message: 'The update will install when you next quit Studio.',
+            detail: 'Studio stayed open so the download could finish being handed to the installer.'
+          });
+        });
       });
       updater.on('error', (err) => {
         // A missing release, offline connection, or a failed download must not
@@ -775,12 +911,17 @@ function main() {
       // autoInstallOnAppQuit still finishes the job when the user next quits,
       // and the partial file is discarded if it never completes.
       if (startupSkipped) return false;
-      setStartupStatus('Installing update…', 'Studio will restart automatically.', 100);
+      // "Installing" is a lie while the archive is still being handed to Squirrel
+      // — on a slow disk that copy is the longest part of the whole update, and a
+      // splash that names the step it is on is the difference between waiting and
+      // force-quitting the app.
+      setStartupStatus('Preparing the installer…', 'Handing the update to the installer.', 100);
       startupUpdateRunning = false;
       // The gate owns this when the installer arms: it must leave the process
       // alive long enough to hand over, and the helper owns the exit.
-      if (armUpdateAndQuit()) return true;
-      await wait(250);
+      if (await armUpdateAndQuit()) return true;
+      setStartupStatus('Starting current version', 'The update will finish installing when you next quit Studio.');
+      await wait(600);
       return false;
     } catch (error) {
       console.error('startup update:', error && error.message);

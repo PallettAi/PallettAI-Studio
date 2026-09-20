@@ -47,22 +47,35 @@ function retryAfterMsFrom(res, now) {
 }
 
 const ONLINE = {
-  // Pixabay key is user-supplied and lives in the app settings blob (saved from
-  // Settings ▸ Online data). Never ship a hardcoded API key in source — anyone
-  // who reads the repo could burn the quota. Read it live so every caller
-  // (Database grid, AI photo fallback) sees the current value.
+  // Pixabay key is user-supplied. In Electron it lives encrypted via
+  // safeStorage (main.js secrets store); in the browser/web build it is kept
+  // in the settings blob. The getter prefers the encrypted store when present
+  // so the renderer never needs to keep the key in plaintext on disk. Never
+  // ship a hardcoded API key in source.
   get pixabayKey() {
+    try {
+      const bridge = (typeof window !== 'undefined' && window.pallettai) ? window.pallettai : null;
+      if (bridge && typeof bridge.secretsGetSync === 'function') {
+        const v = String(bridge.secretsGetSync('online.pixabayKey') || '').trim();
+        if (v) return v;
+      }
+    } catch (e) { /* fall through to localStorage */ }
     try {
       const raw = localStorage.getItem('pallettai.settings.v1');
       const s = raw ? JSON.parse(raw) : {};
       return (s && typeof s.pixabayKey === 'string' ? s.pixabayKey : '').trim();
     } catch (e) { return ''; }
   },
-  // Companies House (UK) — same pattern as the Pixabay key: the user's own free
-  // registration key, read live from the settings blob, never shipped in source.
-  // The API is free but registration-required; without a key the Database card
-  // offers a link to register instead of a search box.
+  // Companies House (UK) — same pattern: user's own registration key, read
+  // live from the encrypted store in Electron. Never shipped in source.
   get companiesHouseKey() {
+    try {
+      const bridge = (typeof window !== 'undefined' && window.pallettai) ? window.pallettai : null;
+      if (bridge && typeof bridge.secretsGetSync === 'function') {
+        const v = String(bridge.secretsGetSync('online.companiesHouseKey') || '').trim();
+        if (v) return v;
+      }
+    } catch (e) { /* fall through */ }
     try {
       const raw = localStorage.getItem('pallettai.settings.v1');
       const s = raw ? JSON.parse(raw) : {};

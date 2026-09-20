@@ -95,7 +95,16 @@ assert(dnaOf(a1) !== dnaOf(aFresh), 'a fresh generation salt changes the design 
 assert(copyOf(a1) === copyOf(a2), 'same brief twice → same copy');
 assert(dnaOf(a1) !== dnaOf(b1), 'a different name → a different skeleton');
 assert(/book a visit/i.test(a1.site.navCta || ''), 'nav CTA matches the brief CTA — got "' + (a1.site.navCta || '') + '"');
-assert(a1.site.navCta === a1.site.ctaText, 'nav CTA and primary CTA are the same string');
+assert(a1.site.navCta === a1.site.ctaText, 'an instructed CTA is the same string in the bar as in the hero');
+// With no instruction the two are deliberately different: the hero may say "Let
+// us take a look" and the bar must still fit on one line inside a 68px bar. The
+// phrase was wrapping inside the nav button and pushing the bar out of shape.
+const unInstructed = AI.generateSite(PROMPT, { onePager: true });
+const VoiceLib = require(path.join(__dirname, '..', 'data', 'ai-voice.js'));
+assert(unInstructed.site.navCta && unInstructed.site.navCta.length <= VoiceLib.NAV_CTA_MAX,
+  'an invented nav CTA is short enough for one line — got "' + unInstructed.site.navCta + '"');
+assert(unInstructed.site.ctaText && unInstructed.site.ctaText !== unInstructed.site.navCta,
+  'the hero keeps its full phrase while the bar keeps its short one');
 assert(!(a1.site.photoGrade && a1.site.photoGrade.on), 'photo grade is off by default');
 
 const checks = DB.paletteChecks(DB.getPalette(a1.site.palette));

@@ -126,6 +126,9 @@ const SMOKES = [
   ['scripts/translate-budget-smoke.js', 'Translation request-budget smoke'],
   ['scripts/outbound-pacing-smoke.js', 'Outbound retry pacing smoke'],
   ['scripts/ai-fingerprint-smoke.js', 'AI fingerprint smoke'],
+  // The meaning engine scores both the photo ranker and the command palette, so
+  // it is gated ahead of them.
+  ['scripts/ai-embed-smoke.js', 'Meaning engine smoke'],
   ['scripts/ai-photos-smoke.js', 'AI photo ranker smoke'],
   ['scripts/ai-compose-smoke.js', 'AI compose smoke'],
   // A locked brand is the difference between "the AI made a nice site" and "the
@@ -135,6 +138,8 @@ const SMOKES = [
   ['scripts/ai-critique-smoke.js', 'AI self-critique smoke'],
   ['scripts/ai-next-upgrades-smoke.js', 'AI provenance, reference-distance & art-direction smoke'],
   ['scripts/ai-director-smoke.js', 'Local AI Director, semantic routing & plan validation smoke'],
+  ['scripts/ai-template-catalog-smoke.js', 'AI template blueprint catalogue smoke'],
+  ['scripts/blueprint-gallery-smoke.js', 'Visual blueprint gallery smoke (filtering, staging, safety)'],
   ['scripts/ai-originality-smoke.js', 'AI originality fingerprint, distance & repair smoke'],
   ['scripts/bg-jobs-smoke.js', 'Background jobs smoke (queue, retry, cancel & project isolation)'],
   ['scripts/crashreport-smoke.js', 'Crash reporting smoke (consent, scrubbing & bounded retry)'],
@@ -221,7 +226,16 @@ const SMOKES = [
   // The other half of that promise: what the generator invents, rather than
   // what the starters ship. Same complaint, different producer.
   ['scripts/ai-diversity-smoke.js', 'AI diversity smoke (generated sites must not collapse onto one look)'],
+  ['scripts/ai-variety-smoke.js', 'AI variety smoke (measured on the compiled page, not the data)'],
+  // The third layer of the same complaint, and the one that finally explained it.
+  // Structure can vary while every visible decision — the button, the card, the
+  // label, the grid, the nav, the hover, the air — stays identical, because
+  // those came from one stylesheet shared by every site. This suite pins the
+  // design-system catalogue and checks each decision against the compiled page.
+  ['scripts/ai-system-smoke.js', 'AI design system smoke (the visual language, on the compiled page)'],
   ['scripts/dashboard-refresh-smoke.js', 'Dashboard refresh smoke (delete/create/duplicate keep the list current)'],
+  ['scripts/tools-smoke.js', 'Toolkit smoke (local tools, handoff, brand and responsive wiring)'],
+  ['scripts/editor-bridge-smoke.js', 'Unified visual editor bridge smoke'],
   // Both of these features live inside the exported file, so their suite runs the
   // SHIPPED scripts against a stub DOM and compares the emitted matcher with the
   // studio's verdict by verdict. It also pins the two things a knowledge pack

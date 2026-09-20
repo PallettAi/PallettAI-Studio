@@ -68,6 +68,7 @@ function bodyOf(name) {
 
 const quitSrc = bodyOf('quitForUpdate');
 const armSrc = bodyOf('armUpdateAndQuit');
+const stageSrc = bodyOf('squirrelStaged');
 const beatMs = Number((/const UPDATE_QUIT_BEAT_MS = (\d+);/.exec(main) || [])[1]);
 const graceMs = Number((/const UPDATE_EXIT_GRACE_MS = (\d+);/.exec(main) || [])[1]);
 
@@ -89,7 +90,38 @@ console.log('\n== Every installer call has an exit behind it ==');
   ok('the startup gate no longer calls the installer directly',
     !/startupUpdateRunning = false;\s*\n\s*updater\.quitAndInstall/.test(main));
   ok('and it reports a restart only when the installer armed',
-    /if \(armUpdateAndQuit\(\)\) return true;/.test(main));
+    /if \(await armUpdateAndQuit\(\)\) return true;/.test(main));
+}
+
+console.log('\n== The hand-off waits for the archive, not for a stopwatch ==');
+// The macOS proxy server that feeds Squirrel lives in this process, so a quit
+// that arrives before Squirrel has read the file truncates it — a 129 MB update
+// lost at 53 MB, with no install line in ShipIt's log and no message to anyone.
+{
+  ok('armUpdateAndQuit waits on the stage signal before quitting',
+    !!armSrc && /await squirrelStaged\(\)/.test(armSrc));
+  ok('and the wait is what decides whether to quit',
+    !!armSrc && /if \(!\(await squirrelStaged\(\)\)\)/.test(armSrc)
+    && armSrc.indexOf('await squirrelStaged()') < armSrc.indexOf('quitForUpdate()'));
+  ok('squirrelStaged exists and listens to the NATIVE updater',
+    !!stageSrc && /require\('electron'\)\.autoUpdater/.test(stageSrc)
+    && /native\.once\('update-downloaded'/.test(stageSrc));
+  // electron-updater's own 'update-downloaded' fires BEFORE the transfer starts.
+  // Quitting on it would reinstate the truncation, so the wait must not use it.
+  ok('it does not confuse electron-updater\u2019s event with Squirrel\u2019s',
+    !!stageSrc && !/updater\.on\('update-downloaded'/.test(stageSrc));
+  ok('a transfer that never finishes cannot hold the user hostage',
+    !!stageSrc && /setTimeout\(\(\) => finish\(false\), UPDATE_STAGE_TIMEOUT_MS\)/.test(stageSrc));
+  // Registered from initUpdater, which runs before the gate exists — so the
+  // signal cannot be missed by an install armed in the same launch.
+  ok('the native listener is registered when the updater is wired up',
+    !!bodyOf('initUpdater') && /noteNativeStageSignal\(\);/.test(bodyOf('initUpdater')));
+  ok('and the gate arms the install after that wiring',
+    !!bodyOf('initUpdater') && main.indexOf('function initUpdater()') < main.lastIndexOf('await armUpdateAndQuit()'));
+  ok('and it is registered on the native updater, not electron-updater',
+    !!bodyOf('noteNativeStageSignal') && /require\('electron'\)\.autoUpdater/.test(bodyOf('noteNativeStageSignal')));
+  ok('Windows does not wait for a second transfer that never happens',
+    !!stageSrc && /process\.platform !== 'darwin'/.test(stageSrc));
 }
 
 console.log('\n== The helper, actually run ==');
@@ -153,30 +185,59 @@ console.log('\n== A quit that throws still leaves ==');
   ok('so the process can still leave', events.indexOf('exit:0') >= 0, events.join(','));
 }
 
-console.log('\n== The arming helper ==');
+console.log('\n== The arming helper, actually run ==');
+// The helper is async now — it waits for Squirrel — so these cases are awaited,
+// and the summary at the foot of the file waits on them too.
+let pendingArms = Promise.resolve();
+// bodyOf() returns the declaration as written, minus its `async` keyword — which
+// the await inside it needs to parse at all. Put it back.
+const armHelper = (updater, quitForUpdate, staged) => new Function(
+  'updater', 'quitForUpdate', 'squirrelStaged', 'console',
+  'async ' + armSrc + '\nreturn armUpdateAndQuit;'
+)(updater, quitForUpdate, staged, { log: () => {}, error: () => {} });
+
 {
   const calls = [];
   const updater = { quitAndInstall: (a, b) => calls.push('install:' + a + ':' + b) };
-  const timers = [];
-  const make = new Function('updater', 'quitForUpdate', armSrc + '\nreturn armUpdateAndQuit;');
-  const arm = make(updater, () => calls.push('quitForUpdate'));
-  ok('arming installs the update and then leaves', arm() === true && calls.join(',') === 'install:false:true,quitForUpdate', calls.join(','));
-  ok('and reports that the app is leaving, so no window is created',
-    arm() === true && calls[calls.length - 1] === 'quitForUpdate');
+  let release = null;
+  const arm = armHelper(updater, () => calls.push('quitForUpdate'), () => new Promise((r) => { release = r; }));
+  pendingArms = (async () => {
+    const leaving = arm();
+    ok('arming installs the update at once', calls.join(',') === 'install:false:true', calls.join(','));
+    ok('and does NOT quit while the archive is still being handed over', calls.length === 1, calls.join(','));
+    await Promise.resolve();
+    ok('the wait does not quietly resolve into a quit', calls.length === 1, calls.join(','));
+    release(true);
+    ok('once Squirrel has the archive it leaves', (await leaving) === true && calls[calls.length - 1] === 'quitForUpdate', calls.join(','));
+    ok('and reports that the app is leaving, so no window is created', (await leaving) === true);
+  })();
+}
+
+{
+  const calls = [];
+  const updater = { quitAndInstall: () => calls.push('install') };
+  const arm = armHelper(updater, () => calls.push('quitForUpdate'), () => Promise.resolve(false));
+  pendingArms = pendingArms.then(async () => {
+    const leaving = await arm();
+    ok('an unfinished hand-off does not quit the app', calls.indexOf('quitForUpdate') === -1, calls.join(','));
+    ok('and reports that nothing is leaving, so the workspace still opens', leaving === false);
+  });
 }
 
 {
   const calls = [];
   const updater = { quitAndInstall: () => { throw new Error('no installer'); } };
-  const make = new Function('updater', 'quitForUpdate', 'console', armSrc + '\nreturn armUpdateAndQuit;');
-  const arm = make(updater, () => calls.push('quitForUpdate'), { error: () => {} });
-  ok('an installer that refuses to arm does not strand the user', arm() === true && calls.length === 1, calls.join(','));
+  const arm = armHelper(updater, () => calls.push('quitForUpdate'), () => Promise.resolve(true));
+  pendingArms = pendingArms.then(async () => {
+    ok('an installer that refuses to arm does not strand the user', (await arm()) === true && calls.length === 1, calls.join(','));
+  });
 }
 
 {
-  const make = new Function('updater', 'quitForUpdate', 'console', armSrc + '\nreturn armUpdateAndQuit;');
-  const arm = make(null, () => { throw new Error('should not be called'); }, { error: () => {} });
-  ok('with no updater at all nothing happens', arm() === false);
+  const arm = armHelper(null, () => { throw new Error('should not be called'); }, () => Promise.resolve(true));
+  pendingArms = pendingArms.then(async () => {
+    ok('with no updater at all nothing happens', (await arm()) === false);
+  });
 }
 
 // ---- 4. the escape hatch --------------------------------------------------
@@ -238,5 +299,8 @@ console.log('\n== The escape hatch ==');
     !!skipSrc && /if \(!startupUpdateRunning \|\| startupSkipped\) return false;/.test(skipSrc));
 }
 
-console.log('\n' + (failed === 0 ? 'UPDATER EXIT SMOKE PASSED' : 'UPDATER EXIT SMOKE FAILED: ' + failed));
-process.exit(failed === 0 ? 0 : 1);
+// The arming cases above are async, so the verdict waits for them.
+pendingArms.then(() => {
+  console.log('\n' + (failed === 0 ? 'UPDATER EXIT SMOKE PASSED' : 'UPDATER EXIT SMOKE FAILED: ' + failed));
+  process.exit(failed === 0 ? 0 : 1);
+});

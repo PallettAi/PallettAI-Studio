@@ -188,7 +188,11 @@ console.log('\n6. The app uses all of it');
   ok('the save path goes through the tier check', /function openStarterSave\(p\)[\s\S]{0,400}?if \(!shelf\.limit\)/.test(app));
   ok('the cap is enforced where the preset cap was not', /function openStarterSave\(p\)[\s\S]{0,600}?if \(shelf\.atLimit\) return toast/.test(app));
   ok('a project card offers it', /data-start="\$\{p\.id\}"/.test(app));
-  ok('the shelf is rendered where a project begins', /renderStarters\(\);\n  \}/.test(app) && /renderStarters\(\)/.test(app));
+  // Keep this assertion about the user-facing contract, not the exact number
+  // of render calls or the whitespace after them. The Templates view now also
+  // renders the blueprint gallery, so a later render call legitimately sits
+  // between the shelf and the function's closing brace.
+  ok('the shelf is rendered where a project begins', /function renderTemplates\(\)[\s\S]{0,2400}?renderStarters\(\)/.test(app));
   ok('starting from one checks capacity first', /function newFromStarter\(id\)[\s\S]{0,300}?ensureProjectCapacity\(\)/.test(app));
   ok('a starter is listed in the library backup', /\['starters', 'Starters', LS\.starters\]/.test(app));
   ok('and mergeable across two machines', !!Merge.KINDS['pallettai.starters.v1'] && Merge.KINDS['pallettai.starters.v1'].kind === 'list');

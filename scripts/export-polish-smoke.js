@@ -388,6 +388,79 @@ console.log('\n5. The dead Contact link (regression)');
   ok('a contact section on a multi-page site is still linked', /#sec-contact-2/.test(home));
 }
 
+// ---- 5. the navigation holds its shape ------------------------------------
+//
+// A real defect found by looking at a rendered export rather than at the code:
+// the voice engine writes the site a proper call to action ("Let us take a look"
+// rather than "Get started"), and that phrase WRAPPED inside the nav button. A
+// wrapped button is taller than the 68px bar it sits in, so on a phone the nav
+// grew a tall block that sat on top of the brand. Nothing failed — the markup
+// was valid, the words were better, and the page was visibly broken.
+//
+// Three things now have to hold together, and each can break the others, so they
+// are pinned together:
+//   · a button label never wraps;
+//   · the bar never has to fit a phrase, because the nav's own label is short;
+//   · the action survives on a phone by moving into the menu it opens.
+console.log('\n5. The navigation holds its shape');
+{
+  const Voice = require(path.join(ROOT, 'data', 'ai-voice.js'));
+  const nav = Builder.buildSiteHTML(mkProject({ navCta: 'Let us take a look', navSticky: true }), { proExport: true });
+
+  ok('a button label cannot wrap mid-phrase', /\.btn\{[^}]*white-space:nowrap/.test(nav));
+  // The only rule allowed to let a button wrap is the full-width phone rule,
+  // where there is no bar to overflow. Everything else must stay on one line, so
+  // the assertion is about WHERE wrapping is permitted rather than whether the
+  // words appear anywhere in the stylesheet.
+  const phoneBlock = (() => {
+    const at = nav.indexOf('@media(max-width:520px){');
+    if (at === -1) return '';
+    let depth = 0;
+    for (let i = nav.indexOf('{', at); i < nav.length; i++) {
+      if (nav[i] === '{') depth++;
+      else if (nav[i] === '}') { depth--; if (depth === 0) return nav.slice(at, i + 1); }
+    }
+    return '';
+  })();
+  const outside = phoneBlock ? nav.split(phoneBlock).join('') : nav;
+  ok('only the full-width phone rule may let a button wrap',
+    /\.btn\{[^}]*white-space:normal/.test(phoneBlock) && !/\.btn\{[^}]*white-space:normal/.test(outside));
+
+  // The bar's own button still exists for desktop...
+  ok('the bar keeps its call to action', /class="btn solid small nav-cta"/.test(nav));
+  // ...and the action is reachable from the mobile menu, which is a real link
+  // with the same destination rather than a decorative duplicate.
+  const barHref = (nav.match(/class="btn solid small nav-cta" href="([^"]*)"/) || [])[1] || '';
+  const menuHref = (nav.match(/class="btn solid small nav-cta-mobile" href="([^"]*)"/) || [])[1] || '';
+  ok('the mobile menu carries the same action', !!menuHref && menuHref === barHref, barHref + ' vs ' + menuHref);
+  ok('the menu copy lives inside the menu', /<div class="nav-links">[\s\S]*nav-cta-mobile[\s\S]*?<\/div>/.test(nav));
+
+  // The trap that made the first attempt useless: an inline `display:none` on the
+  // menu copy outranks the media query that reveals it, so the phone would never
+  // see it and nothing in a stylesheet-only test would notice.
+  ok('nothing hides the menu copy with an inline style', !/nav-cta-mobile"[^>]*style="[^"]*display:\s*none/.test(nav));
+  ok('the bar copy is hidden on small screens', /@media\(max-width:860px\)\{[\s\S]*?\.nav-cta\{display:none\}/.test(nav));
+  ok('the menu copy is revealed on small screens', /@media\(max-width:860px\)\{[\s\S]*?\.nav-cta-mobile\{display:block/.test(nav));
+  ok('and hidden on desktop', /(^|[},])\s*\.nav-cta-mobile\{display:none\}/.test(nav));
+  // On a phone a full-width button may wrap; there is no bar to overflow.
+  ok('a full-width phone button may wrap instead', /@media\(max-width:520px\)\{[\s\S]*?\.btn\{[^}]*white-space:normal/.test(nav));
+
+  // And the source of the phrase is constrained, so the nowrap rule is a
+  // second line of defence rather than the only one.
+  const tooLong = [];
+  ['food', 'cafe', 'retail', 'tech', 'trade', 'home', 'beauty', 'fitness', 'legal', 'health', 'creative', 'events', 'generic']
+    .forEach((t) => {
+      for (let s = 0; s < 40; s++) {
+        const label = Voice.navCta({ typeId: t, seed: (s * 2654435761) >>> 0 });
+        if (!label || label.length > Voice.NAV_CTA_MAX) tooLong.push(t + ':' + label);
+      }
+    });
+  ok('every nav label is short enough for one line', tooLong.length === 0, tooLong.slice(0, 3).join(', '));
+  ok('the nav label is not just the hero phrase again',
+    Voice.navCta({ typeId: 'food', seed: 3 }) !== Voice.cta({ typeId: 'food', seed: 3 }));
+  ok('an unknown business still gets a label', !!Voice.navCta({ typeId: 'zzz', seed: 1 }));
+}
+
 // The share-card branches are async, so the verdict is printed from here.
 shareCards().then(() => {
   console.log('\n' + (failed === 0 ? 'EXPORT POLISH PASSED' : 'EXPORT POLISH FAILED: ' + failed));

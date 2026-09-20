@@ -80,6 +80,12 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="data/tools.css">
+<link rel="stylesheet" href="data/editor-bridge.css">
+<!-- Optional local visual editing layer. These are self-hosted pinned packages;
+     the existing AI generator and Builder remain the export authority. -->
+<link rel="stylesheet" href="node_modules/grapesjs/dist/css/grapes.min.css">
+<link rel="stylesheet" href="node_modules/vvvebjs/css/editor.css">
 </head>
 <body>
 
@@ -104,6 +110,7 @@
       <button class="nav-item" data-view="care" title="Site Care"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 10h3l1.5-3.4L9.6 14l1.6-4h5.2"/></svg></span><span class="nav-label">Site Care</span></button>
       <button class="nav-item" data-view="database"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="10" cy="5.2" rx="6.2" ry="2.4"/><path d="M3.8 5.2v9.6c0 1.3 2.8 2.4 6.2 2.4s6.2-1.1 6.2-2.4V5.2"/><path d="M3.8 10c0 1.3 2.8 2.4 6.2 2.4s6.2-1.1 6.2-2.4"/></svg></span><span class="nav-label">Database</span></button>
       <button class="nav-item" data-view="qr" title="QR Codes"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="3.2" width="5.2" height="5.2" rx="1"/><rect x="11.6" y="3.2" width="5.2" height="5.2" rx="1"/><rect x="3.2" y="11.6" width="5.2" height="5.2" rx="1"/></svg></span><span class="nav-label">QR Codes</span></button>
+      <button class="nav-item" data-view="tools"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><span style="font-size:15px">✦</span></span><span class="nav-label">Toolkit</span></button>
       <button class="nav-item" data-view="settings"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.2"/><path d="M10 3.2v1.6M10 15.2v1.6M3.2 10h1.6M15.2 10h1.6M5.2 5.2l1.1 1.1M13.7 13.7l1.1 1.1M14.8 5.2l-1.1 1.1M6.3 13.7l-1.1 1.1"/></svg></span><span class="nav-label">Settings</span></button>
     </nav>
 
@@ -163,6 +170,25 @@
         <p>Preview a layout, then start it in the Designer. Pro templates unlock with a paid plan.</p>
       </div>
       <div class="tpl-grid" id="tplGrid"></div>
+
+      <!-- Original visual blueprints: a gallery of art direction, not a pile of
+           opaque starter cards. Selecting one only stages a preference for AI
+           Studio; generation still owns credits, facts, safety and export. -->
+      <section class="blueprint-gallery" id="blueprintGallery" aria-labelledby="blueprintGalleryTitle">
+        <div class="blueprint-gallery-head">
+          <div>
+            <span class="blueprint-kicker">AI ART DIRECTION</span>
+            <h3 id="blueprintGalleryTitle">Choose a point of view</h3>
+            <p>Browse original visual systems before you write the brief. Every direction changes composition, typography, pacing and conversion flow — not just the colour.</p>
+          </div>
+          <span class="blueprint-count" id="blueprintCount" aria-live="polite"></span>
+        </div>
+        <div class="blueprint-toolbar">
+          <label class="blueprint-search"><span class="sr-only">Search blueprints</span><input type="search" id="blueprintSearch" placeholder="Search by style or industry…" autocomplete="off"></label>
+          <label class="blueprint-category"><span class="sr-only">Filter blueprints by category</span><select id="blueprintCategory"></select></label>
+        </div>
+        <div class="blueprint-grid" id="blueprintGrid"></div>
+      </section>
       <!-- The studio's own starting points, beside the built-in ones: this is
            where a project begins, so a starter kept anywhere else is a starter
            that gets rebuilt by hand instead. -->
@@ -243,6 +269,11 @@
       <div class="settings-wrap" id="careRoot"></div>
     </section>
 
+    <!-- Toolkit -->
+    <section class="view" id="view-tools">
+      <div class="settings-wrap" id="toolsRoot"></div>
+    </section>
+
     <!-- Settings -->
     <section class="view" id="view-settings">
       <div class="settings-wrap" id="settingsRoot"></div>
@@ -254,6 +285,14 @@
     </section>
 
   </main>
+</div>
+
+<!-- ============ Optional advanced canvas ============ -->
+<div class="editor-lab-modal" id="editorLabModal" hidden>
+  <div class="editor-lab-shell" role="dialog" aria-modal="true" aria-labelledby="editorLabTitle">
+    <header class="editor-lab-head"><div><span class="editor-lab-kicker">PALLETTAI · ADVANCED CANVAS</span><h2 id="editorLabTitle">Advanced canvas</h2></div><div class="editor-lab-actions"><span id="editorSaveStatus" class="editor-save-status">Local canvas · not exported yet</span><button class="btn secondary small" id="editorLabSave">Save canvas snapshot</button><button class="icon-btn" id="editorLabClose" aria-label="Close advanced canvas">✕</button></div></header>
+    <div class="editor-lab-body"><aside class="editor-lab-side"><div class="editor-lab-side-title"><b>VvvebJS blocks</b><small>Open component vocabulary</small></div><div id="editorCatalog" class="editor-catalog"></div><p class="editor-lab-note">Blocks are inserted into the GrapesJS canvas. The project remains safe until you explicitly save a snapshot.</p></aside><main class="editor-lab-main"><div id="grapesCanvas"></div></main></div>
+  </div>
 </div>
 
 <!-- ============ AI Copilot chat ============ -->
@@ -304,6 +343,21 @@
 <script src="data/ai-translate.js"></script>
 <script src="data/ai-niches-extra.js"></script>
 <script src="data/ai-fingerprint.js"></script>
+<!-- Meaning: the offline vector space the photo ranker and the command palette
+     ask which candidate is about what was asked for. No model, no network. -->
+<script src="data/ai-embed.js"></script>
+<!-- Voice: composed headlines and headings for generated sites. Loaded before
+     modules/ai.js, which reads it through voiceLib(). -->
+<script src="data/ai-voice.js"></script>
+<!-- Rhythm: the composition pass that decides a page's order, presence,
+     treatment and length together. Read through rhythmLib(). -->
+<script src="data/ai-rhythm.js"></script>
+<script src="data/ai-shape.js"></script>
+<!-- System: the design language a site is set in — corners, card treatment,
+     label case, type weight, grid composition, nav chrome and hover motion.
+     Read through systemLib() and emitted by the builder as body.sys-<id>. -->
+<script src="data/ai-system.js"></script>
+<script src="data/ai-template-catalog.js"></script>
 <script src="data/ai-photos.js"></script>
 <script src="data/ai-compose.js"></script>
 <script src="data/ai-facts.js"></script>
@@ -370,6 +424,19 @@
 <script src="data/github-publish.js"></script>
 <script src="data/review-links.js"></script>
 <script src="data/health-report.js"></script>
+<script src="data/tools.js"></script>
+<!-- Local-only editor runtimes. VvvebJS is loaded as a component vocabulary;
+     the bridge keeps its namespace separate from GrapesJS and does not let
+     either runtime write directly to the project/export model. -->
+<script src="node_modules/grapesjs/dist/grapes.min.js"></script>
+<script src="node_modules/vvvebjs/libs/builder/builder.js"></script>
+<script src="node_modules/vvvebjs/libs/builder/undo.js"></script>
+<script src="node_modules/vvvebjs/libs/builder/inputs.js"></script>
+<script src="node_modules/vvvebjs/libs/builder/components-common.js"></script>
+<script src="node_modules/vvvebjs/libs/builder/components-html.js"></script>
+<script src="node_modules/vvvebjs/libs/builder/components-elements.js"></script>
+<script src="node_modules/vvvebjs/libs/builder/components-bootstrap5.js"></script>
+<script src="data/editor-bridge.js"></script>
 <script src="vendor/qrcode.js"></script>
 <!-- UI shell: the behaviour behind the look (toast card, metric count-up, view
      cross-fade, top bar lift, shortcut sheet, palette recents). Loads after the

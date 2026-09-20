@@ -220,6 +220,109 @@ Settings is split into **8 tabs** so nothing is buried:
 - **⚙️ Studio** — **autosave snapshots on/off + delay**, **confirm-before-delete on/off**, re-run the guided tour
 - **ℹ️ About** — version, pallettai.org, **reset all settings**
 
+## Launched — the design system: why the sites looked the same (2026-09-19)
+
+Every earlier variety pass moved something real and the sites still read as one
+site with different paint. This pass found out why, by measuring it instead of
+reasoning about it. `scripts/design-system-probe.js` compiles real pages from one
+brief and hashes the decisions a visitor actually reads — not the section order,
+not the palette, the **button, the card, the label, the heading, the grid, the
+nav, the hover, the air**. The verdict across forty generations:
+
+```
+  DECISIONS ONLY (no colour, no type)      3/40 distinct
+  button shape (padding/radius/weight)    1 distinct   CONSTANT
+  card elevation + radius                 1 distinct   CONSTANT
+  label/eyebrow treatment                 1 distinct   CONSTANT
+  section heading treatment               1 distinct   CONSTANT
+  section padding + rhythm                1 distinct   CONSTANT
+  content grid columns                    1 distinct   CONSTANT
+  navigation bar treatment                1 distinct   CONSTANT
+  hover motion                            1 distinct   CONSTANT
+```
+
+Nine decisions, all constant, because all nine came from one stylesheet shared
+by every site the app has ever built (`padding:13px 28px;border-radius:999px` for
+every button, `translateY(-6px)` for every hover), and the variation lived in
+dimensions the eye does not read. **After this pass, the same measurement reads
+37/40 distinct**, with each decision taking eight distinct values — one per
+school — and the same holds on other briefs (24/24 for a solicitor, 23/24 for a
+pizzeria and a tattoo studio).
+
+- **`data/ai-system.js` — eight design languages, authored whole.** Editorial
+  Atelier, Swiss Grid, Quiet Luxury, Warm & Human, Neo-Brutalist, Technical
+  Instrument, Warm & Handmade, Cinematic. Coherence is the point: random knobs
+  produce noise, so each school is one idea rather than a menu, and it pins the
+  corner radius of cards, buttons and media *separately*, how cards carry their
+  weight (soft shadow, hairline rule, flat border, or a hard offset), heading
+  weight/tracking/case, the eyebrow's treatment, how much air a section gets, the
+  composition of the repeating grids, the chrome, what a card does under the
+  pointer, and the one recurring mark that makes the page memorable.
+- **It is a frame, not a picture.** A school never decides content and never
+  overrides a section's own layout. Every rule is scoped to `body.sys-<id>`, and
+  a project with no system renders byte-for-byte as it did before — asserted, not
+  assumed.
+- **Chosen from the brief, not at random.** The niche beats the industry beats
+  the look (a wood-fired pizzeria is not "food"), each table unions rather than
+  filters, and the result is a pool of at least four schools per brief instead of
+  the three an intersection allowed. A brief with nothing to go on draws on the
+  whole catalogue.
+- **The school has a say in the paint.** `ground` (ink / paper / tint) biases the
+  palette chooser, so an ink-ground language is never painted onto a near-white
+  page and a brutalist site stops arriving in whisper pastels. Dark is read from
+  the palette's own `dark` flag rather than guessed from its name.
+- **A style pack still wins.** The school's CSS lands after the base stylesheet
+  and before custom CSS, so an explicitly applied pack overrides the frame while
+  keeping the school's typography.
+- **Restyle, remix and shuffle now move the language too.** They used to change
+  colours and leave the furniture — which is how a client presses shuffle and
+  gets the same site again.
+- **Two real bugs it surfaced.** A geometry clamp written at pixel scale instead
+  of multiplier scale produced a 3840px section padding, which the project
+  validator "repaired" to its 96px default and silently deleted the school's
+  rhythm; and the school's display name and its eyebrow specification were both
+  called `label`, so the second overwrote the first in all eight entries.
+- **A rendered defect, found by looking.** The voice engine gave sites a proper
+  call to action ("Let us take a look") and that phrase **wrapped inside the nav
+  button**, growing the bar taller than itself and, on a phone, covering the
+  brand. Buttons no longer wrap mid-phrase, the bar draws its own short label
+  from the same voice (or the client's own words when the brief names the
+  action), and the phone keeps the action by moving it into the menu.
+- Gated by `scripts/ai-system-smoke.js` — catalogue integrity and reachability,
+  no dead knobs (all eight schools must differ on the *compiled page*), geometry
+  that survives the validator, scoping, backwards compatibility, determinism,
+  ground correctness, and the 3/40 regression itself. `scripts/school-preview.js`
+  writes one real page per school so the result can be judged by eye, and
+  `scripts/design-system-probe.js` prints the numbers above.
+
+## Launched — meaning, offline (2026-09-19)
+
+`data/ai-embed.js` is a small vector space that answers one question for several
+features at once: *which of these is about what was asked for?* It is **not** a
+neural embedding and the file says so. It is a hashed, IDF-weighted lexical space
+with a curated concept layer on top — 30 buckets drawn from the niches the
+generator already knows, so `barber`, `hairdresser` and `salon` share a feature, a
+five-letter prefix feature links `pizza` to `pizzeria`, and scoring blends cosine
+with query coverage so a long, informative title is never punished for being
+descriptive. Offline, deterministic, no key, no download, a few kilobytes.
+
+- **Photo ranking** learns what a photo *is*. `data/ai-photos.js` already judged
+  resolution, aspect and a dozen scene words; it now also scores the candidate's
+  own title against the brief, and says which words earned the pick.
+- **The command palette** searches your work by meaning. Typing "coffee shop with
+  a bakery counter" finds the Hearth template and shows *why*: `Template ·
+  bakery, counters, baked`. Projects, starters and templates are ranked beside
+  the commands.
+- **The seam** — `AiEmbed.useModel({ name, dim, vector })` swaps the whole engine
+  onto a real encoder (CLIP, SigLIP, a sentence transformer in a worker) without a
+  single caller changing. Nothing in the app is ever *blocked* on a model being
+  present, and a backend that fails to load falls back to the exported score
+  exactly.
+- Gated by `scripts/ai-embed-smoke.js` (terms, concepts, ranking, the two
+  regressions that made earlier versions wrong, thresholds, the model seam,
+  determinism, 500 projects under a quarter second, distinct concept slots) and
+  new meaning assertions in `scripts/ai-photos-smoke.js`.
+
 ## Launched — the “Sites that rank & sell” pass (2026-09-04)
 
 New capabilities added against the research-backed roadmap (see below):

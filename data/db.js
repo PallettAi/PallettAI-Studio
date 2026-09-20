@@ -320,7 +320,7 @@ const DB = {
       sections: [
         { type: 'hero', layout: 'split', animation: 'slide-right' },
         { type: 'about', animation: 'slide-left' },
-        { type: 'gallery', layout: 'mosaic', animation: 'fade-up', items: [
+        { type: 'gallery', layout: 'reel', animation: 'fade-up', items: [
           { text: 'Coastal trails', extra: 'Day 1' }, { text: 'Old town sunrise', extra: 'Day 2' },
           { text: 'Harbour evening', extra: 'Day 3' }, { text: 'Mountain ridge', extra: 'Day 4' },
           { text: 'Market colors', extra: 'Day 5' }, { text: 'Beach farewell', extra: 'Day 6' }
@@ -382,7 +382,7 @@ const DB = {
           { title: 'Emma & Tom', text: 'Amelia & James planned our day start to finish — calm, warm, and flawlessly run.', extra: 'Married 2024' },
           { title: 'Grace Liu', text: 'The flowers were the single most photographed thing at our wedding.', extra: 'Bride, 2023' }
         ] },
-        { type: 'faq', layout: 'columns', animation: 'fade-up', items: [
+        { type: 'faq', animation: 'fade-up', items: [
           { title: 'When should I RSVP by?', text: 'Please let us know by 1 June so we can confirm numbers with the venue.' },
           { title: 'Is there parking?', text: 'Yes — the chapel has a private car park, and a shuttle runs from the village at 1pm.' },
           { title: 'Can I bring a plus one?', text: 'Your invitation states the number of seats reserved for you. If in doubt, drop us a line.' }
@@ -423,7 +423,7 @@ const DB = {
           { title: 'Dev Sharma', text: 'Quiet enough to work, warm enough to linger, and the flat white never misses.', extra: 'Remote worker' },
           { title: 'Mia Okonkwo', text: 'We ordered the party box for the office — gone in eleven minutes.', extra: 'Office manager' }
         ] },
-        { type: 'faq', layout: 'columns', animation: 'fade-up', items: [
+        { type: 'faq', layout: 'accordion', animation: 'fade-up', items: [
           { title: 'Do you take bookings?', text: 'Walk-ins welcome all day. Tables for six or more can be reserved for weekends.' },
           { title: 'Is there vegan baking?', text: 'Every day — ask at the counter and we’ll talk you through the cabinet.' },
           { title: 'Can you cater events?', text: 'We do party boxes, celebration cakes and office drops. Order 48 hours ahead.' }
@@ -537,7 +537,7 @@ const DB = {
             ['Lasting power of attorney', '£390 each', '2–3 weeks'],
             ['Uncontested divorce', '£750 + court fee', '4–6 months']
           ] },
-        { type: 'faq', layout: 'columns', animation: 'fade-up', items: [
+        { type: 'faq', layout: 'split', animation: 'fade-up', items: [
           { title: 'What does a first consultation cost?', text: 'The first 30-minute consultation is free for new clients, in person or by video.' },
           { title: 'Do you offer fixed fees?', text: 'Yes — conveyancing, wills and many family matters are quoted up front as fixed fees.' },
           { title: 'Are you regulated?', text: 'We are authorised and regulated by the Solicitors Regulation Authority.' }
@@ -585,7 +585,7 @@ const DB = {
           { icon: '🎪', title: 'Corporate Events', text: 'Launches, team days and conferences — on brief, on budget, on time.' },
           { icon: '💍', title: 'Weddings & Engagements', text: 'Full planning or day-of coordination with a team that loves the details.' }
         ] },
-        { type: 'gallery', layout: 'mosaic', animation: 'fade-up', items: [
+        { type: 'gallery', layout: 'strip', animation: 'fade-up', items: [
           { text: 'Rooftop launch', extra: 'Corporate' }, { text: 'Winter gala', extra: 'Charity' },
           { text: 'Sofia turns 40', extra: 'Private' }, { text: 'Marquee wedding', extra: 'Wedding' },
           { text: 'Festival stage', extra: 'Live event' }, { text: 'Product reveal', extra: 'Brand' }
@@ -684,7 +684,7 @@ const DB = {
       desc: 'A photography studio portfolio: genre index, printed prices, featured review, booking FAQ.',
       sections: [
         { type: 'hero', animation: 'zoom-in' },
-        { type: 'gallery', layout: 'mosaic', animation: 'fade-up', items: [
+        { type: 'gallery', layout: 'collage', animation: 'fade-up', items: [
           { text: 'Weddings', extra: 'Collections' }, { text: 'Portraits', extra: 'Studio' },
           { text: 'Editorial', extra: 'Magazine' }, { text: 'Landscape', extra: 'Fine art' },
           { text: 'Events', extra: 'Documentary' }, { text: 'Personal work', extra: 'Film' }
@@ -704,7 +704,7 @@ const DB = {
           { title: 'Studio Nova', text: 'Campaign shots that made our whole look book. Booking again next season.', extra: 'Brand client' },
           { title: 'Marco Ellis', text: 'The print quality is museum-grade. My wall has never looked better.', extra: 'Print collector' }
         ] },
-        { type: 'faq', layout: 'columns', animation: 'fade-up', items: [
+        { type: 'faq', layout: 'split', animation: 'fade-up', items: [
           { title: 'How far ahead should we book?', text: 'Weddings book out 6–12 months. Portrait sessions usually have space within three weeks.' },
           { title: 'Do you travel?', text: 'Yes — destination weddings and shoots are welcome. Travel is quoted up front.' },
           { title: 'What do you charge?', text: 'Portrait sessions start at £250. Wedding collections start at £1,400. Every quote is fixed.' }
@@ -975,7 +975,13 @@ DB.newSection = (type, preset = {}) => {
     filter: preset.filter !== false,
     search: preset.search !== false,
     sort: preset.sort !== false,
-    animation: preset.animation || 'fade-up'
+    animation: preset.animation || 'fade-up',
+    // Page shell (data/ai-shape.js): the section's measure, ground, heading
+    // position and rhythm. Carried through a rebuild so a generated page keeps
+    // its spacing decisions if a section is ever reconstructed — and left
+    // undefined rather than null when there is none, so a section without a
+    // shell serialises exactly as it did before the shell existed.
+    shell: preset.shell && typeof preset.shell === 'object' ? { ...preset.shell } : undefined
   };
 };
 
@@ -1019,11 +1025,16 @@ DB.layoutsFor = (type) => {
     ],
     gallery: [
       { id: '', name: 'Uniform grid (classic)' },
-      { id: 'mosaic', name: 'Mosaic wall — mixed spans' }
+      { id: 'mosaic', name: 'Mosaic wall — mixed spans' },
+      { id: 'strip', name: 'Filmstrip — tall frames, scroll sideways' },
+      { id: 'collage', name: 'Editorial collage — mixed aspects, captions below' },
+      { id: 'reel', name: 'Reel — one big frame + thumbnail rail' }
     ],
     faq: [
       { id: '', name: 'Single column (classic)' },
-      { id: 'columns', name: 'Two-column accordion' }
+      { id: 'columns', name: 'Two-column accordion' },
+      { id: 'accordion', name: 'Large-type accordion — numbered, no boxes' },
+      { id: 'split', name: 'Sticky heading — questions beside it' }
     ],
     blog: [
       { id: '', name: 'Post grid (classic)' },

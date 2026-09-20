@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('pallettai', {
   setTheme: (theme) => ipcRenderer.send('theme-changed', theme),
   secretsGet: (key) => ipcRenderer.invoke('secrets-get', key),
   secretsSet: (key, value) => ipcRenderer.invoke('secrets-set', key, value),
+  secretsGetSync: (key) => { try { return ipcRenderer.sendSync('secrets-get-sync', key) || ''; } catch (_) { return ''; } },
+  secretsSetSync: (key, value) => { try { return !!ipcRenderer.sendSync('secrets-set-sync', key, value); } catch (_) { return false; } },
   // Crash reporting consent mirror: the renderer owns the settings, the main
   // process owns its own process-level handlers, so the choice is forwarded.
   setCrashPrefs: (enabled, dsn) => ipcRenderer.send('crash-report-prefs', { enabled: !!enabled, dsn: String(dsn || '') }),

@@ -63,9 +63,44 @@ function sceneBonus(title) {
   return n;
 }
 
+/* ------------- meaning -------------
+   Everything above this line decides which of two candidates is the better
+   BITMAP: resolution, aspect for the slot, a few scene words, and a penalty for
+   placeholder hosts. None of it knows what the photo is of, which is why a
+   brief for "wood-fired oven" could be answered with a stock office and score
+   identically — `title` was only ever scanned for the twelve words in
+   SCENE_WORDS.
+
+   data/ai-embed.js supplies the half that was missing: how close the candidate's
+   own words are to the brief. It is deliberately a tiebreaker rather than a
+   decider (see MEANING_WEIGHT), because the bitmap facts are hard constraints —
+   a beautifully relevant photo that is 400px wide is still the wrong hero — and
+   because a candidate titled nothing at all must not be able to win by scoring
+   zero on a measure it has no words for. */
+const MEANING_WEIGHT = 200;
+
+function meaningLib() {
+  if (typeof AiEmbed !== 'undefined') return AiEmbed;
+  try { if (typeof require === 'function') return require('./ai-embed.js'); } catch (e) { /* classic script */ }
+  return null;
+}
+
+function meaningOf(cand, brief) {
+  const E = meaningLib();
+  const text = String(brief == null ? '' : brief).trim();
+  if (!E || !text) return { weight: 0, why: [] };
+  const blob = [cand.title, cand.url, cand.src].filter(Boolean).join(' ');
+  const s = Number(E.score(text, blob)) || 0;
+  return { weight: Math.round(s * MEANING_WEIGHT), why: E.why(text, blob, 3) };
+}
+
 function rank(pool, opts) {
   const src = opts || {};
   const slot = src.slot || 'hero';
+  /* The brief is whatever the studio asked for in words: the scene query for a
+     slot, or the client's own description when the caller has one. With no brief
+     the scoring is exactly what it was before meaning existed. */
+  const brief = src.brief || '';
   const usedUrls = new Set(src.usedUrls || []);
   const usedTitles = new Set((src.usedTitles || []).map(titleKey).filter(Boolean));
   const list = Array.isArray(pool) ? pool.slice() : [];
@@ -80,8 +115,9 @@ function rank(pool, opts) {
     const w = Number(cand.w) || 0;
     const h = Number(cand.h) || 0;
     const lorem = /loremflickr/i.test(String(cand.src || ''));
-    const score = (w * h) / 8000 + aspectBonus(slot, w, h) + sceneBonus(cand.title) + (lorem ? -1000 : 0);
-    return Object.assign({}, cand, { score });
+    const m = meaningOf(cand, brief);
+    const score = (w * h) / 8000 + aspectBonus(slot, w, h) + sceneBonus(cand.title) + (lorem ? -1000 : 0) + m.weight;
+    return Object.assign({}, cand, { score, why: m.why });
   }).sort((a, b) => b.score - a.score);
 }
 
@@ -92,5 +128,5 @@ function pick(ranked, seed) {
   return band[Math.abs(Number(seed) || 0) % band.length] || ranked[0];
 }
 
-const AiPhotos = { expandScenes, sceneQuery, isRejected, rank, pick, titleKey };
+const AiPhotos = { expandScenes, sceneQuery, isRejected, rank, pick, titleKey, meaningOf, MEANING_WEIGHT };
 if (typeof module !== 'undefined' && module.exports) module.exports = AiPhotos;

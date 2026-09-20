@@ -56,6 +56,10 @@ const sandbox = {
   SAMPLE
 };
 sandbox.DB = require(path.join(__dirname, '..', 'data', 'db.js'));
+// The browser loads the blueprint catalogue before modules/ai.js. Mirror that
+// dependency in this standalone VM so the smoke tests exercise the same path
+// as the shipped app rather than silently testing a catalogue-less fallback.
+sandbox.AiTemplateCatalog = require(path.join(__dirname, '..', 'data', 'ai-template-catalog.js'));
 vm.createContext(sandbox);
 
 const harness = `
@@ -157,15 +161,16 @@ const harness = `
   ok(rOut.about && !!a0.image && !!a0.imageSource, 'about fallback really lands a photo (regression)');
   ok(!g0 || g0.items.every((it) => !!it.image), 'gallery tiles all filled (regression)');
 
-  // ---- 6. three-direction Design Lab ----
+  // ---- 6. nine-direction Design Lab ----
   console.log('[6] generateDirections() + remixDirection()');
   const directions = AI.generateDirections('a premium wood-fired pizzeria in Bristol', { tier: 'free', name: 'Tavola Bristol' });
-  ok(Array.isArray(directions) && directions.length === 3, 'returns exactly three directions');
+  ok(Array.isArray(directions) && directions.length === AI.DIRECTION_PROFILES.length && directions.length >= 14, 'returns the full art-directed direction set');
   ok(directions.every((d) => d && d.site && d.site.name === 'Tavola Bristol'), 'directions keep one stable business name');
-  ok(new Set(directions.map((d) => d.directionId)).size === 3, 'directions have distinct direction identities');
-  ok(new Set(directions.map((d) => d.dnaLook)).size === 3, 'directions have distinct design looks');
+  ok(new Set(directions.map((d) => d.directionId)).size === directions.length, 'directions have distinct direction identities');
+  ok(new Set(directions.map((d) => d.dnaLook)).size >= 10, 'directions cover a broad set of design looks');
   ok(new Set(directions.map((d) => d.site.palette)).size >= 2, 'directions vary their palettes');
   ok(directions.every((d) => d.directionName && d.directionBlurb), 'every direction carries presentation metadata');
+  ok(directions.every((d) => d.templateBlueprint && d.templateBlueprint.name && d.templateBlueprint.signature), 'every direction carries an original blueprint receipt');
   ok(directions.every((d) => d.site.sections.some((s) => s.type === 'hero')), 'every direction keeps a hero');
   const originalJson = JSON.stringify(directions[0]);
   const remix = AI.remixDirection(directions[0], { tier: 'free', seed: 17 });

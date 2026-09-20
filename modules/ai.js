@@ -1157,6 +1157,16 @@ const AI = (() => {
     try { if (typeof require === 'function') return require('../data/ai-compose.js'); } catch (e) { /* classic script */ }
     return null;
   }
+  function rhythmLib() {
+    if (typeof AiRhythm !== 'undefined') return AiRhythm;
+    try { if (typeof require === 'function') return require('../data/ai-rhythm.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
+  function voiceLib() {
+    if (typeof AiVoice !== 'undefined') return AiVoice;
+    try { if (typeof require === 'function') return require('../data/ai-voice.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
   function copyLib() {
     if (typeof Copy !== 'undefined') return Copy;
     try { if (typeof require === 'function') return require('../data/copy.js'); } catch (e) { /* classic script */ }
@@ -1191,6 +1201,43 @@ const AI = (() => {
     if (typeof AiDirector !== 'undefined') return AiDirector;
     try { if (typeof require === 'function') return require('../data/ai-director.js'); } catch (e) { /* classic script */ }
     return null;
+  }
+  function systemLib() {
+    if (typeof AiSystem !== 'undefined') return AiSystem;
+    try { if (typeof require === 'function') return require('../data/ai-system.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
+  function templateCatalogLib() {
+    if (typeof AiTemplateCatalog !== 'undefined') return AiTemplateCatalog;
+    try { if (typeof require === 'function') return require('../data/ai-template-catalog.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
+
+  // Write a school's geometry onto a site.
+  //
+  // The tokens the stylesheet reads (radius, --sec-pad, --typo-scale, tracking,
+  // line-height) live in two different places — `design` and the site root — so
+  // they are set together here rather than at each of the six call sites. A
+  // style pack is a deliberate override and keeps its own radius and spacing,
+  // but the school still frames it: only the two geometry values are held back.
+  function applySystem(site, dna, seed) {
+    const Sys = systemLib();
+    if (!site || !dna || !dna.system || !Sys) return false;
+    const geo = dna.geometry || Sys.geometry(dna.system, seed);
+    site.system = dna.system;
+    site.design = site.design || {};
+    if (!site.stylePack) {
+      if (geo.containerWidth) site.design.containerWidth = geo.containerWidth;
+      if (geo.radius != null) site.design.radius = geo.radius;
+      if (geo.spacing != null) site.design.spacing = geo.spacing;
+    }
+    // Typography is the school's voice, not the pack's: a pack renames the
+    // fonts, it does not get to keep the old scale.
+    site.typoScale = geo.typoScale;
+    site.typoTracking = geo.typoTracking;
+    site.typoHeadingLh = geo.typoHeadingLh;
+    site.typoBodyLh = geo.typoBodyLh;
+    return true;
   }
   function originalityLib() {
     if (typeof AiOriginality !== 'undefined') return AiOriginality;
@@ -1423,14 +1470,56 @@ const AI = (() => {
     const ls = LOOK_STYLE[look] || LOOK_STYLE.light;
     const freeOK = (f) => tier === 'pro' || !PRO_FONTS.has(f);
 
+    // The design system is chosen before the palette, because the school has a
+    // say in the paint too. An ink-ground language on a near-white page is a
+    // costume, and it is the failure mode a chooser that only reads the look can
+    // never see: the mood was right and the register was wrong.
+    const Sys = systemLib();
+    const system = Sys && Sys.choose
+      ? Sys.choose({ seed, look, typeId: type.id, nicheId: (opts && opts.nicheId) || '' })
+      : '';
+    const spec = (Sys && system) ? Sys.spec(system) : null;
+    /*
+      The school's ground preference is a strong bias, not a lock.
+
+      `dark` is a fact about a palette rather than a guess from its name (the
+      naive test is a regex on the id, which misreads 'paper' and every 'pack_').
+      Filtering loses to availability at every step: if a school's own family has
+      nothing of the right ground, the wider family is offered instead, and if
+      the type's classic palettes are all the wrong ground the look's own family
+      is used. A school may prefer a register; it may not leave a brief with no
+      palette at all.
+    */
+    const groundOK = (pid) => {
+      if (!spec || !spec.ground) return true;
+      const p = DB.getPalette(pid);
+      if (!p) return false;
+      return spec.ground === 'ink' ? !!p.dark : !p.dark;
+    };
+    const allPaletteIds = aaPaletteIds((DB.palettes || []).map((x) => x.id).filter((pid) => DB.getPalette(pid)));
+    const byGround = (list) => {
+      if (!spec || !spec.ground) return list;
+      const ok = list.filter(groundOK);
+      if (ok.length) return ok;
+      // The look's own family may hold nothing of the wanted ground — every
+      // 'warm' palette is light, so an ink-ground school would have had to fall
+      // back to a near-white page. The catalogue-wide palettes of that ground are
+      // the honest fallback: the paint may leave the look's family, but it must
+      // not contradict the school's register.
+      const wide = allPaletteIds.filter(groundOK);
+      return wide.length ? wide : list;
+    };
+
     // palette: prefer the look's family, keep a classic type palette ~35% of the time
     let palette;
     const fam = aaPaletteIds((LOOK_PALETTES[ls.pal] || LOOK_PALETTES.light).filter((pid) => DB.getPalette(pid)));
     if (Math.abs(seed) % 10 < 4 && type.palettes && type.palettes.length) {
       const legacy = aaPaletteIds(type.palettes.filter((pid) => DB.getPalette(pid)));
-      palette = pick(legacy.length ? legacy : fam, seed + 3);
+      const usable = legacy.length ? byGround(legacy) : byGround(fam);
+      palette = pick(usable.length ? usable : fam, seed + 3);
     } else {
-      palette = pick(fam.length ? fam : ['paper'], seed);
+      const usable = byGround(fam);
+      palette = pick(usable.length ? usable : fam.length ? fam : ['paper'], seed);
     }
 
     // heading + body pairing — a sans look still gets a distinct display face
@@ -1462,7 +1551,21 @@ const AI = (() => {
       if (monoFree.length) headFont = pickFontFrom(monoFree, seed + 9, bodyFont);
     }
 
-    return { look, palette, font: bodyFont, fontDisplay: headFont !== bodyFont ? headFont : '', radius: ls.radius, spacing: ls.spacing };
+    // The design system's geometry, replacing LOOK_STYLE's one-size radius and
+    // spacing wholesale — which is why two sites in the same school still differ,
+    // while two in different schools cannot look related. (The school itself was
+    // chosen above, before the palette, because it has a say in the ground.)
+    const geometry = (Sys && system) ? Sys.geometry(system, seed) : null;
+
+    return {
+      look, palette,
+      font: bodyFont,
+      fontDisplay: headFont !== bodyFont ? headFont : '',
+      radius: geometry ? geometry.radius : ls.radius,
+      spacing: geometry ? geometry.spacing : ls.spacing,
+      system,
+      geometry
+    };
   }
   // platform-aware shortcut label (⌘ on macOS, Ctrl elsewhere)
   const KBD = (typeof window !== 'undefined' && window.pallettai && window.pallettai.platform === 'darwin') ? '⌘' : 'Ctrl+';
@@ -2226,13 +2329,13 @@ const AI = (() => {
 
   // catalog layouts the AI assigns per business type when generating “creative”
   const LAYOUT_FLAVOR = {
-    hero: { tech: ['split', 'terminal', 'minimal'], creative: ['split', 'minimal', ''], food: ['minimal', 'split', ''], retail: ['split', '', 'minimal'], travel: ['split', 'minimal'], fitness: ['terminal', 'split', ''], beauty: ['minimal', 'split'], edu: ['terminal', 'split', 'minimal'], home: ['split', 'minimal'], events: ['minimal', 'split', ''], auto: ['split', 'terminal'], music: ['terminal', 'minimal', 'split'], nonprofit: ['minimal', 'split'], generic: ['split', 'minimal', ''] },
+    hero: { tech: ['split', 'terminal', 'minimal'], creative: ['split', 'minimal', ''], food: ['minimal', 'split', ''], retail: ['split', '', 'minimal'], travel: ['split', 'minimal'], fitness: ['terminal', 'split', ''], beauty: ['minimal', 'split'], edu: ['terminal', 'split', 'minimal'], home: ['split', 'minimal'], events: ['minimal', 'split', ''], auto: ['split', 'terminal'], music: ['terminal', 'minimal', 'split'], nonprofit: ['minimal', 'split'], generic: ['split', 'minimal', '', 'aurora'] },
     features: { tech: ['bento', 'numbered', 'strip'], edu: ['bento', 'numbered'], creative: ['numbered', 'strip'], beauty: ['numbered', 'strip'], retail: ['numbered', 'strip'], food: ['numbered', 'strip'], generic: ['bento', 'strip', 'numbered', ''] },
     stats: { tech: ['band'], fitness: ['band'], edu: ['band'], home: ['band'], generic: ['band', ''] },
     pricing: { generic: ['stacked', ''] },
     testimonials: { creative: ['masonry', ''], beauty: ['masonry', ''], food: ['masonry', ''], travel: ['masonry', ''], generic: ['masonry', ''] },
-    gallery: { generic: ['mosaic', ''] },
-    faq: { generic: ['', 'columns'] },
+    gallery: { creative: ['collage', 'strip', 'mosaic', 'reel'], retail: ['collage', 'strip', 'mosaic'], food: ['mosaic', 'collage', 'reel'], events: ['reel', 'strip', 'collage'], travel: ['strip', 'collage', 'reel'], beauty: ['collage', 'strip', 'mosaic'], auto: ['mosaic', 'reel', 'strip'], home: ['mosaic', 'collage', 'strip'], generic: ['mosaic', 'collage', 'strip', 'reel', ''] },
+    faq: { generic: ['', 'columns', 'accordion', 'split'] },
     about: { generic: ['floating', '', 'left'] },
     contact: { generic: ['', 'split'] },
     logos: { generic: ['', 'grid'] },
@@ -2283,10 +2386,23 @@ const AI = (() => {
     minimal: [1080, 1140, 1200]
   };
 
+  function shapeLib() {
+    if (typeof AiShape !== 'undefined') return AiShape;
+    try { if (typeof require === 'function') return require('../data/ai-shape.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
+
   function generateSite(prompt, opts = {}) {
     const raw = String(prompt || '').trim() || 'a modern, friendly business';
     const website = (opts && opts.website) || null;
     const webText = website && website.text ? String(website.text) : '';
+    // A selected blueprint is a bounded art-direction preference. It can choose
+    // the visual grammar, type and proportions, but it never supplies client
+    // copy, bypasses credits, or replaces the structured export model.
+    const TemplateCatalog = templateCatalogLib();
+    const blueprint = TemplateCatalog && opts && opts.blueprintId
+      ? TemplateCatalog.get(String(opts.blueprintId).slice(0, 80))
+      : null;
     const Brief = briefLib();
     const brief = (Brief && opts && opts.brief) ? Brief.normalizeBrief(opts.brief) : null;
     const filled = !!(Brief && brief && Brief.briefFilled(brief));
@@ -2355,8 +2471,54 @@ const AI = (() => {
     const effType = effectiveType(type, niche);
     const focus = (niche && niche.focus) || subj.focus || TYPE_FOCUS[type.id];
     const brandLower = brand.toLowerCase().replace(/[^a-z0-9]+/g, '');
-    const dna = pickDesignDNA(type, (raw + ' ' + webText).trim(), opts, seed + jitter);
+    // The niche is matched just above and is the most specific thing known about
+    // the business, so the design system gets the final say on register from it.
+    const dna = pickDesignDNA(type, (raw + ' ' + webText).trim(),
+      Object.assign({}, opts, {
+        nicheId: niche ? niche.id : '',
+        // The gallery's look is explicit; the seed still varies the details
+        // inside that language, so repeated builds do not become clones.
+        look: blueprint && blueprint.look ? blueprint.look : opts.look
+      }), seed + jitter);
+    if (blueprint) {
+      const bpPalette = DB.getPalette(blueprint.palette);
+      if (bpPalette) dna.palette = bpPalette.id;
+      const bpFont = String(blueprint.font || '').trim();
+      // Premium catalogue fonts remain correctly tiered: free users still get
+      // the blueprint's composition, but not a paid font by accident.
+      if (bpFont && DB.getFont(bpFont) && (opts.tier === 'pro' || !PRO_FONTS.has(bpFont))) {
+        dna.fontDisplay = bpFont;
+        if (!dna.font || dna.font === bpFont) dna.font = pickFontFrom(BODY_SANS, seed + 3, bpFont);
+      }
+      if (blueprint.design && typeof blueprint.design === 'object') {
+        const bpGeometry = { ...(dna.geometry || {}) };
+        if (Number.isFinite(Number(blueprint.design.containerWidth))) bpGeometry.containerWidth = Number(blueprint.design.containerWidth);
+        if (Number.isFinite(Number(blueprint.design.radius))) bpGeometry.radius = Number(blueprint.design.radius);
+        if (Number.isFinite(Number(blueprint.design.spacing))) bpGeometry.spacing = Number(blueprint.design.spacing);
+        dna.geometry = bpGeometry;
+        if (Number.isFinite(Number(bpGeometry.radius))) dna.radius = Number(bpGeometry.radius);
+        if (Number.isFinite(Number(bpGeometry.spacing))) dna.spacing = Number(bpGeometry.spacing);
+      }
+    }
     let tagline = fill(pick(effType.taglines, seed + jitter), brand, focus);
+    /*
+      Composed copy instead of the two-item list.
+
+      Measured: forty generations of one brief produced seventeen palettes,
+      thirty-six font pairings and TWO taglines — and the hero's H1 was the
+      business name in all forty, because the copy bank left the hero title
+      empty. So the biggest text on the page never changed and the line under it
+      was a coin toss, which is most of what "it still looks the same" means.
+
+      A brief offer or a studied site's own wording still wins below: this fills
+      the blank, it does not overrule the client.
+    */
+    const Voice = voiceLib();
+    const voiceCopy = opts.layouts !== 'classic' && !!Voice;
+    if (voiceCopy) {
+      const vctx = { typeId: type.id, nicheId: (niche && niche.id) || '', brand, focus, area, seed };
+      tagline = Voice.tagline(vctx);
+    }
 
     const bank = copyBank(effType, brand, focus, {
       area,
@@ -2432,6 +2594,14 @@ const AI = (() => {
       if (bank.cta.text) bank.cta.text = speak(bank.cta.text, voice);
     }
     bank.hero = { ...bank.hero, subtitle: tagline };
+    if (voiceCopy) {
+      const vctx = { typeId: type.id, nicheId: (niche && niche.id) || '', brand, focus, area, seed };
+      // The H1. It used to be empty, so every generated site's headline fell back
+      // to the business name — the single largest piece of type on the page,
+      // identical on every site in every industry.
+      const headline = Voice.hero(vctx);
+      if (headline) bank.hero.title = headline;
+    }
     if (area && bank.about && Array.isArray(bank.about.items) && bank.about.items[1]) {
       // don't name the area twice when the copy engine already worked it in
       const namedAlready = bank.about.items.some((it) => it && String(it.title || '').indexOf(area) !== -1);
@@ -2464,6 +2634,25 @@ const AI = (() => {
       addedTypes = varied.added;
     }
     let sections = names.map((name) => sec(name, S(name)));
+    /*
+      Section headings, varied.
+
+      Every cafe's features block was headed "What we do" and every one's FAQ
+      "Questions", because the copy bank owns one heading per section per
+      industry. Palette and font choice cannot rescue a page whose words are
+      identical to the last one. Only the generic sections are touched: a niche's
+      own table keeps the heading it was written with, since "The menu" for a
+      wood-fired pizzeria is better than anything a bank of alternatives offers.
+    */
+    if (voiceCopy) {
+      const vctx = { typeId: type.id, nicheId: (niche && niche.id) || '', brand, focus, area, seed };
+      const VARIED_HEADINGS = ['features', 'gallery', 'stats', 'testimonials', 'faq', 'pricing', 'about', 'contact', 'cta'];
+      sections.forEach((row) => {
+        if (!row || VARIED_HEADINGS.indexOf(row.type) === -1) return;
+        const h = Voice.heading(row.type, vctx);
+        if (h) row.title = h;
+      });
+    }
     // deep niche packs add real sections of their own (menu tables, galleries)
     sections = insertNicheExtras(sections, extras);
     if (creative && ComposerLib.varyPresence) {
@@ -2472,9 +2661,53 @@ const AI = (() => {
       });
     }
 
+    /*
+      The rhythm pass.
+
+      This is the one that changes the SHAPE of the page, and it exists because
+      shuffle-within-an-envelope does not read as variety. Measured across forty
+      generations of a single brief: every site opened hero → gallery → about,
+      every one ended … → cta → contact, every one held seven to nine sections,
+      and the hero was one of four treatments. Forty different middles inside an
+      identical frame is not forty different websites.
+
+      A rhythm decides order, presence, treatment and length as one intention —
+      a pizzeria leads with what is on this week, a photographer leads with the
+      work, a boiler firm leads with proof. It runs after the niche's own blocks
+      are in place, so it can lead with one of them, and it is the authority on
+      layout when it runs: the look's hero tray and the fingerprint's ordering
+      stand down for the blocks it has spoken for.
+    */
+    const Rhythm = rhythmLib();
+    const rhythmPlan = (opts.layouts !== 'classic' && Rhythm && Rhythm.plan)
+      ? Rhythm.plan({
+        sections: sections.map((x) => (x && x.type) || '').filter(Boolean),
+        seed,
+        typeId: type.id,
+        nicheId: (niche && niche.id) || '',
+        cap: opts.tier === 'free' ? 6 : 0
+      })
+      : null;
+    if (process.env.PAI_RHYTHM_DEBUG) console.error('[rhythm]', !!Rhythm, rhythmPlan && rhythmPlan.id, rhythmPlan && rhythmPlan.order.join('>'), '| before:', sections.map((x) => x.type).join('>'));
+    if (rhythmPlan && rhythmPlan.order.length >= 4) {
+      const byType = {};
+      sections.forEach((row) => { if (row && !byType[row.type]) byType[row.type] = row; });
+      const reordered = [];
+      rhythmPlan.order.forEach((t) => { if (byType[t]) { reordered.push(byType[t]); byType[t].__used = true; } });
+      // Anything the plan dropped stays dropped; anything it did not know about
+      // (a section type added since) is kept rather than silently deleted.
+      sections.forEach((row) => { if (row && !row.__used && rhythmPlan.order.indexOf(row.type) === -1) reordered.push(row); });
+      sections = reordered;
+      Object.keys(rhythmPlan.layouts).forEach((t) => {
+        const row = sections.find((x) => x && x.type === t);
+        if (row) row.layout = rhythmPlan.layouts[t];
+      });
+      sections.forEach((row) => { if (row) delete row.__used; });
+    }
+
     // design-DNA pass: hero treatment per look, and gentle variation so two
     // runs of the same brief don't feel identical.
-    if (opts.layouts !== 'classic') {
+    if (opts.layouts !== 'classic' && !rhythmPlan) {
       const heroSec = sections.find((x) => x.type === 'hero');
       if (heroSec) {
         const tray = LOOK_HERO[dna.look] || LOOK_HERO.light;
@@ -2500,7 +2733,10 @@ const AI = (() => {
         sec.animation = motion[Math.abs(seed + i * 397) % motion.length];
       });
     }
-    if (Finger && opts.layouts !== 'classic') {
+    // The fingerprint's reorder is the fallback ordering. When a rhythm has
+    // spoken, its order IS the composition, and shuffling on top of it would
+    // erase the only decision that was made about the page as a whole.
+    if (Finger && opts.layouts !== 'classic' && !rhythmPlan) {
       sections = Finger.orderSections(sections, seed + 17);
     }
 
@@ -2509,14 +2745,18 @@ const AI = (() => {
     // (schema type flips to LocalBusiness automatically on export).
     const desc = fill('We\'re {brand} — helping you with {focus}, done properly.', brand, focus)
       + (area ? ' We proudly serve ' + area + ' and the surrounding areas.' : '');
-    const eyebrow = area || focus || '';
+    const eyebrow = (voiceCopy ? (Voice.eyebrow({ typeId: type.id, nicheId: (niche && niche.id) || '', brand, focus, area, seed }) || '') : '') || area || focus || '';
     if (area) {
       const fSec = sections.find((x) => x.type === 'faq');
       if (fSec && Array.isArray(fSec.items)) {
         fSec.items.push({ icon: '📍', title: 'Do you serve ' + area + '?', text: 'Yes — we proudly serve ' + area + ' and the surrounding areas. Reach out and we’ll talk through your project.', extra: '', tag: '' });
       }
     }
-    const primaryCta = (brief && brief.cta) ? speak(brief.cta, voice) : 'Get started';
+    // The button every section ends with. "Get started" on every generated site
+    // in every industry is the same kind of tell as a single tagline.
+    const primaryCta = (brief && brief.cta)
+      ? speak(brief.cta, voice)
+      : (voiceCopy ? (Voice.cta({ typeId: type.id, nicheId: (niche && niche.id) || '', brand, focus, area, seed }) || 'Get started') : 'Get started');
     const ctaSec = sections.find((x) => x.type === 'cta');
     if (brief && brief.cta && ctaSec) {
       ctaSec.title = speak(brief.cta, voice);
@@ -2530,7 +2770,10 @@ const AI = (() => {
     // look decides the container width.
     const photoMode = (opts && opts.photoMode) || 'real';
     const widths = LOOK_WIDTHS[dna.look] || [1140];
-    const containerWidth = widths[Math.abs(seed) % widths.length];
+    // The school's measure wins over the look's, because it is part of a whole
+    // spatial language: an editorial atelier at 1440px stops being an atelier.
+    const containerWidth = (dna.geometry && dna.geometry.containerWidth)
+      || widths[Math.abs(seed) % widths.length];
     const transparentNav = opts.layouts !== 'classic' && photoMode !== 'none' && dna.look !== 'minimal' && Math.abs(seed) % 2 === 0;
     const stickyNav = !(dna.look === 'minimal' && Math.abs(seed) % 3 === 0);
 
@@ -2581,7 +2824,19 @@ const AI = (() => {
         eyebrow,
         description: desc,
         ctaText: primaryCta,
-        navCta: primaryCta,
+        // The nav bar gets a short label of its own.
+        //
+        // A hero CTA can afford a phrase — "Let us take a look" earns its space at
+        // headline size. The same words in a 68px bar wrap inside the button, and
+        // on a phone the wrapped block overflows the bar and covers the brand. So
+        // the bar draws a short label from the same voice.
+        //
+        // Except when the client named the action themselves: a brief that asks
+        // for "Book a visit" gets "Book a visit" in the bar, because the app does
+        // not second-guess an instruction it was given.
+        navCta: (brief && brief.cta)
+          ? primaryCta
+          : ((voiceCopy ? (Voice.navCta({ typeId: type.id, nicheId: (niche && niche.id) || '', seed }) || '') : '') || primaryCta),
         ctaLink: '',
         email: (website && website.email) || ('hello@' + (brandLower || 'pallettai') + '.com'),
         phone: (website && website.phone) || '',
@@ -2592,6 +2847,14 @@ const AI = (() => {
         font: dna.font,
         fontDisplay: dna.fontDisplay,
         design: { containerWidth, radius: dna.radius, spacing: dna.spacing },
+        // the design system: the language this page is set in (see data/ai-system.js).
+        // The typography tokens live on the site root because that is where the
+        // stylesheet already reads --typo-scale/--typo-track/--typo-hl/--typo-bl.
+        system: dna.system || '',
+        typoScale: dna.geometry ? dna.geometry.typoScale : undefined,
+        typoTracking: dna.geometry ? dna.geometry.typoTracking : undefined,
+        typoHeadingLh: dna.geometry ? dna.geometry.typoHeadingLh : undefined,
+        typoBodyLh: dna.geometry ? dna.geometry.typoBodyLh : undefined,
         navStyle: transparentNav ? 'transparent' : '',
         navSticky: stickyNav,
         sections,
@@ -2624,8 +2887,23 @@ const AI = (() => {
         seed,
         onePager,
         layouts: opts.layouts,
-        photoMode: (opts && opts.photoMode) || 'real'
+        photoMode: (opts && opts.photoMode) || 'real',
+        // The rhythm plan travels into the last composition pass, which would
+        // otherwise re-impose the family's fixed recipe over every decision made
+        // upstream. See the note above applyCompose().
+        plan: rhythmPlan
       });
+    }
+    // Re-assert the rhythm after the composition hand-off. The composer owns
+    // section treatments and contracts, but it must not be able to put a niche's
+    // signature block back behind generic benefits. This is especially important
+    // for food sites: a pizzeria should show its menu/table before features.
+    if (rhythmPlan && Array.isArray(rhythmPlan.order) && project.site && Array.isArray(project.site.sections)) {
+      const rank = {};
+      rhythmPlan.order.forEach((kind, index) => { if (rank[kind] == null) rank[kind] = index; });
+      project.site.sections = project.site.sections.map((section, index) => ({ section, index }))
+        .sort((a, b) => (rank[a.section.type] == null ? 999 : rank[a.section.type]) - (rank[b.section.type] == null ? 999 : rank[b.section.type]) || a.index - b.index)
+        .map((entry) => entry.section);
     }
     // Give the chosen conversion strategy one tangible visual signature. This
     // changes an existing section's layout only when that layout is supported by
@@ -2636,6 +2914,44 @@ const AI = (() => {
       const supported = typeof DB.layoutsFor === 'function' ? (DB.layoutsFor(signature.target) || []).some((v) => v.id === signature.layout) : true;
       if (target && supported) target.layout = signature.layout;
       project.site.signatureMoment = { id: String(signature.id || '').slice(0, 40), label: String(signature.label || '').slice(0, 80), target: String(signature.target).slice(0, 30), layout: String(signature.layout || '').slice(0, 30) };
+    }
+    /*
+      The shell pass — the last design decision, and the one that was missing.
+
+      Everything above this line decides WHAT is on the page and in what order.
+      This decides how the page is SPACED: how wide each block is allowed to be,
+      what sits behind it, where its heading sits and how much air it gets.
+
+      It runs last on purpose. A shell is a decision about a finished page — how
+      a gallery should be framed depends on whether it follows a stats band — so
+      every earlier pass has to have had its say first. It runs once per PAGE,
+      because two pages of one site should not inherit one band or one centred
+      heading between them, and it is written onto the sections rather than kept
+      beside them so a save/reload rebuilds the same page.
+    */
+    const Shape = shapeLib();
+    if (Shape && opts.layouts !== 'classic') {
+      const pages = (project.site.pages && project.site.pages.length)
+        ? project.site.pages
+        : [{ id: 'pg-home', sections: project.site.sections || [] }];
+      const seen = [];
+      pages.forEach((pg, pi) => {
+        const rows = (pg && pg.sections) || [];
+        if (!rows.length || seen.indexOf(rows) !== -1) return;
+        seen.push(rows);
+        try {
+          const shellPlan = Shape.plan({
+            look: dna.look,
+            seed: seed + pi * 7919,
+            typeId: type.id,
+            sections: rows
+          });
+          if (shellPlan) {
+            Shape.apply(rows, shellPlan);
+            if (pi === 0) project.site.shell = { language: shellPlan.id, band: shellPlan.band || '' };
+          }
+        } catch (e) { /* a shell must never block generation */ }
+      });
     }
     // Brand kernel: enforced BEFORE the logo is drawn and before any review pass
     // runs, so the drawn logo uses the client's own palette and every later pass
@@ -2708,6 +3024,18 @@ const AI = (() => {
           repaired: !!(originality.repair && originality.repair.changed)
         });
       }
+    }
+    // Apply the selected blueprint after originality has finished comparing
+    // candidates. This keeps the user's explicit art-direction choice visible,
+    // while the kernel is re-applied afterwards so a locked client brand always
+    // remains authoritative.
+    if (blueprint) {
+      applyBlueprintFlavor(project, blueprint);
+      if (Kernel && kernel) Kernel.apply(project, kernel);
+      project.site.originality = Object.assign({}, project.site.originality, {
+        blueprintId: blueprint.id,
+        blueprintName: blueprint.name
+      });
     }
     project.site.photoPass = { status: 'pending', placed: { hero: false, about: false, gallery: 0 } };
     return project;
@@ -2934,28 +3262,112 @@ const AI = (() => {
   }
 
   // ============================================================
-  // Design Direction Lab — three deliberately different directions from one
-  // brief. Directions are drafts until the creator chooses one, so exploration
+  // Design Direction Lab — a broad set of deliberately different directions
+  // from one brief. Directions are drafts until the creator chooses one, so exploration
   // never pollutes the project list or spends a second credit.
   // ============================================================
   const DIRECTION_PROFILES = [
     {
-      id: 'editorial', label: 'Editorial Atelier', icon: '📰', look: 'editorial',
+      id: 'editorial', blueprintId: 'still-life', label: 'Editorial Atelier', icon: '📰', look: 'editorial',
       blurb: 'Art-directed, expressive and premium — made to feel like a considered magazine spread.',
       order: ['hero', 'about', 'table', 'gallery', 'features', 'stats', 'testimonials', 'faq', 'pricing', 'cta', 'contact'],
       layouts: { hero: 'minimal', gallery: 'mosaic', testimonials: 'masonry', faq: 'columns' }
     },
     {
-      id: 'bold', label: 'Bold Signal', icon: '⚡', look: 'bold',
+      id: 'bold', blueprintId: 'foundry', label: 'Bold Signal', icon: '⚡', look: 'bold',
       blurb: 'High-contrast, energetic and unmistakable — built to stop the scroll and drive action.',
       order: ['hero', 'features', 'stats', 'gallery', 'about', 'table', 'testimonials', 'pricing', 'faq', 'cta', 'contact'],
       layouts: { hero: 'split', features: 'bento', stats: 'band', gallery: 'mosaic' }
     },
     {
-      id: 'minimal', label: 'Quiet Conversion', icon: '◌', look: 'minimal',
+      id: 'minimal', blueprintId: 'soft-focus', label: 'Quiet Conversion', icon: '◌', look: 'minimal',
       blurb: 'Calm, spacious and focused — every element earns its place and the CTA stays clear.',
       order: ['hero', 'about', 'features', 'testimonials', 'cta', 'contact', 'stats', 'gallery', 'pricing', 'faq', 'table'],
       layouts: { hero: 'minimal', about: 'floating' }
+    },
+    {
+      id: 'light', blueprintId: 'northline', label: 'Swiss Daylight', icon: '▦', look: 'light',
+      blurb: 'Bright, precise and quietly confident — a clean grid for brands that value clarity.',
+      order: ['hero', 'stats', 'features', 'table', 'testimonials', 'about', 'faq', 'cta', 'contact'],
+      layouts: { hero: 'split', features: 'strip', stats: 'band', table: 'compare', contact: 'minimal' }
+    },
+    {
+      id: 'warm', blueprintId: 'common-ground', label: 'Craft House', icon: '✦', look: 'warm',
+      blurb: 'Tactile, generous and human — built around process, provenance and the details people remember.',
+      order: ['hero', 'about', 'gallery', 'features', 'table', 'testimonials', 'faq', 'cta', 'contact'],
+      layouts: { hero: 'split', about: 'floating', gallery: 'collage', features: 'strip', faq: 'accordion' }
+    },
+    {
+      id: 'dark', blueprintId: 'afterlight', label: 'Cinema Nocturne', icon: '◐', look: 'dark',
+      blurb: 'Atmospheric and cinematic — deep contrast, deliberate pacing and a single strong invitation.',
+      order: ['hero', 'gallery', 'stats', 'about', 'testimonials', 'features', 'cta', 'contact'],
+      layouts: { hero: 'split', gallery: 'reel', stats: 'ticker', testimonials: 'featured', cta: 'splash' }
+    },
+    {
+      id: 'playful', blueprintId: 'playbook', label: 'Playground', icon: '✺', look: 'playful',
+      blurb: 'Colourful, kinetic and optimistic — made for brands with a little more personality.',
+      order: ['hero', 'features', 'gallery', 'stats', 'testimonials', 'pricing', 'faq', 'cta', 'contact'],
+      layouts: { hero: 'aurora', features: 'bento', gallery: 'strip', stats: 'ticker', cta: 'splash' }
+    },
+    {
+      id: 'techy', blueprintId: 'signal-house', label: 'Instrument', icon: '⌁', look: 'techy',
+      blurb: 'Systematic and sharp — terminal cues, measurable proof and a product-led path to action.',
+      order: ['hero', 'features', 'stats', 'table', 'pricing', 'faq', 'testimonials', 'cta', 'contact'],
+      layouts: { hero: 'terminal', features: 'bento', stats: 'band', table: 'compare', pricing: 'toggle' }
+    },
+    {
+      id: 'noir', blueprintId: 'atelier-noir', label: 'Noir Gallery', icon: '◼', look: 'noir',
+      blurb: 'Quietly dramatic and image-led — a dark canvas that lets the work do the talking.',
+      order: ['hero', 'gallery', 'about', 'testimonials', 'features', 'faq', 'cta', 'contact'],
+      layouts: { hero: 'minimal', gallery: 'mosaic', about: 'timeline', testimonials: 'masonry', contact: 'overlap' }
+    },
+    {
+      id: 'monument', blueprintId: 'monument', label: 'Monumental Index', icon: '▱', look: 'minimal',
+      blurb: 'A gallery-first direction with architectural scale, project indexing and deliberate negative space.',
+      order: ['hero', 'collection', 'gallery', 'about', 'stats', 'testimonials', 'cta', 'contact'],
+      layouts: { hero: 'minimal', collection: 'plain', gallery: 'mosaic', about: 'timeline', stats: 'band', testimonials: 'featured', cta: 'email', contact: 'minimal' }
+    },
+    {
+      id: 'tidepool', blueprintId: 'tidepool', label: 'Sunlit Horizon', icon: '≈', look: 'bright',
+      blurb: 'Open, optimistic and image-led — a destination story that moves naturally toward booking.',
+      order: ['hero', 'gallery', 'collection', 'features', 'testimonials', 'faq', 'booking', 'contact'],
+      layouts: { hero: 'aurora', gallery: 'reel', collection: 'slider', features: 'strip', testimonials: 'masonry', faq: 'columns', booking: 'compact', contact: 'cards' }
+    },
+    {
+      id: 'kinetic-house', blueprintId: 'kinetic-house', label: 'Kinetic Signal', icon: '↯', look: 'bold',
+      blurb: 'Fast, expressive and culture-led — built for launches, line-ups and stories that need momentum.',
+      order: ['hero', 'stats', 'gallery', 'features', 'collection', 'testimonials', 'cta', 'contact'],
+      layouts: { hero: 'terminal', stats: 'ticker', gallery: 'strip', features: 'bento', collection: 'marquee', testimonials: 'featured', cta: 'splash', contact: 'overlap' }
+    },
+    {
+      id: 'paper-plane', blueprintId: 'paper-plane', label: 'Product Clarity', icon: '➤', look: 'techy',
+      blurb: 'Structured, measurable and clear — a product page that explains the value before asking for action.',
+      order: ['hero', 'logos', 'features', 'stats', 'table', 'pricing', 'faq', 'cta', 'contact'],
+      layouts: { hero: 'terminal', logos: 'grid', features: 'bento', stats: 'band', table: 'compare', pricing: 'toggle', faq: 'split', cta: 'email', contact: 'split' }
+    },
+    {
+      id: 'market-stall', blueprintId: 'market-stall', label: 'Local Counter', icon: '✺', look: 'warm',
+      blurb: 'Tactile and welcoming — the offer comes first, then the people and details behind it.',
+      order: ['hero', 'table', 'gallery', 'about', 'features', 'testimonials', 'faq', 'cta', 'contact'],
+      layouts: { hero: 'split', table: 'compare', gallery: 'collage', about: 'floating', features: 'strip', testimonials: 'masonry', faq: 'accordion', cta: 'splash', contact: 'cards' }
+    },
+    {
+      id: 'atlas-house', blueprintId: 'atlas-house', label: 'Knowledge Index', icon: '⌘', look: 'light',
+      blurb: 'Clear, measured and useful — a resource-led direction for organisations that teach or advise.',
+      order: ['hero', 'stats', 'features', 'collection', 'table', 'faq', 'testimonials', 'cta', 'contact'],
+      layouts: { hero: 'split', stats: 'band', features: 'numbered', collection: 'plain', table: 'compare', faq: 'split', testimonials: 'featured', cta: 'email', contact: 'split' }
+    },
+    {
+      id: 'solstice', blueprintId: 'solstice', label: 'Quiet Ritual', icon: '☼', look: 'minimal',
+      blurb: 'Calm, tactile and deeply considered — trust first, then a simple path to book.',
+      order: ['hero', 'about', 'features', 'collection', 'testimonials', 'faq', 'booking', 'contact'],
+      layouts: { hero: 'minimal', about: 'floating', features: 'strip', collection: 'slider', testimonials: 'featured', faq: 'accordion', booking: 'compact', contact: 'minimal' }
+    },
+    {
+      id: 'rally-point', blueprintId: 'rally-point', label: 'Community Pulse', icon: '◎', look: 'bright',
+      blurb: 'Energetic and inclusive — timetable, momentum and proof make the next step obvious.',
+      order: ['hero', 'stats', 'table', 'features', 'gallery', 'testimonials', 'cta', 'contact'],
+      layouts: { hero: 'aurora', stats: 'ticker', table: 'compare', features: 'bento', gallery: 'strip', testimonials: 'masonry', cta: 'splash', contact: 'cards' }
     }
   ];
 
@@ -2979,6 +3391,54 @@ const AI = (() => {
     project.directionName = profile.label;
     project.directionBlurb = profile.blurb;
     project.directionSeed = seed;
+    const Catalog = templateCatalogLib();
+    const blueprint = Catalog && Catalog.get && profile.blueprintId ? Catalog.get(profile.blueprintId) : null;
+    if (blueprint) {
+      project.templateBlueprint = {
+        id: blueprint.id,
+        name: blueprint.name,
+        category: blueprint.category,
+        signature: blueprint.signature,
+        version: 1
+      };
+    }
+    // The blueprint is descriptive metadata only. The generated project remains
+    // the normal PallettAI section model, so Concierge, schedules, exports and
+    // existing editing tools never depend on a third-party template format.
+    return project;
+  }
+
+  function applyBlueprintFlavor(project, blueprint) {
+    if (!project || !project.site || !blueprint) return project;
+    const site = project.site;
+    const pages = Array.isArray(site.pages) && site.pages.length
+      ? site.pages
+      : [{ id: 'pg-home', sections: Array.isArray(site.sections) ? site.sections : [] }];
+    const rank = Object.create(null);
+    (blueprint.order || []).forEach((type, index) => { if (rank[type] == null) rank[type] = index; });
+    pages.forEach((page) => {
+      if (!page || !Array.isArray(page.sections)) return;
+      page.sections = page.sections
+        .map((section, index) => ({ section, index }))
+        .sort((a, b) => (rank[a.section && a.section.type] == null ? 999 : rank[a.section.type]) - (rank[b.section && b.section.type] == null ? 999 : rank[b.section.type]) || a.index - b.index)
+        .map((entry) => entry.section);
+      Object.entries(blueprint.layouts || {}).forEach(([type, layout]) => {
+        const section = page.sections.find((item) => item && item.type === type);
+        if (!section || typeof DB.layoutsFor !== 'function') return;
+        const variants = DB.layoutsFor(type) || [];
+        if (variants.some((variant) => variant && variant.id === layout)) section.layout = layout;
+      });
+    });
+    site.sections = pages[0] && pages[0].sections ? pages[0].sections : site.sections;
+    project.dnaLook = blueprint.look || project.dnaLook;
+    project.templateBlueprint = {
+      id: blueprint.id,
+      name: blueprint.name,
+      category: blueprint.category,
+      signature: blueprint.signature,
+      version: 1
+    };
+    site.blueprint = { id: String(blueprint.id || '').slice(0, 80), name: String(blueprint.name || '').slice(0, 100) };
     return project;
   }
 
@@ -3020,6 +3480,8 @@ const AI = (() => {
     copy.site.font = dna.font;
     copy.site.fontDisplay = dna.fontDisplay;
     copy.site.design = { ...(copy.site.design || {}), radius: dna.radius, spacing: dna.spacing };
+    // A remix is a new site in every respect, so it gets a new design system too.
+    applySystem(copy.site, dna, seed);
     return applyDirectionFlavor(copy, { ...profile, id: 'remix', label: 'Remix · ' + profile.label }, seed);
   }
 
@@ -3634,8 +4096,13 @@ const AI = (() => {
     const slot = opts.slot || 'hero';
     if (online) {
       const cands = await gatherSceneCands(q, opts.w || 1400, opts.max || 20, { online: true });
+      /* `brief` is what the studio asked for in words. Callers that know the
+         client's own description pass it; otherwise the scene query is already a
+         short description of the picture that belongs here ("wood fired oven
+         interior"), which is enough for the ranker to prefer a candidate whose
+         title says the same thing. */
       const ranked = Photos
-        ? Photos.rank(cands, { slot, usedUrls, usedTitles })
+        ? Photos.rank(cands, { slot, usedUrls, usedTitles, brief: opts.brief || q })
         : cands;
       const n = ranked.length;
       if (n) {
@@ -3865,7 +4332,7 @@ const AI = (() => {
         } catch (e) { pool = []; }
         if (Photos && Photos.rank) {
           const kind = slot.key === 'about' ? 'about' : (String(slot.key).indexOf('gal') === 0 ? 'gallery' : 'hero');
-          pool = Photos.rank(pool, { slot: kind, usedUrls: Array.from(used) });
+          pool = Photos.rank(pool, { slot: kind, usedUrls: Array.from(used), brief: slot.brief || slot.scene });
         }
         if (pool.length < 2) {
           for (let l = 0; l < 3; l++) {
@@ -4322,7 +4789,11 @@ const AI = (() => {
       project.site.design.radius = dna.radius;
       project.site.design.spacing = dna.spacing;
     }
-    return { palette: pal, font: fnt, fontDisplay: fntD, look: dna.look, type: type.id };
+    // Restyle is "give me a different look", so the visual language changes with
+    // it — otherwise a restyle moved the colours and left the furniture in place,
+    // which is exactly why restyled sites still read as the same site.
+    applySystem(project.site, dna, seed);
+    return { palette: pal, font: fnt, fontDisplay: fntD, look: dna.look, type: type.id, system: project.site.system || '' };
   }
 
   function shuffleLook(project, opts = {}) {
@@ -4377,6 +4848,11 @@ const AI = (() => {
       project.site.design.radius = dna.radius;
       project.site.design.spacing = dna.spacing;
     }
+    // Shuffle is the anti-sameness button, so it must move the design language
+    // too. Without this an eight-in-eight shuffle could return the identical
+    // button, card and label treatment with only the palette changed — which is
+    // how a client presses shuffle and still gets "the same site again".
+    applySystem(project.site, dna, fp.seed);
     if (heroSec && opts.layouts !== 'classic') heroSec.layout = nextHero;
     if (project.site.photoGrade && project.site.photoGrade.on) {
       project.site.photoGrade = Finger.photoGradeSpec({ on: true, typeId: type.id, look: dna.look });
@@ -6125,7 +6601,7 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
   };
 
   return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, studySite, isPublicFetchUrl, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, shuffleLook, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatPlanOne, copilotRoute, originalityReport, splitCompound, chatHelp, sampleSection, copyOptions, imageBase, photoPicks, polarity, designMention, designAlternatives,
-    nthSecOfType, sectionOrdinal, resolveTarget, positionalMention, followMiss, repeatMiss, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES, applyNicheExtras, addServicesPage, matchNiche,
+    nthSecOfType, sectionOrdinal, resolveTarget, positionalMention, followMiss, repeatMiss, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES, templateCatalog: templateCatalogLib(), applyNicheExtras, addServicesPage, matchNiche,
     critiquePass, brandKernel: kernelLib };
 })();
 

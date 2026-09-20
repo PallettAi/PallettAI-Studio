@@ -48,6 +48,9 @@ const App = (() => {
   let currentView = 'dashboard';
   let lastAI = null;
   let directionState = null;
+  // A gallery selection is a generation preference, not a project mutation.
+  // It survives the AI view re-render until the next successful generation.
+  let selectedBlueprintId = '';
   let aiBusy = false;
   let qualityBusy = false;
   let qualityAfter = null;
@@ -207,9 +210,45 @@ const App = (() => {
     }, 400);
   }
 
+  // In Electron the Pixabay / Companies House keys are moved to the
+  // encrypted secrets store (safeStorage). loadSettings migrates them on first
+  // read; saveSettings syncs back to that store and scrubs them from
+  // localStorage so the plaintext blob never carries them on disk.
+  function migrateKeysToVault(obj) {
+    const bridge = (typeof window !== 'undefined' && window.pallettai) ? window.pallettai : null;
+    if (!bridge || typeof bridge.secretsGetSync !== 'function' || typeof bridge.secretsSetSync !== 'function') return { migrated: false, obj };
+    let changed = false;
+    const pix = (obj && typeof obj.pixabayKey === 'string' ? obj.pixabayKey : '').trim();
+    const ch = (obj && typeof obj.companiesHouseKey === 'string' ? obj.companiesHouseKey : '').trim();
+    if (pix) {
+      try {
+        const existing = String(bridge.secretsGetSync('online.pixabayKey') || '').trim();
+        if (!existing) { bridge.secretsSetSync('online.pixabayKey', pix); changed = true; }
+        else if (existing !== pix) { /* encrypted store already has a key — keep it */ }
+        delete obj.pixabayKey;
+        changed = true;
+      } catch (e) {}
+    }
+    if (ch) {
+      try {
+        const existing = String(bridge.secretsGetSync('online.companiesHouseKey') || '').trim();
+        if (!existing) { bridge.secretsSetSync('online.companiesHouseKey', ch); changed = true; }
+        delete obj.companiesHouseKey;
+        changed = true;
+      } catch (e) {}
+    }
+    return { migrated: changed, obj };
+  }
   function loadSettings() {
     try {
-      const raw = JSON.parse(localStorage.getItem(LS.settings) || '{}');
+      let raw = JSON.parse(localStorage.getItem(LS.settings) || '{}');
+      if (raw && typeof raw === 'object' && (raw.pixabayKey || raw.companiesHouseKey)) {
+        const res = migrateKeysToVault(raw);
+        if (res.migrated) {
+          try { localStorage.setItem(LS.settings, JSON.stringify(res.obj)); } catch (e2) {}
+          raw = res.obj;
+        }
+      }
       settings = { ...DB.defaultSettings, ...(raw && typeof raw === 'object' ? raw : {}) };
       // normalize new workspace keys defensively for users upgrading from older builds
       if (!['dashboard','templates','designer','ai','database'].includes(settings.startupView)) settings.startupView = 'dashboard';
@@ -221,6 +260,13 @@ const App = (() => {
     applyTheme();
   }
   function saveSettings() {
+    const bridge = (typeof window !== 'undefined' && window.pallettai && typeof window.pallettai.secretsSetSync === 'function') ? window.pallettai : null;
+    if (bridge) {
+      try {
+        if ('pixabayKey' in settings) { bridge.secretsSetSync('online.pixabayKey', String(settings.pixabayKey || '').trim()); delete settings.pixabayKey; }
+        if ('companiesHouseKey' in settings) { bridge.secretsSetSync('online.companiesHouseKey', String(settings.companiesHouseKey || '').trim()); delete settings.companiesHouseKey; }
+      } catch (e) {}
+    }
     try { localStorage.setItem(LS.settings, JSON.stringify(settings)); }
     catch (e) { try { toast('⚠ Settings could not be saved on this device.', false); } catch (e2) {} }
     applyTheme();
@@ -2221,9 +2267,66 @@ const App = (() => {
     const root = $('#cmdPalette');
     if (root) root.hidden = true;
   }
+  /* ============================================================
+     The palette, by meaning
+     ------------------------------------------------------------
+     Commands are matched on their names, which is exactly right for "open
+     settings" and useless for "the coffee shop I did in March". Both are
+     questions a creator types into the one box that is supposed to reach
+     everything, so the studio's own content — projects, starters, templates — is
+     ranked by data/ai-embed.js beside the commands.
+
+     It is scored on the words a person would actually use: the site name, the
+     area, the tagline, the meta description, the section types. The match is
+     shown, not just applied, because "why is this here" is the difference
+     between a search you trust and one you stop using.
+     ============================================================ */
+  function cmdContentItems() {
+    const rows = [];
+    projects.forEach((p) => {
+      const s = p.site || {};
+      rows.push({
+        kind: 'project', id: 'project:' + p.id, title: p.name || 'Untitled project',
+        text: [p.name, s.name, s.area, s.tagline, s.metaDescription, s.about,
+          (s.sections || []).map((x) => x && (x.type || x.kind) || '').join(' ')].filter(Boolean).join(' '),
+        open: () => { currentId = p.id; selectedSec = null; switchView('designer'); }
+      });
+    });
+    starters.forEach((s) => {
+      rows.push({
+        kind: 'starter', id: 'starter:' + s.id, title: s.name || 'Starter',
+        text: [s.name, ((s.stats || {}).types || []).join(' ')].filter(Boolean).join(' '),
+        open: () => newFromStarter(s.id)
+      });
+    });
+    const templates = (typeof DB !== 'undefined' && Array.isArray(DB.templates)) ? DB.templates : [];
+    templates.forEach((t) => {
+      rows.push({
+        kind: 'template', id: 'template:' + t.id, title: t.name || 'Template',
+        text: [t.name, t.tag, t.desc].filter(Boolean).join(' '),
+        open: () => projectFromTemplate(t)
+      });
+    });
+    return rows;
+  }
+
+  const CMD_KIND_LABEL = { project: 'Project', starter: 'Starter', template: 'Template' };
+
+  function cmdContentHits(query) {
+    const E = (typeof AiEmbed !== 'undefined') ? AiEmbed : null;
+    const q = String(query || '').trim();
+    // One letter matches too much to be a search; commands still cover it.
+    if (!E || q.length < 2 || !E.rank) return [];
+    return E.rank(q, cmdContentItems(), { limit: 4, min: 0.09, text: (r) => r.text })
+      .map((hit) => Object.assign({}, hit.item, {
+        hint: CMD_KIND_LABEL[hit.item.kind] + (hit.why.length ? ' \u00b7 ' + hit.why.join(', ') : ''),
+        score: hit.score
+      }));
+  }
+
   function renderCmd(query) {
     if (typeof CommandPalette === 'undefined') return;
-    cmdState.hits = CommandPalette.filterCommands(query);
+    cmdState.hits = CommandPalette.filterCommands(query).concat(cmdContentHits(query));
     cmdState.index = 0;
     const list = $('#cmdList');
     if (!list) return;
@@ -2250,8 +2353,11 @@ const App = (() => {
   }
   function runCmd(id) {
     const chosen = id || (cmdState.hits[cmdState.index] && cmdState.hits[cmdState.index].id);
+    // A content hit carries the thing to do; a command is looked up by name.
+    const hit = cmdState.hits.find((c) => c.id === chosen);
     const cmd = (typeof CommandPalette !== 'undefined' ? CommandPalette.COMMANDS : []).find((c) => c.id === chosen);
     closeCmd();
+    if (hit && typeof hit.open === 'function') return hit.open();
     if (!cmd) return;
     if (cmd.tab) settingsTab = cmd.tab;
     if (cmd.view) switchView(cmd.view);
@@ -3010,7 +3116,7 @@ const App = (() => {
     $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
     $$('.view').forEach((v) => v.classList.remove('active'));
     $('#view-' + name).classList.add('active');
-    const titles = { dashboard: 'Dashboard', templates: 'Templates', designer: 'Designer', ai: 'AI Studio', suites: 'Upgrade Suites', database: 'Database', settings: 'Settings', qr: 'QR Codes', care: 'Site Care' };
+    const titles = { dashboard: 'Dashboard', templates: 'Templates', designer: 'Designer', ai: 'AI Studio', suites: 'Upgrade Suites', database: 'Database', settings: 'Settings', qr: 'QR Codes', tools: 'Toolkit', care: 'Site Care' };
     $('#viewTitle').textContent = chromeTitle(name) || titles[name] || name;
     if (name === 'dashboard') renderDashboard();
     if (name === 'templates') renderTemplates();
@@ -3020,6 +3126,7 @@ const App = (() => {
     if (name === 'database') renderDatabase();
     if (name === 'settings') renderSettings();
     if (name === 'qr') renderQr();
+    if (name === 'tools' && window.PallettAITools) window.PallettAITools.init();
     if (name === 'care') renderCare();
     $('#projectChip').hidden = !(name === 'designer' || name === 'suites' || name === 'database') || !current();
     if (current() && ['designer', 'suites', 'database'].includes(name)) {
@@ -3039,6 +3146,7 @@ const App = (() => {
           <button class="btn ghost small" id="btnBrandPresets" title="Brand presets">${uiIcon('layers')} Presets</button>
           <button class="btn ghost small" id="btnDiag" title="Site health">${uiIcon('pulse')}</button>
           <button class="btn ghost small" id="btnQuality" title="Quality gate">${uiIcon('shield')}</button>
+          <button class="btn ghost small" id="btnAdvancedCanvas" title="Open advanced visual canvas">${uiIcon('layers')} Canvas</button>
           <button class="btn ghost small" id="btnCopyHtml" title="Copy HTML">${uiIcon('copy')} Copy</button>
           <button class="btn ghost small" id="btnReviews" title="Import client feedback">${uiIcon('chat')} Feedback</button>
           <input type="file" id="reviewFile" accept=".json,application/json" hidden>
@@ -3055,6 +3163,11 @@ const App = (() => {
         $('#btnBrandPresets').onclick = openBrandPresets;
         $('#btnDiag').onclick = runDiagnostics;
         $('#btnQuality').onclick = () => openQualityGate();
+        const canvasButton = $('#btnAdvancedCanvas');
+        if (canvasButton) canvasButton.onclick = () => {
+          if (typeof PallettAIEditors === 'undefined' || !PallettAIEditors.hasGrapes()) return toast('Advanced canvas is unavailable in this build', false);
+          PallettAIEditors.open(c, (project) => { touch(project); saveProjects(); toast('Canvas snapshot saved locally', true); });
+        };
         $('#btnExport').onclick = openExportMenu;
         $('#btnCopyHtml').onclick = copyHtml;
         $('#btnReviews').onclick = () => $('#reviewFile').click();
@@ -3728,9 +3841,95 @@ const App = (() => {
     door.onclick = go;
   }
 
+  // ---------------- AI blueprint gallery ----------------
+  // This is intentionally a catalogue surface rather than a second generator.
+  // The catalogue owns descriptive metadata; AI Studio remains the only place
+  // that spends credits and creates a project. Keeping that boundary means a
+  // gallery click cannot bypass the free-tier gate or quietly mutate a project.
+  let blueprintFilter = '';
+  let blueprintQuery = '';
+
+  function blueprintCatalog() {
+    return (typeof AiTemplateCatalog !== 'undefined' && AiTemplateCatalog) ? AiTemplateCatalog : null;
+  }
+
+  function blueprintPreview(blueprint, index) {
+    const seed = (index + 7) * 104729;
+    const p = DB.getPalette(blueprint.palette) || DB.getPalette('paper') || {};
+    const surface = p.surface || '#fff';
+    const bg = p.bg || '#f6f1e7';
+    const primary = p.primary || '#2563eb';
+    const accent = p.accent || '#06b6d4';
+    const dark = !!p.dark;
+    const layouts = Object.values(blueprint.layouts || {}).slice(0, 4);
+    const tiles = layouts.map((layout, i) => `<span class="blueprint-mini-tile tile-${i}" style="--tile:${i};--tile-bg:${i === 0 ? primary : i === 1 ? surface : accent};--tile-opacity:${i === 1 ? '.9' : '.72'}"></span>`).join('');
+    return `<div class="blueprint-preview" style="--bp-bg:${esc(bg)};--bp-surface:${esc(surface)};--bp-primary:${esc(primary)};--bp-accent:${esc(accent)};--bp-text:${esc(p.text || (dark ? '#fff' : '#172554'))}">
+      <div class="blueprint-mini-nav"><span class="blueprint-mini-logo"></span><i></i><i></i><i></i></div>
+      <div class="blueprint-mini-hero"><small>${esc(blueprint.eyebrow || blueprint.category)}</small><b>${esc(blueprint.name)}</b><em>${esc((blueprint.signature || '').slice(0, 58))}</em><strong></strong></div>
+      <div class="blueprint-mini-grid">${tiles}</div>
+      <span class="blueprint-mini-index">${String(index + 1).padStart(2, '0')}</span>
+    </div>`;
+  }
+
+  function renderBlueprintGallery() {
+    const grid = $('#blueprintGrid');
+    const select = $('#blueprintCategory');
+    const count = $('#blueprintCount');
+    const Catalog = blueprintCatalog();
+    if (!grid || !Catalog) return;
+    const all = Catalog.BLUEPRINTS || [];
+    if (select && !select.dataset.ready) {
+      select.innerHTML = '<option value="">All industries</option>' + Catalog.categories().sort().map((category) => `<option value="${esc(category)}">${esc(category)}</option>`).join('');
+      select.value = blueprintFilter;
+      select.dataset.ready = '1';
+      select.onchange = () => { blueprintFilter = select.value; renderBlueprintGallery(); };
+    }
+    const query = blueprintQuery.toLowerCase().trim();
+    const filtered = all.filter((bp) => {
+      if (blueprintFilter && bp.category !== blueprintFilter) return false;
+      if (!query) return true;
+      return [bp.name, bp.category, bp.blurb, bp.promptHint, bp.signature].some((value) => String(value || '').toLowerCase().includes(query));
+    });
+    if (count) count.textContent = filtered.length + ' of ' + all.length + ' directions';
+    if (!filtered.length) {
+      grid.innerHTML = '<div class="blueprint-empty">No directions match that search. Try “editorial”, “product”, “travel” or clear the filter.</div>';
+      return;
+    }
+    grid.innerHTML = filtered.map((bp, i) => `<article class="blueprint-card" data-blueprint="${esc(bp.id)}">
+      ${blueprintPreview(bp, i)}
+      <div class="blueprint-card-body"><div class="blueprint-card-top"><span class="blueprint-icon">${esc(bp.icon || '✦')}</span><span class="blueprint-category-tag">${esc(bp.category)}</span></div>
+        <h4>${esc(bp.name)}</h4><p>${esc(bp.blurb)}</p>
+        <div class="blueprint-receipt"><b>${esc(bp.signature || 'Distinctive composition')}</b><span>${esc(bp.promptHint || '')}</span></div>
+        <button class="btn secondary small" data-blueprint-use="${esc(bp.id)}">Use this point of view</button>
+      </div>
+    </article>`).join('');
+    $$('[data-blueprint-use]').forEach((button) => button.onclick = (event) => {
+      event.stopPropagation();
+      const bp = Catalog.get(button.dataset.blueprintUse);
+      if (!bp) return;
+      // Stage before switching views so the AI card renders the selection on
+      // the first paint, rather than only after another navigation.
+      selectedBlueprintId = bp.id;
+      switchView('ai');
+      // The AI engine receives this as an explicit look hint, while the rest of
+      // the catalogue metadata remains a receipt. We never write into a project
+      // or consume a credit here.
+      const input = $('#aiPrompt');
+      if (input && !input.value.trim()) input.value = bp.promptHint || bp.name;
+      toast('“' + bp.name + '” staged in AI Studio — add your brief, then generate', true);
+      if (input) input.focus();
+    });
+  }
+
   function renderTemplates() {
     const grid = $('#tplGrid');
     if (!grid) return;
+    const search = $('#blueprintSearch');
+    if (search && !search.dataset.ready) {
+      search.value = blueprintQuery;
+      search.dataset.ready = '1';
+      search.oninput = () => { blueprintQuery = search.value.slice(0, 80); renderBlueprintGallery(); };
+    }
     grid.innerHTML = DB.templates.map((t) => {
       const proTpl = PLANS.proTemplates.includes(t.id);
       const locked = proTpl && !isPro();
@@ -3756,6 +3955,7 @@ const App = (() => {
     // this view is where a project begins — a starter kept somewhere else is a
     // starter that gets rebuilt by hand instead.
     renderStarters();
+    renderBlueprintGallery();
   }
 
   function renderDashboard() {
@@ -6699,6 +6899,7 @@ const App = (() => {
   function renderAI() {
     const cred = PLANS.store.creditsLeft();
     const pro = isPro();
+    const stagedBlueprint = selectedBlueprintId && blueprintCatalog() && blueprintCatalog().get(selectedBlueprintId);
     const pill = $('#aiCreditPill');
     pill.className = 'pill' + (pro ? ' ok' : (cred.left <= 1 ? ' bad' : ''));
     pill.textContent = pro ? '∞ Pro credits' : cred.left + ' credit' + (cred.left === 1 ? '' : 's') + ' left';
@@ -6712,6 +6913,7 @@ const App = (() => {
     root.innerHTML = `
       <div class="ai-card">
         <h3>Generate a site from a prompt</h3>
+        ${stagedBlueprint ? `<div class="ai-blueprint-lock"><span>✦</span><div><b>${esc(stagedBlueprint.name)} direction staged</b><small>${esc(stagedBlueprint.signature || 'Distinctive art direction')} · your facts and copy remain yours</small></div><button class="linkish" id="aiClearBlueprint" type="button">Clear</button></div>` : ''}
         <p class="sub">One click. A complete first draft: logo, ranked photos, and a layout that fits the business. Drop your own photos on the preview to swap them.</p>
         <textarea id="aiPrompt" placeholder="e.g. A modern bakery in Paris with a cozy, artisanal feel…">${lastAI ? esc(lastAI.prompt) : ''}</textarea>
         <div id="briefStrip" style="display:${briefs.length ? 'flex' : 'none'};gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">
@@ -6775,7 +6977,7 @@ const App = (() => {
         <div class="ai-gen-actions">
           <button class="btn primary ai-run" id="aiRun" ${aiBusy ? 'disabled' : ''}>Generate site</button>
           <button class="btn ghost ai-interview" id="aiInterview" ${aiBusy ? 'disabled' : ''}>Shape the brief <small>4 questions</small></button>
-          <button class="btn ghost ai-directions" id="aiDirections" ${aiBusy ? 'disabled' : ''}>Explore 3 directions <small>(1 credit)</small></button>
+          <button class="btn ghost ai-directions" id="aiDirections" ${aiBusy ? 'disabled' : ''}>Explore ${AI.DIRECTION_PROFILES.length} directions <small>(1 credit)</small></button>
           <button class="btn ghost" id="aiSaveBrief" title="Save this prompt and brief for repeat client builds">💾 Save brief</button>
         </div>
         <div class="ai-progress" id="aiProgress" hidden></div>
@@ -6877,6 +7079,8 @@ const App = (() => {
       };
     };
 
+    const clearBlueprint = $('#aiClearBlueprint');
+    if (clearBlueprint) clearBlueprint.onclick = () => { selectedBlueprintId = ''; renderAI(); };
     const urlInp = $('#aiSiteUrl');
     if (urlInp) {
       urlInp.value = aiSiteUrl;
@@ -7158,9 +7362,7 @@ const App = (() => {
       closeModal();
       openDirectionLab();
     };
-  }
-
-  function directionOptions(website) {
+  }    function directionOptions(website) {
     const name = ($('#aiName') && $('#aiName').value.trim()) || '';
     const area = ($('#aiArea') && $('#aiArea').value.trim()) || '';
     const packId = ($('#aiPack') && $('#aiPack').value) || '';
@@ -7205,7 +7407,7 @@ const App = (() => {
       </div>
       <div class="direction-info"><div class="direction-heading"><span class="direction-icon">${profile.icon || '✦'}</span><div><h4>${esc(title)}</h4><p>${esc(blurb)}</p></div></div>
         <div class="direction-swatches"><span style="background:${pal.bg}"></span><span style="background:${pal.surface}"></span><span style="background:${pal.primary}"></span><span style="background:${pal.accent}"></span><small>${esc(pal.name)}</small></div>
-        <div class="direction-meta"><span><b>Look</b>${esc(project.dnaLook || project.directionId || 'custom')}</span><span><b>Type</b>${esc(font.name)}${display ? ' + ' + esc(display) : ''}</span><span><b>Flow</b>${esc(order || 'Hero · content · contact')}</span></div>
+        <div class="direction-meta"><span><b>Look</b>${esc(project.dnaLook || project.directionId || 'custom')}</span><span><b>Type</b>${esc(font.name)}${display ? ' + ' + esc(display) : ''}</span><span><b>Flow</b>${esc(order || 'Hero · content · contact')}</span></div>${project.templateBlueprint ? `<div class="direction-blueprint"><b>${esc(project.templateBlueprint.category || 'Art direction')}</b><span>${esc(project.templateBlueprint.signature || project.templateBlueprint.name || '')}</span></div>` : ''}
       </div>
       <div class="direction-actions"><button class="btn ${selected ? 'primary' : 'ghost'} small" data-direction-use="${index}">${selected ? '✓ Selected' : 'Choose this direction'}</button><button class="btn ghost small" data-direction-remix="${index}">↻ Remix <small>(1 credit)</small></button></div>
     </article>`;
@@ -7218,7 +7420,7 @@ const App = (() => {
     st.selected = selected;
     const cards = st.drafts.map((p, i) => directionCard(p, i, i === selected)).join('');
     openModal('🧭 Design Direction Lab', `
-      <div class="direction-intro"><span class="direction-lab-mark">🧭</span><div><b>Three ways to make the same brief unforgettable.</b><p>${esc(st.prompt)}${st.studied ? ' · current site studied' : ''}</p></div></div>
+      <div class="direction-intro"><span class="direction-lab-mark">🧭</span><div><b>${st.drafts.length} art-directed starting points for the same brief.</b><p>${esc(st.prompt)}${st.studied ? ' · current site studied' : ''} · each direction keeps your facts and remains fully editable</p></div></div>
       <div class="direction-grid">${cards}</div>
       <div class="direction-footer"><span>Choose one to open it in the Designer. Remixing replaces only that draft; nothing is saved until you choose.</span><div><button class="btn ghost small" id="directionCancel">Keep exploring later</button><button class="btn primary small" id="directionChoose">✓ Use selected direction</button></div></div>`, true);
     $$('[data-direction-card]').forEach((card) => card.onclick = () => { directionState.selected = +card.dataset.directionCard; renderDirectionLab(); });
@@ -7240,7 +7442,7 @@ const App = (() => {
     directionState = state;
     setAIBusy(true);
     openModal('🧭 Design Direction Lab', `
-      <div class="direction-loading"><span class="spinner"></span><b>Art-directing three contrasting directions…</b><p>Comparing palettes, typography, hero composition and section rhythm for this brief.</p></div>`, true);
+      <div class="direction-loading"><span class="spinner"></span><b>Art-directing a full set of contrasting directions…</b><p>Comparing visual systems, typography, hero composition, page rhythm and conversion paths for this brief.</p></div>`, true);
     try {
       let website = null;
       if (siteUrl && AI.studySite) {
@@ -7457,7 +7659,9 @@ const App = (() => {
         studied = await studyCompetitorUrls(comps);
         if (!studied.length && comps.length) toast('No competitor URLs could be studied — generating from your brief', false);
       }
+      const blueprintId = selectedBlueprintId || '';
       const p = AI.generateSite(prompt, {
+        blueprintId,
         // Never let an identical brief collapse back to the same starter. The
         // salt is stored in the project's fingerprint, so the chosen design
         // remains stable and editable after generation.
@@ -7495,6 +7699,7 @@ const App = (() => {
       currentId = p.id;
       selectedSec = null;
       lastAI = { id: p.id, prompt };
+      selectedBlueprintId = '';
       setAIBusy(false);
       if (box) box.hidden = true;
       switchView('designer');
@@ -12746,6 +12951,10 @@ const App = (() => {
     $$('.nav-item').forEach((b) => b.onclick = () => switchView(b.dataset.view));
     $('#modalClose').onclick = closeModal;
     $('#modalBackdrop').onclick = (e) => { if (e.target === $('#modalBackdrop')) closeModal(); };
+    const editorLabClose = $('#editorLabClose');
+    if (editorLabClose) editorLabClose.onclick = () => { if (typeof PallettAIEditors !== 'undefined') PallettAIEditors.close(); };
+    const editorLabModal = $('#editorLabModal');
+    if (editorLabModal) editorLabModal.addEventListener('click', (e) => { if (e.target === editorLabModal && typeof PallettAIEditors !== 'undefined') PallettAIEditors.close(); });
     $('#modalBackdrop').addEventListener('keydown', trapModalTab);
     if ($('#cmdInput')) $('#cmdInput').oninput = (e) => renderCmd(e.target.value);
     if ($('#cmdScrim')) $('#cmdScrim').onclick = closeCmd;
@@ -12792,6 +13001,8 @@ const App = (() => {
         if (e.key === 'Enter') { e.preventDefault(); runCmd(); return; }
       }
       if (e.key === 'Escape') {
+        const editorLab = $('#editorLabModal');
+        if (editorLab && !editorLab.hidden) { if (typeof PallettAIEditors !== 'undefined') PallettAIEditors.close(); e.preventDefault(); return; }
         if (!$('#modalBackdrop').hidden) { closeModal(); e.preventDefault(); return; }
         chatOpenPanel(false);
       }
@@ -12809,7 +13020,7 @@ const App = (() => {
       renderDbList();
     });
     $('#dbSearch').oninput = renderDbList;
-    (function(){ const v=['dashboard','templates','designer','ai','database'].includes(settings.startupView)?settings.startupView:'dashboard'; switchView(v); })();
+    (function(){ const v=['dashboard','templates','designer','ai','database','tools'].includes(settings.startupView)?settings.startupView:'dashboard'; switchView(v); })();
     // first visit: offer the 2-minute guided tour after the UI settles
     try { if (!localStorage.getItem(TOUR_KEY)) setTimeout(startTour, 700); } catch (e) {}
     // what's new: once per version, after the UI settles (skip first-ever run —

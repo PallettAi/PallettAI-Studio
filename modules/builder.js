@@ -21,6 +21,28 @@ const Builder = (() => {
   function photoGradeOn(p) {
     return !!(p && p.site && p.site.photoGrade && p.site.photoGrade.on);
   }
+
+  // ---------------- design system (the visual language) ----------------
+  // The school a project was generated with, e.g. 'atelier'. It is a *frame*,
+  // not a look: it decides corners, card treatment, label case, type weight,
+  // grid composition, nav chrome and hover motion, and every rule it contributes
+  // is scoped to `body.sys-<id>` so a project without one renders exactly as it
+  // did before this existed. Names are whitelisted rather than escaped, because
+  // the id ends up in a class attribute and inside a selector.
+  // Resolved rather than assumed: the app loads this as a classic script and so
+  // reads the global, while the headless suites (which render without a DOM)
+  // require it. Same two-step every other data lib in this file uses.
+  function systemLib() {
+    if (typeof AiSystem !== 'undefined' && AiSystem && AiSystem.spec) return AiSystem;
+    try { if (typeof require === 'function') return require('../data/ai-system.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
+  function systemId(p) {
+    const id = String((p && p.site && p.site.system) || '').trim();
+    if (!id) return '';
+    const Sys = systemLib();
+    return (Sys && Sys.spec(id)) ? id : '';
+  }
   function gradeWrap(p, html) {
     return photoGradeOn(p) ? `<span class="media-grade">${html}</span>` : html;
   }
@@ -318,13 +340,38 @@ body.photo-grade{
 
   // ---------------- helpers ----------------
 
+  /*
+    The page shell. `section.shell` is written by the generator's shape pass
+    (data/ai-shape.js) and carries four spatial decisions: how wide this block is
+    allowed to be, what is behind it, where the heading sits and how much air it
+    gets. A section without a shell renders exactly as it did before the shell
+    existed, which is what keeps hand-built and older projects byte-stable.
+
+    The classes are emitted on the <section> rather than inline because two of
+    them are structural (the measure overrides .container's max-width, and the
+    band re-colours everything inside it) and inlining either would be a
+    specifier war with the stylesheet.
+  */
+  function shellClasses(section) {
+    const sh = section && section.shell;
+    if (!sh || typeof sh !== 'object') return '';
+    const keep = (v, allowed) => (allowed.indexOf(v) !== -1 ? v : '');
+    return [
+      keep(sh.measure, ['narrow', 'wide', 'full']) ? 'measure-' + sh.measure : '',
+      keep(sh.ground, ['surface', 'wash', 'rule', 'band']) ? 'ground-' + sh.ground : '',
+      keep(sh.head, ['center', 'split']) ? 'head-' + sh.head : '',
+      keep(sh.rhythm, ['tight', 'airy']) ? 'rhythm-' + sh.rhythm : ''
+    ].filter(Boolean).join(' ');
+  }
+
   function sectionShell(section, index, inner) {
     const anim = section.animation || 'fade-up';
     const animCss = (DB.getAnimation(anim) || {}).css || '';
     const cls = anim === 'none' ? '' : 'reveal';
     const pageId = (_ctx.page && _ctx.page.id) || '';
+    const shell = shellClasses(section);
     return `
-    <section id="sec-${section.type}-${index}" class="section sec-${section.type}" data-page-id="${esc(pageId)}" data-section-index="${index}">
+    <section id="sec-${section.type}-${index}" class="section sec-${section.type}${shell ? ' ' + shell : ''}" data-page-id="${esc(pageId)}" data-section-index="${index}">
       <div class="container ${cls}" data-anim-css="${esc(animCss)}">
         ${inner}
       </div>
@@ -338,12 +385,19 @@ body.photo-grade{
       faq: 'Questions, answered', blog: 'From the blog', shop: 'Best sellers',
       contact: 'Say hello', booking: 'Book online', cta: '', hero: ''
     }[section.type] || '';
+    /*
+      The shape pass may say this block carries no heading block at all — which
+      is the usual choice for a gallery, where the work should introduce itself.
+      The h2 stays, because a page without one loses its outline to a screen
+      reader and to search; what goes is the furniture around it.
+    */
+    const bare = !!(section.shell && section.shell.head === 'none');
     return `
-      <div class="sec-head">
+      <div class="sec-head${bare ? ' head-bare' : ''}">
         ${section.emblem ? `<img class="sec-emblem" src="${esc(section.emblem)}" alt="">` : ''}
-        ${e ? `<p class="eyebrow">${esc(e)}</p>` : ''}
+        ${!bare && e ? `<p class="eyebrow">${esc(e)}</p>` : ''}
         ${section.title ? `<h2>${esc(section.title)}</h2>` : ''}
-        ${section.subtitle ? `<p class="sub">${esc(section.subtitle)}</p>` : ''}
+        ${!bare && section.subtitle ? `<p class="sub">${esc(section.subtitle)}</p>` : ''}
       </div>`;
   }
 
@@ -389,6 +443,10 @@ body.photo-grade{
   // ---------------- section renderers ----------------
 
   function renderHero(p, s, i) {
+    // The hero builds its own wrapper rather than going through sectionShell, so
+    // it has to read the shell itself. Without this the shape pass decided the
+    // hero's width and vertical air and nothing rendered the decision.
+    const shell = shellClasses(s);
     const hasImg = !!(s.image || '').trim();
     const bg = s.image || '';
     const placeholder = hasImg ? '' : heroPlaceholder(p, s, i);
@@ -419,7 +477,7 @@ body.photo-grade{
       const slug = (s.title || p.site.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'site';
       const pal = (p.site.palette || 'midnight').replace(/^custom_/, '');
       return `
-    <section id="sec-hero-${i}" class="section sec-hero layout-terminal">
+    <section id="sec-hero-${i}" class="section sec-hero layout-terminal${shell ? ' ' + shell : ''}">
       ${sig}
       <div class="container hero-inner term ${anim}" data-anim-css="${animCss}">
         ${badge}${title}${tag}
@@ -438,7 +496,7 @@ body.photo-grade{
     }
     if (layout === 'split') {
       return `
-    <section id="sec-hero-${i}" class="section sec-hero layout-split">
+    <section id="sec-hero-${i}" class="section sec-hero layout-split${shell ? ' ' + shell : ''}">
       ${sig}
       <div class="container hero-split">
         <div class="hero-split-body ${anim}" data-anim-css="${animCss}">
@@ -452,7 +510,7 @@ body.photo-grade{
     }
     if (layout === 'minimal') {
       return `
-    <section id="sec-hero-${i}" class="section sec-hero layout-minimal">
+    <section id="sec-hero-${i}" class="section sec-hero layout-minimal${shell ? ' ' + shell : ''}">
       ${sig}
       <div class="container hero-inner minimal ${anim}" data-anim-css="${animCss}">
         ${badge}${title}${tag}${d}${cta}
@@ -462,7 +520,7 @@ body.photo-grade{
     }
     if (layout === 'aurora') {
       return `
-    <section id="sec-hero-${i}" class="section sec-hero layout-aurora">
+    <section id="sec-hero-${i}" class="section sec-hero layout-aurora${shell ? ' ' + shell : ''}">
       ${sig}
       <div class="container hero-inner ${anim}" data-anim-css="${animCss}">
         ${badge}${title}${tag}${d}${cta}
@@ -471,7 +529,7 @@ body.photo-grade{
     </section>`;
     }
     return `
-    <section id="sec-hero-${i}" class="section sec-hero layout-centered">
+    <section id="sec-hero-${i}" class="section sec-hero layout-centered${shell ? ' ' + shell : ''}">
       ${sig}
       ${heroBackdrop}
       <div class="container hero-inner ${anim}" data-anim-css="${animCss}">
@@ -629,6 +687,48 @@ body.photo-grade{
       }).join('');
       return sectionShell(s, i, `${head(s)}<div class="gal-mosaic">${mosaic}</div>`);
     }
+    if (s.layout === 'strip') {
+      const rail = itemsField(s, Array.from({ length: 6 }, (_, j) => ({ title: `Work ${j + 1}`, extra: 'Project' }))).map((it, j) => {
+        const img = it.image || (isAiDraft(p) ? '' : picsum(`${p.id}-gs-${i}-${j}`, 520, 740));
+        return `
+        <figure class="gs-frame" data-cap="${esc(it.title || '')}">
+          ${img ? gradeWrap(p, `<img src="${esc(img)}" alt="${esc(it.alt || it.title || '')}" loading="lazy" decoding="async">`) : photoHole('13/18', 'Gallery photo')}
+          <figcaption><span>${esc(it.title || '')}</span>${it.extra ? `<small>${esc(it.extra)}</small>` : ''}</figcaption>
+        </figure>`;
+      }).join('');
+      return sectionShell(s, i, `${head(s)}<div class="gal-strip"><div class="gs-track">${rail}</div></div>`);
+    }
+    if (s.layout === 'collage') {
+      const all = itemsField(s, Array.from({ length: 5 }, (_, j) => ({ title: `Work ${j + 1}`, extra: 'Project' })));
+      const cells = all.slice(0, 5).map((it, j) => {
+        const img = it.image || (isAiDraft(p) ? '' : picsum(`${p.id}-gc-${i}-${j}`, 900, j === 0 ? 900 : 620));
+        return `
+        <figure class="gcoll gcoll-${j + 1}">
+          ${img ? gradeWrap(p, `<img src="${esc(img)}" alt="${esc(it.alt || it.title || '')}" loading="lazy" decoding="async">`) : photoHole(j === 0 ? '1/1' : '4/3', 'Gallery photo')}
+          <figcaption><span>${esc(it.title || '')}</span>${it.extra ? `<small>${esc(it.extra)}</small>` : ''}</figcaption>
+        </figure>`;
+      }).join('');
+      return sectionShell(s, i, `${head(s)}<div class="gal-collage">${cells}</div>`);
+    }
+    if (s.layout === 'reel') {
+      const all = itemsField(s, Array.from({ length: 5 }, (_, j) => ({ title: `Work ${j + 1}`, extra: 'Project' })));
+      const media = (it, j, big) => {
+        const img = it.image || (isAiDraft(p) ? '' : picsum(`${p.id}-gr-${i}-${j}`, big ? 1400 : 520, big ? 800 : 520));
+        return img ? gradeWrap(p, `<img src="${esc(img)}" alt="${esc(it.alt || it.title || '')}" loading="lazy" decoding="async">`) : photoHole(big ? '16/9' : '1/1', 'Gallery photo');
+      };
+      const lead = all[0] || { title: '' };
+      const rest = all.slice(1, 5).map((it, j) => `
+        <figure class="gr-thumb" data-cap="${esc(it.title || '')}">${media(it, j + 1, false)}
+          <figcaption>${esc(it.title || '')}</figcaption>
+        </figure>`).join('');
+      return sectionShell(s, i, `${head(s)}
+        <div class="gal-reel">
+          <figure class="gr-stage" data-cap="${esc(lead.title || '')}">${media(lead, 0, true)}
+            <figcaption>${esc(lead.title || '')}</figcaption>
+          </figure>
+          <div class="gr-rail">${rest}</div>
+        </div>`);
+    }
     const lightbox = pro ? `
       <div class="lb" id="lightbox" aria-hidden="true">
         <button class="lb-close" data-lb="close">✕</button>
@@ -739,6 +839,35 @@ body.photo-grade{
         <summary>${esc(it.title)}<span class="chev">▾</span></summary>
         <p>${esc(it.text)}</p>
       </details>`).join('');
+    if (s.layout === 'accordion') {
+      // A single column of large-type questions, numbered, with no card chrome.
+      // This is the shape most small-business sites actually want: the answers
+      // are the content and a grid of boxes gets in their way.
+      const list = itemsField(s, [
+        { title: 'Question one?', text: 'A clear, helpful answer goes here.' },
+        { title: 'Question two?', text: 'Another clear, helpful answer.' }
+      ]).map((it, j) => `
+        <details class="faq-item faq-wide" ${j === 0 ? 'open' : ''}>
+          <summary><span class="faq-n">${String(j + 1).padStart(2, '0')}</span>${esc(it.title)}<span class="chev">▾</span></summary>
+          <p>${esc(it.text)}</p>
+        </details>`).join('');
+      return sectionShell(s, i, `${head(s)}<div class="faq-list faq-acc">${list}</div>`);
+    }
+    if (s.layout === 'split') {
+      const list = itemsField(s, [
+        { title: 'Question one?', text: 'A clear, helpful answer goes here.' },
+        { title: 'Question two?', text: 'Another clear, helpful answer.' }
+      ]).map((it, j) => `
+        <details class="faq-item" ${j === 0 ? 'open' : ''}>
+          <summary>${esc(it.title)}<span class="chev">▾</span></summary>
+          <p>${esc(it.text)}</p>
+        </details>`).join('');
+      return sectionShell(s, i, `
+        <div class="faq-two">
+          <div class="faq-aside">${head(s)}</div>
+          <div class="faq-list">${list}</div>
+        </div>`);
+    }
     if (s.layout === 'columns') {
       return sectionShell(s, i, `${head(s)}<div class="faq-list faq-cols">${rows}</div>`);
     }
@@ -1332,7 +1461,15 @@ body.photo-grade{
     }
     const cart = (p.suites || []).includes('shop') ? `<button class="cart-btn" data-cart="open">🛒<span class="cart-count" hidden>0</span></button>` : '';
     const themeBtn = s.themeToggle === false ? '' : `<button class="theme-btn" aria-label="Toggle dark or light theme">🌙</button>`;
-    const cta = s.navCta ? `<a class="btn solid small nav-cta" href="${esc(anchorRef(safeHref(s.ctaLink, contactRef(p))))}">${esc(s.navCta)}</a>` : '';
+    const ctaHref = esc(anchorRef(safeHref(s.ctaLink, contactRef(p))));
+    const cta = s.navCta ? `<a class="btn solid small nav-cta" href="${ctaHref}">${esc(s.navCta)}</a>` : '';
+    // The same action, reachable from the mobile menu. Hidden above 860px, where
+    // the bar's own button is on screen — hidden by the stylesheet rather than an
+    // inline style, because an inline style would outrank the media query and
+    // keep it hidden on the phone too.
+    const ctaMobile = s.navCta
+      ? `<a class="btn solid small nav-cta-mobile" href="${ctaHref}">${esc(s.navCta)}</a>`
+      : '';
     const cls = (s.navSticky === false ? ' static' : '') + (s.navStyle === 'transparent' ? ' transparent' : '');
     const mark = s.logo
       ? `<span class="brand-mark"><img src="${esc(s.logo)}" alt="" style="aspect-ratio:1/1"></span>`
@@ -1341,7 +1478,7 @@ body.photo-grade{
     <nav class="nav${cls}">
       <div class="nav-inner container">
         <a class="brand" href="${anchorRef('#top')}">${mark}${esc(s.name || 'My Site')}</a>
-        <div class="nav-links">${links.join('')}</div>
+        <div class="nav-links">${links.join('')}${ctaMobile}</div>
         ${cart}
         ${themeBtn}
         ${cta}
@@ -1615,6 +1752,7 @@ body.photo-grade{
   --fontd:${fd ? `'${fd.name}',Georgia,'Times New Roman',serif` : 'var(--font)'};
   --grad:linear-gradient(135deg,${pal.primary},${pal.accent});
   --typo-scale:${typoScale}; --typo-track:${typoTrack}em; --typo-hlh:${typoHLh}; --typo-blh:${typoBLh};
+  --sec-pad:${d.spacing}px;
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:smooth}
@@ -1625,7 +1763,46 @@ h1,h2,h3,h4,p,li{overflow-wrap:break-word}
 img{max-width:100%;display:block}
 a{color:inherit;text-decoration:none}
 .container{max-width:${d.containerWidth}px;margin:0 auto;padding:0 24px}
-.section{padding:${d.spacing}px 0;position:relative}
+.section{padding:var(--sec-pad) 0;position:relative}
+/* ---- page shell: the spatial language (see data/ai-shape.js) ----------------
+   Every section sits inside one of these. Four knobs — how wide the block is
+   allowed to be, what is behind it, where the heading sits and how much air it
+   gets — which together are what makes one page look unlike another. A bento
+   grid and a numbered list in the same frame, with the same gutters and the
+   same heading position, read as the same page. */
+.rhythm-tight{padding:calc(var(--sec-pad) * .68) 0}
+.rhythm-airy{padding:calc(var(--sec-pad) * 1.38) 0}
+.measure-narrow > .container{max-width:760px}
+.measure-wide > .container{max-width:${Math.round(d.containerWidth * 1.16)}px}
+.measure-full > .container{max-width:none;padding:0 clamp(18px,3.4vw,52px)}
+.ground-surface{background:color-mix(in srgb,var(--surface) 62%,transparent);border-top:1px solid color-mix(in srgb,var(--text) 7%,transparent);border-bottom:1px solid color-mix(in srgb,var(--text) 7%,transparent)}
+.ground-wash{background:color-mix(in srgb,var(--primary) 6%,transparent)}
+.ground-wash::before{content:'';position:absolute;inset:0;pointer-events:none;background:radial-gradient(60% 70% at 78% 20%,color-mix(in srgb,var(--accent) 16%,transparent),transparent 70%)}
+.ground-rule{border-top:1px solid color-mix(in srgb,var(--text) 12%,transparent)}
+.ground-rule .sec-head h2::after{content:'';display:block;width:56px;height:3px;border-radius:2px;background:var(--grad);margin-top:18px}
+.ground-band{background:var(--grad);color:#fff}
+.ground-band::after{content:'';position:absolute;inset:0;pointer-events:none;background:radial-gradient(70% 90% at 15% 85%,rgba(255,255,255,.16),transparent 62%)}
+.ground-band > .container{position:relative;z-index:1}
+.ground-band .eyebrow{color:rgba(255,255,255,.86)}
+.ground-band .sub,.ground-band .about-text,.ground-band p,.ground-band li{color:rgba(255,255,255,.88)}
+.ground-band h2,.ground-band h3,.ground-band h4{color:#fff}
+.ground-band .card,.ground-band .tbl-wrap,.ground-band .gh-repo,.ground-band .cd-cell{background:rgba(255,255,255,.11);border-color:rgba(255,255,255,.24);box-shadow:none;color:#fff;backdrop-filter:blur(3px)}
+.ground-band .card p,.ground-band .card li{color:rgba(255,255,255,.86)}
+.ground-band .stat-num,.ground-band .stat-label,.ground-band .sb-label{color:#fff}
+.ground-band .btn.ghost{border-color:rgba(255,255,255,.55);color:#fff}
+.ground-band .qr-line,.ground-band figcaption{color:inherit}
+.ground-band details,.ground-band .faq-item{background:rgba(255,255,255,.10);border-color:rgba(255,255,255,.22);color:#fff}
+.ground-band summary{color:#fff}
+.head-bare{margin-bottom:26px}
+.head-bare h2{font-size:calc(clamp(1.35rem,2.6vw,1.9rem) * var(--typo-scale));opacity:.92}
+.head-center .sec-head{margin-left:auto;margin-right:auto;text-align:center}
+.head-center .sec-head .faq-links,.head-center .sec-head .sub{margin-left:auto;margin-right:auto}
+.head-center .sec-head h2::after{margin-left:auto;margin-right:auto}
+.head-split .sec-head{max-width:none;display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:8px 48px;align-items:end}
+.head-split .sec-head .eyebrow{grid-column:1}
+.head-split .sec-head h2{grid-column:1}
+.head-split .sec-head .sub{grid-column:2;grid-row:2 / span 2;margin-top:0;text-align:left}
+@media(max-width:760px){.head-split .sec-head{grid-template-columns:1fr;align-items:start}.head-split .sec-head .sub{grid-column:1;grid-row:auto;margin-top:10px}}
 /* client theme toggle */
 body.theme-light{--bg:#f6f7fb;--surface:#ffffff;--text:#151827;--muted:#5d6487;--primary-text:${lightRoles.primary};--accent-text:${lightRoles.accent};--shadow:0 20px 60px rgba(20,30,70,.10)}
 body.theme-light .hero-shade{background:linear-gradient(180deg,rgba(15,18,40,.30),rgba(15,18,40,.12) 60%,var(--bg))}
@@ -1639,7 +1816,7 @@ body.theme-dark .hero-tag{color:#e8eaf2}
 .sec-head{max-width:640px;margin-bottom:48px}
 .sec-head h2{font-size:calc(clamp(1.8rem,4vw,2.6rem) * var(--typo-scale));line-height:1.15;letter-spacing:-.02em}
 .sub{color:var(--muted);margin-top:10px;font-size:1.05rem}
-.btn{display:inline-block;padding:13px 28px;border-radius:999px;font-weight:700;font-size:.95rem;border:2px solid transparent;cursor:pointer;transition:.25s;font-family:var(--font)}
+.btn{display:inline-block;padding:13px 28px;border-radius:999px;font-weight:700;font-size:.95rem;border:2px solid transparent;cursor:pointer;transition:.25s;font-family:var(--font);white-space:nowrap}
 .btn.solid{background:var(--grad);color:#fff;box-shadow:0 10px 30px rgba(0,0,0,.25)}
 .btn.solid:hover{transform:translateY(-2px);filter:brightness(1.08)}
 .btn.ghost{border-color:color-mix(in srgb,var(--text) 35%,transparent);background:transparent}
@@ -1710,6 +1887,7 @@ body.theme-dark .hero-tag{color:#e8eaf2}
 .theme-btn{background:none;border:1px solid color-mix(in srgb,var(--text) 22%,transparent);border-radius:99px;width:38px;height:38px;cursor:pointer;font-size:1rem;color:var(--text);transition:.2s;flex-shrink:0}
 .theme-btn:hover{border-color:var(--primary)}
 .nav-cta{margin-left:4px}
+.nav-cta-mobile{display:none}
 .nav-links a{color:var(--muted);font-weight:600;font-size:.92rem;transition:.2s}
 .nav-links a:hover{color:var(--text)}
 .cart-btn{background:none;border:none;font-size:1.25rem;cursor:pointer;position:relative}
@@ -1948,6 +2126,44 @@ body.theme-dark .hero-tag{color:#e8eaf2}
 .gal-m.mos-2{grid-row:span 2}
 .gal-m.mos-6{grid-column:span 2}
 @media (max-width:800px){.gal-mosaic{grid-auto-rows:110px}.gal-m.mos-1{grid-column:span 2;grid-row:span 1}.gal-m.mos-2{grid-row:span 1}}
+/* gallery: strip — a horizontal rail of tall frames. The work reads as a
+   sequence, which is what a portfolio wants; the mosaic reads as a set. */
+.gal-strip{overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;margin:0 calc(-1 * clamp(0px,2vw,26px));padding:0 clamp(0px,2vw,26px) 18px;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
+.gs-track{display:flex;gap:16px;align-items:stretch}
+.gs-frame{flex:0 0 clamp(210px,24vw,300px);scroll-snap-align:start;position:relative;margin:0;border-radius:16px;overflow:hidden;background:color-mix(in srgb,var(--text) 6%,transparent)}
+.gs-frame img{width:100%;height:100%;aspect-ratio:13/18;object-fit:cover;transition:.6s}
+.gs-frame:hover img{transform:scale(1.05)}
+.gs-frame figcaption{position:absolute;inset:auto 0 0 0;padding:40px 16px 14px;background:linear-gradient(transparent,rgba(0,0,0,.72));color:#fff;display:flex;flex-direction:column;gap:2px;font-size:.88rem}
+.gs-frame figcaption small{opacity:.72;font-size:.76rem;letter-spacing:.04em;text-transform:uppercase}
+/* gallery: collage — mixed aspects with the captions BELOW the frames, so the
+   images are not all wearing the same dark overlay. */
+.gal-collage{display:grid;grid-template-columns:repeat(6,1fr);gap:clamp(10px,1.4vw,20px)}
+.gcoll{margin:0;display:flex;flex-direction:column;gap:10px}
+.gcoll img{width:100%;height:100%;object-fit:cover;border-radius:14px;transition:.5s}
+.gcoll:hover img{transform:translateY(-4px)}
+.gcoll figcaption{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:.9rem;font-weight:600}
+.gcoll figcaption small{font-weight:500;color:var(--muted);font-size:.78rem;letter-spacing:.05em;text-transform:uppercase}
+.gcoll-1{grid-column:span 4;grid-row:span 2}
+.gcoll-2{grid-column:span 2}
+.gcoll-3{grid-column:span 2}
+.gcoll-4{grid-column:span 3}
+.gcoll-5{grid-column:span 3}
+.gcoll-1 img{aspect-ratio:1/1}
+.gcoll-2 img,.gcoll-3 img{aspect-ratio:4/3}
+.gcoll-4 img,.gcoll-5 img{aspect-ratio:3/2}
+@media(max-width:760px){.gal-collage{grid-template-columns:1fr 1fr}.gcoll-1{grid-column:span 2;grid-row:auto}.gcoll-2,.gcoll-3,.gcoll-4,.gcoll-5{grid-column:span 1}}
+/* gallery: reel — one large frame with a thumbnail rail under it. */
+.gal-reel{display:grid;gap:14px}
+.gr-stage{margin:0;position:relative;border-radius:18px;overflow:hidden;background:color-mix(in srgb,var(--text) 6%,transparent)}
+.gr-stage img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block}
+.gr-stage figcaption{position:absolute;inset:auto 0 0 0;padding:56px 24px 18px;background:linear-gradient(transparent,rgba(0,0,0,.7));color:#fff;font-weight:600;font-size:1.05rem}
+.gr-rail{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.gr-thumb{margin:0;position:relative;border-radius:12px;overflow:hidden;opacity:.78;transition:.35s;cursor:pointer}
+.gr-thumb:hover,.gr-thumb.on{opacity:1}
+.gr-thumb img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block;transition:.5s}
+.gr-thumb figcaption{position:absolute;inset:auto 0 0 0;padding:22px 10px 8px;background:linear-gradient(transparent,rgba(0,0,0,.66));color:#fff;font-size:.72rem;opacity:0;transition:.3s}
+.gr-thumb:hover figcaption{opacity:1}
+@media(max-width:760px){.gr-rail{grid-template-columns:repeat(2,1fr)}}
 /* about: floating chips */
 .about-float{position:relative}
 .about-float img{border-radius:26px}
@@ -2099,7 +2315,21 @@ ${settings.proExport === true ? '' : `
 .tl-body p{color:var(--muted)}
 /* faq: two columns */
 .faq-cols{max-width:1080px;grid-template-columns:1fr 1fr;gap:14px 20px;align-items:start}
-@media(max-width:760px){.faq-cols{grid-template-columns:1fr}}
+/* faq: accordion — one column, large type, no card chrome, numbered. */
+.faq-acc{max-width:820px;gap:0}
+.faq-wide{background:none;border:0;border-bottom:1px solid color-mix(in srgb,var(--text) 12%,transparent);border-radius:0;box-shadow:none;padding:0}
+.faq-wide summary{padding:26px 0;font-size:calc(clamp(1.05rem,2.1vw,1.32rem) * var(--typo-scale));gap:18px;justify-content:flex-start}
+.faq-wide summary .faq-n{color:var(--primary-text);font-size:.72rem;letter-spacing:.14em;min-width:2.2em;font-variant-numeric:tabular-nums;padding-top:5px}
+.faq-wide summary .chev{margin-left:auto}
+.faq-wide p{padding:0 0 26px 2.6em;max-width:64ch;color:var(--muted)}
+.faq-wide[open] summary{color:var(--text)}
+/* faq: split — the heading holds a column of its own and the questions scroll
+   beside it. Uses sticky so the heading stays with the answers on desktop. */
+.faq-two{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:clamp(24px,4vw,64px);align-items:start}
+.faq-two .faq-aside{position:sticky;top:96px}
+.faq-two .faq-aside .sec-head{margin-bottom:0;max-width:none}
+.faq-two .faq-list{max-width:none;margin:0}
+@media(max-width:820px){.faq-two{grid-template-columns:1fr}.faq-two .faq-aside{position:static}}
 /* logos: static grid */
 .logos-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px}
 .logos-grid .logo-mark{width:100%;justify-content:center;border:1px solid color-mix(in srgb,var(--text) 8%,transparent);border-radius:14px;padding:20px 10px;opacity:.75;white-space:nowrap;font-size:1.05rem}
@@ -2190,7 +2420,14 @@ ${settings.proExport === true ? '' : `
   .nav-links{position:fixed;top:calc(var(--pai-sched-h,0px) + 68px);left:0;right:0;background:var(--bg);flex-direction:column;padding:20px 24px;gap:16px;display:none;border-bottom:1px solid color-mix(in srgb,var(--text) 8%,transparent)}
   .nav-links.open{display:flex}
   .burger{display:flex}
-  .section{padding:70px 0}
+  /* The bar cannot hold a brand, a full-phrase CTA and a burger side by side, so
+     the CTA moves into the menu it opens rather than wrapping inside a button
+     that then overflows the bar. The conversion path is kept, not dropped. */
+  .nav-cta{display:none}
+  .nav-cta-mobile{display:block;margin-top:6px}
+  .section{padding:calc(var(--sec-pad) * .78) 0}
+  .rhythm-tight{padding:calc(var(--sec-pad) * .58) 0}
+  .rhythm-airy{padding:calc(var(--sec-pad) * 1.05) 0}
   .about-grid,.contact-grid{grid-template-columns:1fr;gap:32px}
   .gallery,.masonry-wrap{grid-template-columns:1fr 1fr;columns:2}
   .foot-grid{grid-template-columns:1fr}
@@ -2202,7 +2439,9 @@ ${settings.proExport === true ? '' : `
 @media(max-width:520px){
   .gallery,.masonry-wrap{grid-template-columns:1fr;columns:1}
   .hero-cta{flex-direction:column;align-items:center}
-  .btn{width:100%;text-align:center}
+  /* Full-width buttons may wrap: there is no bar to overflow, and a two-line
+     label on a phone reads better than a squeezed single line. */
+  .btn{width:100%;text-align:center;white-space:normal}
 }
 ${motionCSS(p)}
 @media(prefers-reduced-motion:reduce){
@@ -3046,7 +3285,15 @@ ${motionCSS(p)}
       ? Review.stampCached(pages) : '';
     const feedbackTo = String((p.site && p.site.email) || '').trim();
     const grade = p.site.photoGrade || {};
-    const bodyClass = grade.on ? ('photo-grade' + (grade.blend === 'soft-light' ? ' photo-grade-soft' : '')) : '';
+    const sysId = systemId(p);
+    const SysLib = sysId ? systemLib() : null;
+    // The system CSS lands straight after the base stylesheet and before any
+    // style pack the user applied by hand: a school is the page's foundation, an
+    // explicitly chosen pack is a deliberate override and must still win.
+    const systemCss = (sysId && SysLib) ? `<style>${cssSafe(SysLib.css(sysId))}</style>` : '';
+    const bodyClass = [sysId ? 'sys-' + sysId : '',
+      grade.on ? ('photo-grade' + (grade.blend === 'soft-light' ? ' photo-grade-soft' : '')) : '']
+      .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
     let html = `<!DOCTYPE html>
 <html lang="${esc(lang)}"${buildStamp ? ` data-pai-build="${esc(buildStamp)}"` : ''}${feedbackTo ? ` data-pai-feedback="${esc(feedbackTo)}"` : ''}>
 <head>
@@ -3059,6 +3306,7 @@ ${fontLink}
 ${customFontStyle}
 ${analytics}
 <style>${siteCSS(p, settings)}</style>${waCss(p)}
+${systemCss}
 ${styleCss}
 ${customCss}
 ${scheduleCss}

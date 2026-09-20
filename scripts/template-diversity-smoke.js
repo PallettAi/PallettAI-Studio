@@ -180,7 +180,7 @@ console.log('\n== 4. No section variant dominates the set ==');
 {
   // The regression this catches: a new starter copied from an old one, drifting
   // the set back towards a single shape one template at a time.
-  for (const type of ['contact', 'testimonials', 'gallery', 'stats', 'cta']) {
+  for (const type of ['contact', 'testimonials', 'gallery', 'stats', 'cta', 'faq']) {
     const used = TEMPLATES.map((t) => t.sections.find((s) => s.type === type)).filter(Boolean);
     const values = used.map((s) => s.layout || '(classic)');
     // The bar is the catalog rather than a fixed number: a shape the app offers

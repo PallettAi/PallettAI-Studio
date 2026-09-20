@@ -75,6 +75,14 @@ const CHROME_VIEWS = [
     chip: ['#9fd4ff', '#08203c', '#7cc0f8', '#8fcaf9']
   },
   {
+    id: 'tools',
+    label: 'Toolkit',
+    blurb: 'Practical tools, launch checks and field guides.',
+    icon: 'spark',
+    group: 'library',
+    chip: ['#34d399', '#9fd4ff', '#c9e7ff', '#7cc0f8']
+  },
+  {
     id: 'settings',
     label: 'Settings',
     blurb: 'Account, appearance, and studio defaults.',

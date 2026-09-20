@@ -321,6 +321,25 @@ function validLayout(type, id) {
   return variants.some((v) => v.id === id);
 }
 
+/*
+  THE ONE COMPOSITION AUTHORITY.
+
+  This function runs last, on the finished project, and for a long time it was
+  the reason a generator full of variety produced the same website over and over:
+  every other pass — the industry's section list, the optional-section drop, the
+  look's hero tray, the motion pass, the fingerprint's shuffle — picks as though
+  it were deciding the page, and then this one re-imposed a fixed per-family
+  recipe over the top. Order, layouts and section titles were all overwritten
+  here, so the only thing left varying between two sites of the same trade was
+  the palette and the fonts. That is precisely what "it still looks the same"
+  meant, and no amount of new variety added upstream could survive it.
+
+  So the authority is now explicit. When a caller supplies a `plan` from
+  data/ai-rhythm.js, that plan decides order, presence, treatment and length, and
+  this pass applies it without shuffling on top. Compose keeps everything it is
+  genuinely better at: the multi-page split, the hero sanity checks, the section
+  contracts, the novelty measure, and the classic-layouts escape hatch.
+*/
 function applyCompose(project, opts) {
   const src = opts || {};
   if (!project || !project.site) return project;
@@ -331,12 +350,18 @@ function applyCompose(project, opts) {
   const layouts = recipe.layouts[variant] || recipe.layouts[0];
   const photoLed = src.photoMode !== 'none' && src.photoMode !== 'ai';
   const classic = src.layouts === 'classic';
+  const plan = (src.plan && Array.isArray(src.plan.order) && src.plan.order.length) ? src.plan : null;
+  const planLayouts = (plan && plan.layouts && Object.keys(plan.layouts).length) ? plan.layouts : null;
 
   const restyle = (sections) => {
-    let list = orderSections(sections, recipe.order, seed);
-    if (!classic && layouts) {
-      Object.keys(layouts).forEach((type) => {
-        const layout = layouts[type];
+    // No shuffle behind a rhythm: NaN switches the seeded reorder off, because a
+    // plan that says "the work comes second" does not mean "unless the seed
+    // disagrees".
+    let list = orderSections(sections, plan ? plan.order : recipe.order, plan ? NaN : seed);
+    const spec = planLayouts || layouts;
+    if (!classic && spec) {
+      Object.keys(spec).forEach((type) => {
+        const layout = spec[type];
         const sec = list.find((s) => s && s.type === type);
         if (!sec || !validLayout(type, layout)) return;
         sec.layout = layout;
@@ -347,7 +372,10 @@ function applyCompose(project, opts) {
     if (hero && hero.layout === 'terminal' && (src.typeId === 'food' || src.typeId === 'beauty' || src.typeId === 'retail')) {
       hero.layout = 'split';
     }
-    if (!classic && recipe.titles) {
+    // Section titles: the rhythm's pass has already named these sections from a
+    // bank of real alternatives, and the recipe's single fixed title per section
+    // would put every site in the trade back on the same words.
+    if (!classic && recipe.titles && !plan) {
       Object.keys(recipe.titles).forEach((type) => {
         const sec = list.find((s) => s && s.type === type);
         if (sec && recipe.titles[type]) sec.title = recipe.titles[type];

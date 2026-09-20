@@ -20,6 +20,11 @@ function loadAI() {
   sandbox.Revert = require(path.join(ROOT, 'data', 'revert.js'));
   sandbox.AiTranslate = require(path.join(ROOT, 'data', 'ai-translate.js'));
   sandbox.AiFingerprint = require(path.join(ROOT, 'data', 'ai-fingerprint.js'));
+  sandbox.AiVoice = require(path.join(ROOT, 'data', 'ai-voice.js'));
+  sandbox.AiRhythm = require(path.join(ROOT, 'data', 'ai-rhythm.js'));
+  sandbox.AiShape = require(path.join(ROOT, 'data', 'ai-shape.js'));
+  sandbox.AiSystem = require(path.join(ROOT, 'data', 'ai-system.js'));
+  sandbox.AiTemplateCatalog = require(path.join(ROOT, 'data', 'ai-template-catalog.js'));
   sandbox.AiPhotos = require(path.join(ROOT, 'data', 'ai-photos.js'));
   sandbox.AiCompose = require(path.join(ROOT, 'data', 'ai-compose.js'));
   sandbox.AiFacts = require(path.join(ROOT, 'data', 'ai-facts.js'));
