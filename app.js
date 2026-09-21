@@ -12968,6 +12968,22 @@ const App = (() => {
     show();
   }
 
+  // ---------------- signed data-only hotfixes ----------------
+  async function hydrateHotfix() {
+    if (!window.pallettai || typeof window.pallettai.getHotfix !== 'function') return null;
+    try {
+      const patch = await window.pallettai.getHotfix();
+      if (!patch || typeof Hotfix === 'undefined' || !Hotfix.merge) return null;
+      // This is intentionally a data namespace. No field is treated as a
+      // script, module path, URL or DOM fragment.
+      window.PallettAIHotfixes = Hotfix.merge(window.PallettAIHotfixes || {}, patch);
+      document.documentElement.dataset.hotfix = String(patch.version || 'active');
+      return window.PallettAIHotfixes;
+    } catch (e) {
+      return null;
+    }
+  }
+
   // ---------------- boot ----------------
   async function init() {
     if (initialized) return;
@@ -12986,6 +13002,7 @@ const App = (() => {
       }
     }
     await loadProjects();
+    await hydrateHotfix();
     await hydrateRevs();
     loadSettings();
     initCrashReporter();

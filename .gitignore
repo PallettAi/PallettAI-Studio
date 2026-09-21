@@ -9,6 +9,7 @@ supabase/.temp/
 # committed: anyone holding it can mint unlimited Pro entitlements that verify
 # offline. `.refcode-private-key*` also catches timestamped backups.
 .refcode-private-key*
+.hotfix-keys/
 
 # Local design-system preview output (scripts/school-preview.js)
 .preview/

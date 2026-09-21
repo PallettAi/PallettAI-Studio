@@ -91,6 +91,8 @@ console.log('\n== Every installer call has an exit behind it ==');
     !/startupUpdateRunning = false;\s*\n\s*updater\.quitAndInstall/.test(main));
   ok('and it reports a restart only when the installer armed',
     /if \(await armUpdateAndQuit\(\)\) return true;/.test(main));
+  ok('implicit quit installation is disabled so macOS cannot race the explicit hand-off',
+    /updater\.autoInstallOnAppQuit = false;/.test(main));
 }
 
 console.log('\n== The hand-off waits for the archive, not for a stopwatch ==');

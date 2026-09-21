@@ -3,6 +3,7 @@
 const { app, BrowserWindow, Menu, shell, dialog, ipcMain, safeStorage, nativeTheme, systemPreferences } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const isMac = process.platform === 'darwin';
 
@@ -349,6 +350,63 @@ function main() {
   };
 
   const SECRET_KEYS = new Set(['publish.netlifyToken', 'publish.neocitiesKey', 'publish.vercelToken', 'publish.cloudflareToken', 'publish.githubToken', 'online.pixabayKey', 'online.companiesHouseKey']);
+
+  // ---------------------------------------------------------------- signed data-only hotfixes
+  // The hotfix channel can change bounded data while Studio is open; it can
+  // never replace executable app code. A public key must be configured in the
+  // packaged build (or PALLETTAI_HOTFIX_PUBLIC_KEY in a source run). Empty means
+  // disabled, which is the safe default until the release key is provisioned.
+  const HOTFIX_URL = process.env.PALLETTAI_HOTFIX_URL || 'https://pallettai.org/studio/hotfix.json';
+  const HOTFIX_PUBLIC_KEY = process.env.PALLETTAI_HOTFIX_PUBLIC_KEY || '';
+  const HOTFIX_TTL_MS = 6 * 60 * 60 * 1000;
+  const hotfixCachePath = () => path.join(app.getPath('userData'), 'hotfix-cache.json');
+  let hotfixMemory = null;
+  function hotfixUrlSafe(url) {
+    try { return new URL(String(url || '')).protocol === 'https:'; } catch (_) { return false; }
+  }
+  function hotfixVerify(raw) {
+    try {
+      if (!HOTFIX_PUBLIC_KEY || !raw || typeof raw !== 'object' || typeof raw.signature !== 'string') return false;
+      const Hotfix = require('./data/hotfix.js');
+      const signature = Buffer.from(raw.signature, 'base64');
+      return crypto.verify(null, Buffer.from(Hotfix.canonicalPayload(raw), 'utf8'), HOTFIX_PUBLIC_KEY, signature);
+    } catch (_) { return false; }
+  }
+  function hotfixReadCache() {
+    try {
+      const cached = JSON.parse(fs.readFileSync(hotfixCachePath(), 'utf8'));
+      if (cached && cached.savedAt && Date.now() - cached.savedAt < HOTFIX_TTL_MS) {
+        const Hotfix = require('./data/hotfix.js');
+        const checked = Hotfix.sanitize(cached.manifest, app.getVersion());
+        return checked.ok ? checked.value : null;
+      }
+    } catch (_) {}
+    return null;
+  }
+  async function fetchHotfix() {
+    if (!app.isPackaged || !HOTFIX_PUBLIC_KEY || !hotfixUrlSafe(HOTFIX_URL)) return null;
+    try {
+      const response = await fetch(HOTFIX_URL, { signal: AbortSignal.timeout(5000), headers: { Accept: 'application/json' } });
+      if (!response.ok) throw new Error('hotfix HTTP ' + response.status);
+      const raw = await response.json();
+      if (!hotfixVerify(raw)) throw new Error('hotfix signature rejected');
+      const Hotfix = require('./data/hotfix.js');
+      const checked = Hotfix.sanitize(raw, app.getVersion());
+      if (!checked.ok) throw new Error(checked.error);
+      try { writeFileAtomic(hotfixCachePath(), JSON.stringify({ savedAt: Date.now(), manifest: raw }), 0o600); } catch (_) {}
+      hotfixMemory = checked.value;
+      return hotfixMemory;
+    } catch (error) {
+      console.warn('hotfix unavailable:', error && error.message);
+      return hotfixMemory || hotfixReadCache();
+    }
+  }
+  function registerHotfixIpc() {
+    ipcMain.handle('hotfix-get', async (event) => {
+      if (!fromMainFrame(event, win)) return null;
+      return fetchHotfix();
+    });
+  }
 
   function secretsStorePath() {
     return path.join(app.getPath('userData'), 'publish-secrets.bin');
@@ -790,8 +848,10 @@ function main() {
     }
     if (!(await squirrelStaged())) {
       // Leaving now would cut the transfer in half and lose the update without
-      // saying so. Staying open costs the user nothing: the download is already
-      // on disk, autoInstallOnAppQuit finishes it, and the next quit installs it.
+      // saying so. Keep the workspace open, then enable the library's fallback
+      // only for this already-armed update so the user's next deliberate quit
+      // can finish it. The normal path remains explicit and single-shot.
+      try { updater.autoInstallOnAppQuit = true; } catch (_) {}
       console.error('update hand-off: Squirrel had not finished reading the archive; staying open');
       return false;
     }
@@ -838,7 +898,10 @@ function main() {
       // Startup owns the download explicitly so the main window cannot appear
       // before the update is installed. Manual checks use this same path.
       updater.autoDownload = false;
-      updater.autoInstallOnAppQuit = true;
+      // The app owns installation explicitly through the guarded hand-off.
+      // Keeping this false prevents electron-updater's implicit quit hook from racing
+      // that path and triggering duplicate installer prompts on macOS.
+      updater.autoInstallOnAppQuit = false;
       // Windows: refuse an installer whose Authenticode publisher can't be
       // verified. macOS has no equivalent switch because Squirrel.Mac always
       // compares the incoming bundle's code signature against the RUNNING app's,
@@ -932,9 +995,9 @@ function main() {
         STARTUP_DOWNLOAD_TIMEOUT_MS,
         'Update download timed out'
       ));
-      // The download itself cannot be called off, and it does not need to be:
-      // autoInstallOnAppQuit still finishes the job when the user next quits,
-      // and the partial file is discarded if it never completes.
+      // The download itself cannot be called off. If the user skips, the
+      // incomplete hand-off is not installed; a later explicit update check can
+      // retry it safely.
       if (startupSkipped) return false;
       // "Installing" is a lie while the archive is still being handed to Squirrel
       // — on a slow disk that copy is the longest part of the whole update, and a
@@ -1115,6 +1178,7 @@ function main() {
     startCrashReporter();
     registerCrashIpc();
     registerSecretIpc();
+    registerHotfixIpc();
     registerAccentIpc();
     registerThemeIpc();
     registerSplashIpc();

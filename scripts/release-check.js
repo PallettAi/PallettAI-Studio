@@ -139,6 +139,7 @@ const SMOKES = [
   ['scripts/ai-next-upgrades-smoke.js', 'AI provenance, reference-distance & art-direction smoke'],
   ['scripts/ai-director-smoke.js', 'Local AI Director, semantic routing & plan validation smoke'],
   ['scripts/studio-intelligence-smoke.js', 'Studio Intelligence skills smoke'],
+  ['scripts/hotfix-smoke.js', 'Signed data-only hotfix smoke'],
   ['scripts/ai-template-catalog-smoke.js', 'AI template blueprint catalogue smoke'],
   ['scripts/blueprint-gallery-smoke.js', 'Visual blueprint gallery smoke (filtering, staging, safety)'],
   ['scripts/ai-originality-smoke.js', 'AI originality fingerprint, distance & repair smoke'],

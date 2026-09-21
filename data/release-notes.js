@@ -4,10 +4,15 @@
 // Bump `version` when you ship. Each entry: version, date, tagline, highlights[].
 // Keep highlights to 3-4 items, written as user-facing wins (not commit logs).
 const RELEASE_NOTES = {
-  version: '0.4.9',
-  date: 'September 19, 2026',
-  tagline: 'Studio now turns a brief into a considered creative direction, with reusable systems and safer delivery behind it',
+  version: '0.4.10',
+  date: 'September 21, 2026',
+  tagline: 'Studio is ready for a more reliable launch, safer updates and a lighter, faster workspace',
   highlights: [
+    {
+      icon: 'shield',
+      title: 'A safer, more reliable launch',
+      desc: 'The workspace now opens reliably on older Macs and Windows PCs, even when graphics acceleration is unavailable. Optional visual-editor packages stay out of startup until you open Advanced Canvas.'
+    },
     {
       icon: 'spark',
       title: 'Shape the brief before Studio builds',
@@ -22,11 +27,6 @@ const RELEASE_NOTES = {
       icon: 'layers',
       title: 'Start from your own proven systems',
       desc: 'Pro users can save a finished project as a personal starter. It preserves the pages, sections and design while safely leaving behind the previous client’s details, copy and imagery unless you explicitly choose to keep them.'
-    },
-    {
-      icon: 'lock',
-      title: 'More resilient work, safer delivery',
-      desc: 'Background jobs can retry or resume without overlapping, crash reporting is opt-in and scrubbed before sending, and the release gate now covers these new paths alongside the originality, export and security suites.'
     }
   ]
 };

@@ -21,6 +21,9 @@ contextBridge.exposeInMainWorld('pallettai', {
   // launch's startup splash can open in the same palette. Fire-and-forget — the
   // value only matters after this window is gone, and main re-validates it.
   setTheme: (theme) => ipcRenderer.send('theme-changed', theme),
+  // Signed data-only hotfixes. The main process verifies the manifest before
+  // this promise can resolve; the renderer only receives bounded JSON data.
+  getHotfix: () => ipcRenderer.invoke('hotfix-get'),
   secretsGet: (key) => ipcRenderer.invoke('secrets-get', key),
   secretsSet: (key, value) => ipcRenderer.invoke('secrets-set', key, value),
   secretsGetSync: (key) => { try { return ipcRenderer.sendSync('secrets-get-sync', key) || ''; } catch (_) { return ''; } },
