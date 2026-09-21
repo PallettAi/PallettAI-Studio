@@ -28,6 +28,7 @@ function assert(cond, msg) { cond ? pass(msg) : fail(msg); }
 
 const css = fs.readFileSync(path.join(ROOT, 'styles.css'), 'utf8');
 const app = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+const preload = fs.readFileSync(path.join(ROOT, 'preload.js'), 'utf8');
 const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const uiSrc = fs.readFileSync(path.join(ROOT, 'data', 'uikit.js'), 'utf8');
 
@@ -305,7 +306,9 @@ assert(/function uishellReducedMotion/.test(uiSrc), 'the shell has one place tha
 assert(/prefers-reduced-motion: no-preference/.test(css), 'the view cross-fade is opt-in for motion');
 assert(/body:not\(\.no-motion\) \*/.test(css), 'the in-app motion switch still wins');
 assert(/function uishellLowPower/.test(uiSrc), 'older-device capability detection lives in the shell');
+assert(/softwareRendering/.test(uiSrc) && /softwareRendering/.test(preload), 'software-rendered Electron launches opt into low-power styling');
 assert(/body\.low-power/.test(css), 'older-device styling removes expensive visual effects');
+assert(/animation-duration:0s!important/.test(css) && /transition-duration:0s!important/.test(css), 'low-power styling removes decorative animation and transitions');
 assert(/uishellApplyPerformanceMode\(\)/.test(uiSrc), 'the performance mode is applied during shell boot');
 
 if (failed) {

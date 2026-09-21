@@ -4,6 +4,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('pallettai', {
   isElectron: true,
   platform: process.platform,
+  // main.js disables GPU acceleration by default for machines that cannot
+  // initialise Electron's EGL process. Tell the shell so it can also disable
+  // CSS effects that are expensive under software compositing.
+  softwareRendering: process.env.PALLETTAI_HARDWARE_ACCELERATION !== '1',
   versions: {
     app: process.env.npm_package_version || '',
     electron: process.versions.electron,

@@ -2062,6 +2062,23 @@ body.low-power *::after{
   -webkit-backdrop-filter:none!important;
   backdrop-filter:none!important;
 }
+/* Software compositing is reliable but much slower at painting blur, shadows
+   and dozens of independent transitions. This mode keeps the actual product
+   intact and removes only decorative work that competes with typing and tab
+   changes. */
+body.low-power{
+  background-image:none!important;
+}
+body.low-power *{
+  animation-duration:0s!important;
+  animation-delay:0s!important;
+  transition-duration:0s!important;
+  scroll-behavior:auto!important;
+}
+body.low-power .topbar{background:var(--bg)!important}
+body.low-power .modal-backdrop{backdrop-filter:none!important;background:rgba(2,8,20,.84)!important}
+body.low-power .dash-hero::after,
+body.low-power .blueprint-preview:after{display:none!important}
 body.low-power .view.active{animation-duration:.08s;will-change:auto}
 body.low-power .dash-hero,
 body.low-power .suites-intro,

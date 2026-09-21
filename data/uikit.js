@@ -163,7 +163,8 @@ function uishellLowPower() {
     const cores = Number(navigator.hardwareConcurrency || 0);
     const memory = Number(navigator.deviceMemory || 0);
     const saveData = !!(navigator.connection && navigator.connection.saveData);
-    return saveData || (memory > 0 && memory <= 4) || (cores > 0 && cores <= 4);
+    const softwareRendering = !!(typeof window !== 'undefined' && window.pallettai && window.pallettai.softwareRendering);
+    return softwareRendering || saveData || (memory > 0 && memory <= 4) || (cores > 0 && cores <= 4);
   } catch (e) {
     return false;
   }
