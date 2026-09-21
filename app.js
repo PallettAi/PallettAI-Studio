@@ -255,7 +255,13 @@ const App = (() => {
       ['dashboardShowJobTray','dashboardShowMetrics','dashboardShowInsights','dashboardShowTemplateDoor'].forEach((k) => { if (typeof settings[k] !== 'boolean') settings[k] = DB.defaultSettings[k]; });
       if (typeof settings.useSystemAccent !== 'boolean') settings.useSystemAccent = DB.defaultSettings.useSystemAccent;
       if (![3,6,9,12].includes(Number(settings.dashboardRecentCount))) settings.dashboardRecentCount = 6;
-      ['businessName','businessEmail','businessPhone','businessAddress','businessUrl','businessHours','businessSocial'].forEach((k)=>{ if(typeof settings[k]!=='string') settings[k]=DB.defaultSettings[k]||''; settings[k]=String(settings[k]).slice(0,400); });
+      ['businessName','businessEmail','businessPhone','businessAddress','businessUrl','businessHours','businessSocial','defaultBookingUrl','defaultEnquiryEmail'].forEach((k)=>{ if(typeof settings[k]!=='string') settings[k]=DB.defaultSettings[k]||''; settings[k]=String(settings[k]).slice(0,400); });
+      if (!['normal','large'].includes(settings.fontScale)) settings.fontScale = 'normal';
+      if (typeof settings.highContrast !== 'boolean') settings.highContrast = false;
+      if (typeof settings.forceLowPower !== 'boolean') settings.forceLowPower = false;
+      if (!['professional','friendly','minimal'].includes(settings.clientTone)) settings.clientTone = 'professional';
+      if (typeof settings.defaultEnquiryLabel !== 'string') settings.defaultEnquiryLabel = DB.defaultSettings.defaultEnquiryLabel;
+      settings.defaultEnquiryLabel = String(settings.defaultEnquiryLabel).slice(0,120);
     } catch (e) { settings = { ...DB.defaultSettings }; }
     applyTheme();
   }
@@ -292,6 +298,9 @@ const App = (() => {
     document.documentElement.style.setProperty('--accent', accent);
     document.body.classList.toggle('ui-compact', settings.density === 'compact');
     document.body.classList.toggle('no-motion', settings.reducedMotion === true);
+    document.body.classList.toggle('text-large', settings.fontScale === 'large');
+    document.body.classList.toggle('high-contrast', settings.highContrast === true);
+    document.body.classList.toggle('low-power', settings.forceLowPower === true || document.body.classList.contains('low-power'));
   }
 
   // ---- native chrome: OS accent + titlebar drag region ----
@@ -10320,12 +10329,16 @@ const App = (() => {
       defaults: uiIcon('sliders'),
       export: uiIcon('download'),
       online: uiIcon('globe'),
+      accessibility: uiIcon('eye'),
+      client: uiIcon('user'),
+      privacy: uiIcon('shield'),
       studio: uiIcon('gear'),
       about: uiIcon('info')
     };
     const TABS = [
       ['account', 'Account & billing'], ['identity', 'Identity'], ['appearance', 'Appearance'], ['branding', 'Branding'],
-      ['defaults', 'Project defaults'], ['export', 'Export'], ['online', 'Online data'],
+      ['defaults', 'Project defaults'], ['client', 'Client handoff'], ['accessibility', 'Accessibility'],
+      ['export', 'Export'], ['online', 'Online data'], ['privacy', 'Privacy & data'],
       ['studio', 'Studio'], ['about', 'About']
     ];
     const cards = (name, html) => (settingsTab === name ? html : '');
@@ -10479,6 +10492,29 @@ const App = (() => {
           <label class="switch"><input type="checkbox" id="setThemeToggle" ${s.defaultThemeToggle !== false ? 'checked' : ''}><span class="slider"></span></label></div>
       </div>
 `) +
+      cards('client', `
+      <div class="settings-card">
+        <h3>Client handoff defaults</h3>
+        <p class="sub">Keep your usual client-facing choices in one place. These are applied only when you press “Apply to open project”.</p>
+        <div class="set-row"><div><label>Writing tone</label><div class="set-desc">The default voice for client-facing copy and handoff notes.</div></div>
+          <select id="setClientTone"><option value="professional" ${s.clientTone === 'professional' ? 'selected' : ''}>Professional</option><option value="friendly" ${s.clientTone === 'friendly' ? 'selected' : ''}>Friendly</option><option value="minimal" ${s.clientTone === 'minimal' ? 'selected' : ''}>Minimal</option></select></div>
+        <div class="set-row"><div><label>Primary enquiry label</label><div class="set-desc">The call-to-action wording you normally want on new client sites.</div></div><input type="text" id="setEnquiryLabel" maxlength="120" value="${esc(s.defaultEnquiryLabel || 'Send an enquiry')}" placeholder="Send an enquiry"></div>
+        <div class="set-row"><div><label>Booking link</label><div class="set-desc">Optional HTTPS booking destination for the open project.</div></div><input type="url" id="setBookingUrl" value="${esc(s.defaultBookingUrl || '')}" placeholder="https://booking.example.com"></div>
+        <div class="set-row"><div><label>Enquiry email</label><div class="set-desc">Optional recipient used when applying defaults to a project.</div></div><input type="email" id="setEnquiryEmail" value="${esc(s.defaultEnquiryEmail || '')}" placeholder="hello@example.com"></div>
+        <div class="set-row"><div><label>Apply to open project</label><div class="set-desc">Only changes the open project after you confirm by pressing this button.</div></div><button class="btn primary small" id="btnClientApply">Apply defaults</button></div>
+      </div>
+`) +
+      cards('accessibility', `
+      <div class="settings-card">
+        <h3>Accessibility</h3>
+        <p class="sub">Make the Studio easier to read, navigate and operate. These settings affect the app, not exported client sites.</p>
+        <div class="set-row"><div><label>Text size</label><div class="set-desc">Increase interface text without changing your project output.</div></div>
+          <select id="setFontScale"><option value="normal" ${s.fontScale !== 'large' ? 'selected' : ''}>Standard</option><option value="large" ${s.fontScale === 'large' ? 'selected' : ''}>Large</option></select></div>
+        <div class="set-row"><div><label>Higher contrast</label><div class="set-desc">Strengthen borders, focus rings and muted labels.</div></div><label class="switch"><input type="checkbox" id="setHighContrast" ${s.highContrast ? 'checked' : ''}><span class="slider"></span></label></div>
+        <div class="set-row"><div><label>Reduce motion</label><div class="set-desc">Disable interface transitions and animation.</div></div><label class="switch"><input type="checkbox" id="setA11yMotion" ${s.reducedMotion ? 'checked' : ''}><span class="slider"></span></label></div>
+        <div class="set-row"><div><label>Maximum compatibility</label><div class="set-desc">Remove decorative effects for older computers. Functionality stays the same.</div></div><label class="switch"><input type="checkbox" id="setForceLowPower" ${s.forceLowPower ? 'checked' : ''}><span class="slider"></span></label></div>
+      </div>
+`) +
       cards('export', `
       <div class="settings-card">
         <h3>Export</h3>
@@ -10513,6 +10549,15 @@ const App = (() => {
           <button class="btn ghost small" id="btnClearCache">Clear cache</button></div>
         <div class="set-row"><div><label>Live widget auto-refresh</label><div class="set-desc">How often crypto & FX widgets on exported sites re-fetch (0 = never).</div></div>
           <select id="setWidgetRefresh"><option value="0" ${!s.widgetRefreshSec ? 'selected' : ''}>Never</option><option value="60" ${s.widgetRefreshSec === 60 ? 'selected' : ''}>Every minute</option><option value="300" ${s.widgetRefreshSec === 300 ? 'selected' : ''}>Every 5 minutes</option><option value="900" ${s.widgetRefreshSec === 900 ? 'selected' : ''}>Every 15 minutes</option></select></div>
+      </div>
+`) +
+      cards('privacy', `
+      <div class="settings-card">
+        <h3>Privacy & data</h3>
+        <p class="sub">Control which optional services Studio can use. Your project files remain local unless you enable cloud backup.</p>
+        <div class="set-row"><div><label>Online sources</label><div class="set-desc">Photos, fonts and live data sources. Turn off for a fully offline workspace.</div></div><label class="switch"><input type="checkbox" id="setPrivacyOnline" ${s.onlineEnabled === false ? '' : 'checked'}><span class="slider"></span></label></div>
+        <div class="set-row"><div><label>Crash reports</label><div class="set-desc">Optional, scrubbed diagnostics. Project text, URLs, tokens and account details are never included.</div></div><label class="switch"><input type="checkbox" id="setPrivacyCrash" ${s.crashReportingEnabled ? 'checked' : ''}><span class="slider"></span></label></div>
+        <div class="set-row"><div><label>Clear fetched data</label><div class="set-desc">Remove cached online results without deleting projects or settings.</div></div><button class="btn ghost small" id="btnPrivacyClearCache">Clear cache</button></div>
       </div>
 `) +
       cards('studio', `
@@ -10617,6 +10662,33 @@ const App = (() => {
     $$('[data-acc]').forEach((sw) => sw.onclick = () => { settings.accent = sw.dataset.acc; saveSettings(); renderSettings(); });
     on('#setDensity', 'change', (e) => { settings.density = e.target.value; saveSettings(); });
     on('#setMotion', 'change', (e) => { settings.reducedMotion = e.target.checked; saveSettings(); });
+    on('#setFontScale', 'change', (e) => { settings.fontScale = e.target.value === 'large' ? 'large' : 'normal'; saveSettings(); });
+    on('#setHighContrast', 'change', (e) => { settings.highContrast = e.target.checked; saveSettings(); });
+    on('#setA11yMotion', 'change', (e) => { settings.reducedMotion = e.target.checked; saveSettings(); });
+    on('#setForceLowPower', 'change', (e) => { settings.forceLowPower = e.target.checked; saveSettings(); });
+    on('#setClientTone', 'change', (e) => { settings.clientTone = ['professional','friendly','minimal'].includes(e.target.value) ? e.target.value : 'professional'; saveSettings(); });
+    on('#setEnquiryLabel', 'input', (e) => { settings.defaultEnquiryLabel = String(e.target.value).slice(0, 120); saveSettings(); });
+    on('#setBookingUrl', 'input', (e) => { settings.defaultBookingUrl = String(e.target.value).slice(0, 400); saveSettings(); });
+    on('#setEnquiryEmail', 'input', (e) => { settings.defaultEnquiryEmail = String(e.target.value).slice(0, 400); saveSettings(); });
+    on('#btnClientApply', 'click', () => {
+      const c = current();
+      if (!c || !c.site) return toast('Open a project first, then apply your client defaults.', false);
+      const booking = String(settings.defaultBookingUrl || '').trim();
+      if (booking && typeof Builder !== 'undefined' && Builder.safeHref && !Builder.safeHref(booking)) return toast('Booking link must be a valid HTTPS URL.', false);
+      if (settings.clientTone) c.site.tone = settings.clientTone;
+      if (settings.defaultEnquiryLabel) c.site.enquiryLabel = settings.defaultEnquiryLabel;
+      if (settings.defaultEnquiryEmail) c.site.email = settings.defaultEnquiryEmail;
+      if (booking) c.site.bookingUrl = booking;
+      touch(c);
+      toast('Client defaults applied to the open project ✓', true);
+    });
+    on('#setPrivacyOnline', 'change', (e) => { settings.onlineEnabled = e.target.checked; saveSettings(); renderDatabase(); });
+    on('#setPrivacyCrash', 'change', (e) => {
+      settings.crashReportingEnabled = e.target.checked;
+      saveSettings();
+      try { if (window.pallettai && window.pallettai.setCrashPrefs) window.pallettai.setCrashPrefs(settings.crashReportingEnabled === true, settings.crashReportDsn || ''); } catch (_) {}
+    });
+    on('#btnPrivacyClearCache', 'click', () => { try { ONLINE.clearCache(); } catch (_) {} toast('Fetched data cache cleared.', true); });
     on('#setHeroLayout', 'change', (e) => { settings.defaultHeroLayout = e.target.value; saveSettings(); });
     on('#setWidth', 'change', (e) => { settings.defaultContainerWidth = +e.target.value || 1140; saveSettings(); });
     on('#setRadius', 'change', (e) => { settings.defaultRadius = +e.target.value || 20; saveSettings(); });

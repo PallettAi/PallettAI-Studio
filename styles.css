@@ -2008,6 +2008,17 @@ body.ui-compact .sheet-card{padding:18px 20px}
 body.ui-compact .sheet-row{padding:2px 0}
 body.ui-compact .sheet-grid{gap:14px 22px}
 
+/* Accessibility preferences apply to the Studio shell only. Exported sites
+   keep their own deliberate type scale and contrast system. */
+body.text-large{font-size:16.5px}
+body.text-large .set-row .set-desc,
+body.text-large .sub,
+body.text-large .card p{font-size:1em}
+body.high-contrast{--muted:#c6d9ee;--border:rgba(210,235,255,.34);--ring:0 0 0 3px rgba(255,255,255,.62)}
+body.light.high-contrast{--muted:#314e6c;--border:rgba(8,30,60,.3);--ring:0 0 0 3px rgba(29,95,168,.48)}
+body.high-contrast .settings-tab.active,
+body.high-contrast .nav-item.active{border-color:var(--accent)}
+
 /* ---------- Scrollbars ----------
    A thicker track with a transparent border gives the thumb padding, so it no
    longer looks like a painted stripe against the panel it floats over. */

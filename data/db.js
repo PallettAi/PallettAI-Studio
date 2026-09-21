@@ -1518,6 +1518,9 @@ DB.defaultSettings = {
   useSystemAccent: false,
   density: 'comfortable',
   reducedMotion: false,
+  fontScale: 'normal',
+  highContrast: false,
+  forceLowPower: false,
   brandFooter: true,
   brandFooterText: 'Made by PallettAI',
   brandLink: 'https://pallettai.org',
@@ -1552,7 +1555,11 @@ DB.defaultSettings = {
   businessAddress: '',
   businessUrl: '',
   businessHours: '',
-  businessSocial: ''
+  businessSocial: '',
+  clientTone: 'professional',
+  defaultEnquiryLabel: 'Send an enquiry',
+  defaultBookingUrl: '',
+  defaultEnquiryEmail: ''
 };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = DB;

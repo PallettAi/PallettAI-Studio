@@ -172,7 +172,7 @@ function uishellLowPower() {
 
 function uishellApplyPerformanceMode() {
   if (typeof document === 'undefined' || !document.body) return false;
-  const low = uishellLowPower();
+  const low = uishellLowPower() || document.body.classList.contains('low-power');
   document.body.classList.toggle('low-power', low);
   document.body.dataset.performanceMode = low ? 'low' : 'full';
   return low;
