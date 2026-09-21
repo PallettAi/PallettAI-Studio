@@ -300,7 +300,8 @@ const App = (() => {
     document.body.classList.toggle('no-motion', settings.reducedMotion === true);
     document.body.classList.toggle('text-large', settings.fontScale === 'large');
     document.body.classList.toggle('high-contrast', settings.highContrast === true);
-    document.body.classList.toggle('low-power', settings.forceLowPower === true || document.body.classList.contains('low-power'));
+    document.body.dataset.forceLowPower = settings.forceLowPower === true ? 'true' : 'false';
+    try { if (window.UIShell && window.UIShell.applyPerformanceMode) window.UIShell.applyPerformanceMode(); } catch (_) {}
   }
 
   // ---- native chrome: OS accent + titlebar drag region ----
