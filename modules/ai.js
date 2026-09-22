@@ -2415,6 +2415,9 @@ const AI = (() => {
     const kernelVoice = (Kernel && kernel && Kernel.isLocked(kernel, 'voice')) ? kernel.voice : '';
     const voice = voiceFrom(kernelVoice ? { voice: kernelVoice } : (brief || { voice: 'warm' }));
     const onePager = !!(opts && opts.onePager);
+    const sitePlan = opts && opts.sitePlan && typeof opts.sitePlan === 'object' && Array.isArray(opts.sitePlan.pages)
+      ? opts.sitePlan
+      : null;
     // a concrete subject beats an ambiguous guess (“dog grooming studio” is
     // pet care first, a creative agency never)
     let subjAll = extractSubjectAll(raw);
@@ -2870,13 +2873,19 @@ const AI = (() => {
         creativeBrief: opts && opts.creativeBrief && typeof opts.creativeBrief === 'object'
           ? { version: 1, goal: String(opts.creativeBrief.goal || '').slice(0, 30), audience: String(opts.creativeBrief.audience || '').slice(0, 30), personality: String(opts.creativeBrief.personality || '').slice(0, 30), proof: String(opts.creativeBrief.proof || '').slice(0, 30), signature: String(opts.creativeBrief.signature || '').slice(0, 40) }
           : undefined,
-        originality: undefined
+        originality: undefined,
+        sitemapPlan: sitePlan ? {
+          version: 1,
+          family: String(sitePlan.family || '').slice(0, 30),
+          signature: String(sitePlan.rationale && sitePlan.rationale.signature || '').slice(0, 120),
+          pages: sitePlan.pages.slice(0, 6).map((page) => ({ id: String(page.id || '').slice(0, 30), name: String(page.name || '').slice(0, 80), slug: String(page.slug || '').slice(0, 50), sections: Array.isArray(page.sections) ? page.sections.slice(0, 9).map((x) => String(x).slice(0, 30)) : [] }))
+        } : undefined
       }
     };
-    if (filled && !onePager) {
+    if ((filled || sitePlan) && !onePager) {
       splitPages(project, niche, area, {
         brand, focus, brief: brief || {}, prompt: raw,
-        taste: detectTaste(raw), seed, type
+        taste: detectTaste(raw),        seed, type, sitePlan
       });
     }
     const Composer = composeLib();
@@ -3081,6 +3090,9 @@ const AI = (() => {
     const feat = first('features');
     const stats = first('stats');
     const testi = first('testimonials');
+    const gallery = first('gallery');
+    const collection = first('collection');
+    const booking = first('booking');
     const cta = first('cta');
     const about = first('about');
     const pricing = first('pricing');
@@ -3218,14 +3230,80 @@ const AI = (() => {
     }
     if (area) contactPg.push(sec('map', { title: 'Find us', subtitle: 'We serve ' + area + ' and nearby.', extra: area }));
 
-    project.site.pages = [
+    const basePages = [
       { id: 'pg-home', name: 'Home', slug: 'index', sections: home },
       { id: 'pg-' + serviceSlug, name: serviceName, slug: serviceSlug, sections: services },
       { id: 'pg-about', name: 'About', slug: 'about', sections: aboutPg },
       { id: 'pg-contact', name: 'Contact', slug: 'contact', sections: contactPg }
     ];
+    // The planner is deliberately a thin layer over the existing page compiler:
+    // it chooses the information architecture, while these trusted page recipes
+    // continue to provide the facts, copy and safe section shapes. Unknown page
+    // ids fall back to the closest authored recipe rather than creating empty
+    // pages from prompt text.
+    if (C.sitePlan && Array.isArray(C.sitePlan.pages) && C.sitePlan.pages.length) {
+      // A sitemap direction is not just a renamed copy of the same page. Each
+      // planned destination gets its own trusted recipe so Work, Journal, FAQ
+      // and Pricing have different content roles instead of repeating About.
+      const pageFor = (rawId, index) => {
+        const id = String(rawId || '').toLowerCase();
+        if (id === 'home') return basePages[0];
+        if (id === 'services' || id === 'menu') return basePages[1];
+        if (id === 'about') return basePages[2];
+        if (id === 'contact') return basePages[3];
+        if (id === 'work') {
+          const workBank = bankFor('work', [], { proofs });
+          const out = [pageHero('work', workBank, [])];
+          const evidence = gallery || collection || feat;
+          if (evidence) { const g = cloneSec(evidence); g.title = workBank.gallery && workBank.gallery.title || g.title; g.subtitle = workBank.gallery && workBank.gallery.subtitle || g.subtitle; out.push(g); }
+          if (testi) { const t = cloneSec(testi); t.title = workBank.testimonials && workBank.testimonials.title || t.title; out.push(t); }
+          if (stats) out.push(cloneSec(stats));
+          if (cta) out.push(cloneSec(cta));
+          if (contact) out.push(cloneSec(contact));
+          return { id: 'pg-work', name: 'Work', slug: 'work', sections: out };
+        }
+        if (id === 'journal') {
+          const journalBank = bankFor('journal', [], { proofs });
+          const out = [pageHero('journal', journalBank, [])];
+          const reading = collection || gallery || about;
+          if (reading) { const r = cloneSec(reading); r.title = journalBank.collection && journalBank.collection.title || journalBank.gallery && journalBank.gallery.title || r.title; out.push(r); }
+          if (about) { const a = cloneSec(about); a.title = journalBank.about && journalBank.about.title || a.title; out.push(a); }
+          if (cta) out.push(cloneSec(cta));
+          if (contact) out.push(cloneSec(contact));
+          return { id: 'pg-journal', name: 'Journal', slug: 'journal', sections: out };
+        }
+        if (id === 'pricing') {
+          const pricingBank = bankFor('pricing', [], { proofs: [] });
+          const out = [pageHero('pricing', pricingBank, [])];
+          if (pricing) { const p = cloneSec(pricing); p.title = pricingBank.pricing && pricingBank.pricing.title || p.title; out.push(p); }
+          if (table) out.push(cloneSec(table));
+          if (faq) out.push(cloneSec(faq));
+          if (cta) out.push(cloneSec(cta));
+          if (contact) out.push(cloneSec(contact));
+          return { id: 'pg-pricing', name: 'Pricing', slug: 'pricing', sections: out };
+        }
+        if (id === 'faq') {
+          const faqBank = bankFor('faq', [], { proofs: [] });
+          const out = [pageHero('faq', faqBank, [])];
+          if (faq) { const q = cloneSec(faq); q.title = faqBank.faq && faqBank.faq.title || q.title; out.push(q); }
+          if (contact) out.push(cloneSec(contact));
+          return { id: 'pg-faq', name: 'FAQ', slug: 'faq', sections: out };
+        }
+        return basePages[Math.min(index, basePages.length - 1)];
+      };
+      project.site.pages = C.sitePlan.pages.slice(0, 6).map((spec, index) => {
+        const source = pageFor(spec && spec.id, index);
+        const safeId = String(spec && spec.id || source.slug || 'page').replace(/[^a-z0-9-]/gi, '').slice(0, 40) || 'page';
+        const safeSlug = String(spec && spec.slug || source.slug).replace(/[^a-z0-9-]/gi, '').slice(0, 50) || source.slug;
+        const copy = { ...source, id: safeId === 'home' ? 'pg-home' : 'pg-' + safeId + '-' + index, name: String(spec && spec.name || source.name).slice(0, 80), slug: safeSlug, sections: source.sections.map((section) => cloneSec(section)) };
+        if (spec && spec.id === 'home') { copy.id = 'pg-home'; copy.slug = 'index'; }
+        return copy;
+      });
+    } else {
+      project.site.pages = basePages;
+    }
     project.site.activePageId = 'pg-home';
-    project.site.sections = home;
+    project.site.sections = (project.site.pages.find((page) => page.slug === 'index') || project.site.pages[0]).sections;
   }
 
   function applyNicheExtras(project, nicheId) {

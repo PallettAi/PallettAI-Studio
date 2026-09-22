@@ -22,7 +22,7 @@
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
-    "url": "https://github.com/PallettAi/pallettai-website.git"
+    "url": "https://github.com/PallettAi/PallettAI-Studio.git"
   },
   "dependencies": {
     "@huggingface/transformers": "4.3.0",

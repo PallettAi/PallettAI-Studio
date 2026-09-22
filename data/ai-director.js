@@ -118,11 +118,15 @@ function compile(input) {
     needsBooking: primaryJob === 'book',
     needsLocalSignal: inferAudience(brief, text).indexOf('local') !== -1
   };
+  const pace = String(creative.pace || '').toLowerCase();
+  const memory = String(creative.memory || '').toLowerCase();
   const visual = {
     tension: pick(['quiet confidence','measured contrast','warm precision','editorial restraint','kinetic clarity'], (o.seed || 0) + type.length),
     imageRole: primaryJob === 'trust' ? 'evidence and people' : primaryJob === 'buy' ? 'product desire' : 'context and atmosphere',
+    pace: pace || 'focused',
+    memory: memory || 'difference',
     avoid: unique(['generic hero stock', 'repeated card grids', 'unverified claims', 'decorative text inside images'], 6),
-    preferred: unique([type + '-specific detail', 'one human-scale moment', 'a clear focal point', 'visible whitespace'], 6)
+    preferred: unique([type + '-specific detail', 'one human-scale moment', 'a clear focal point', pace === 'immersive' ? 'a story that unfolds in chapters' : 'visible whitespace', memory ? 'a memorable ' + memory + ' cue' : 'a distinctive signature moment'], 6)
   };
   return {
     version: 1,
@@ -140,6 +144,7 @@ function compile(input) {
       requiredSections: Array.from(new Set(['hero', signature.target, primaryJob === 'book' ? 'contact' : 'cta', content.needsFaq ? 'faq' : 'about']))
     },
     signatureMoment: { id: signature.id, label: signature.label, target: signature.target, layout: signature.layout },
+    experience: { pace: pace || 'focused', memory: memory || 'difference', business: clip(creative.business, 40) },
     visual,
     factsUsed: facts.filter((x) => x && x.confidence === 'client').map((x) => clip(x.key, 60)).slice(0, 12),
     brief: { type, niche, offer: clip(brief.offer, 180), cta: clip(brief.cta, 160), proofs },

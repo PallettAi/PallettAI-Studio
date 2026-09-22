@@ -5,6 +5,15 @@ dist/
 .DS_Store
 supabase/.temp/
 
+# Never stage local credentials or signing material.
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.key
+
 # Referral-code signing key. This is the ONE secret that must never be
 # committed: anyone holding it can mint unlimited Pro entitlements that verify
 # offline. `.refcode-private-key*` also catches timestamped backups.

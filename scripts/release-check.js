@@ -107,6 +107,7 @@ const SMOKES = [
   ['scripts/credit-smoke.js', 'AI credit smoke'],
   ['scripts/ai-features-smoke.js', 'AI features smoke'],
   ['scripts/ai-brief-smoke.js', 'AI brief smoke'],
+  ['scripts/ai-sitemap-smoke.js', 'AI sitemap planner smoke'],
   ['scripts/ai-niche-smoke.js', 'AI niche smoke'],
   ['scripts/ai-followup-smoke.js', 'AI follow-up smoke'],
   // Scope and constraints: how much of the page a sentence covers, and what it
@@ -141,6 +142,7 @@ const SMOKES = [
   ['scripts/studio-intelligence-smoke.js', 'Studio Intelligence skills smoke'],
   ['scripts/hotfix-smoke.js', 'Signed data-only hotfix smoke'],
   ['scripts/ai-template-catalog-smoke.js', 'AI template blueprint catalogue smoke'],
+  ['scripts/ai-generation-diversity-smoke.js', 'AI generation diversity and brief interview smoke'],
   ['scripts/blueprint-gallery-smoke.js', 'Visual blueprint gallery smoke (filtering, staging, safety)'],
   ['scripts/ai-originality-smoke.js', 'AI originality fingerprint, distance & repair smoke'],
   ['scripts/bg-jobs-smoke.js', 'Background jobs smoke (queue, retry, cancel & project isolation)'],

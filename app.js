@@ -6816,6 +6816,9 @@ const App = (() => {
   // direction is chosen; the selected project receives a bounded copy for
   // future Copilot and originality decisions.
   let creativeBrief = null;
+  // A sitemap is a planning artefact, not a project mutation. It stays staged
+  // until the next generation and can be discarded without creating a project.
+  let sitemapPlan = null;
   const AI_CHIPS = [
     { label: 'Tech startup', prompt: 'A modern tech startup building an AI assistant for small businesses, sleek and confident' },
     { label: 'Restaurant', prompt: 'A cozy family restaurant in the city with seasonal dishes and a warm atmosphere' },
@@ -6904,6 +6907,42 @@ const App = (() => {
     };
   }
 
+  function openSitemapPlanner() {
+    const prompt = (($('#aiPrompt') && $('#aiPrompt').value.trim()) || 'a distinctive business website');
+    const brief = collectAiBrief();
+    const planner = typeof AiSitemap !== 'undefined' ? AiSitemap : null;
+    if (!planner) return toast('The sitemap planner is unavailable in this build.', false);
+    const draft = planner.plan({ prompt, brief, seed: generationSalt() });
+    if (!draft || !planner.validate(draft)) return toast('The sitemap planner could not form a safe plan.', false);
+    let active = sitemapPlan && sitemapPlan.rationale ? sitemapPlan : draft;
+    const directions = Array.isArray(draft.directions) ? draft.directions : [draft];
+    const renderPages = (plan) => plan.pages.map((page, index) => `<article class="sitemap-page-card">
+      <span class="sitemap-page-number">${String(index + 1).padStart(2, '0')}</span>
+      <div><b>${esc(page.name)}</b><p>${esc(page.purpose)}</p><small>${page.sections.map((x) => esc(x)).join(' · ')}</small></div>
+    </article>`).join('');
+    const render = () => {
+      const directionCards = directions.map((direction) => `<button type="button" class="sitemap-direction ${direction.direction === active.direction ? 'selected' : ''}" data-sitemap-direction="${esc(direction.direction)}"><b>${esc(direction.rationale.headline)}</b><small>${esc(direction.rationale.reason)}</small><span>${direction.pages.length} pages · ${direction.pages.map((p) => esc(p.name)).join(' · ')}</span></button>`).join('');
+      openModal('Plan the visitor journey', `<div class="sitemap-planner">
+        <p class="sitemap-lede">Compare three information architectures before you generate. This is the structured planning layer used by serious visual builders, adapted to PallettAI’s editable local project model.</p>
+        <div class="sitemap-direction-list">${directionCards}</div>
+        <div class="sitemap-summary"><span class="sitemap-kicker">${esc(active.direction || 'conversion')} · ${esc(active.family)} journey</span><b>${esc(active.rationale.headline)}</b><small>${esc(active.rationale.reason)}</small></div>
+        <div class="sitemap-page-list">${renderPages(active)}</div>
+        <div class="sitemap-foot"><span>${active.pages.length} pages · ${active.pages.reduce((n, p) => n + p.sections.length, 0)} planned section slots · no credits used</span><div><button class="btn ghost small" id="sitemapCancel">Cancel</button><button class="btn primary small" id="sitemapUse">Use this plan</button></div></div>
+      </div>`);
+      $('#sitemapCancel').onclick = closeModal;
+      $$('[data-sitemap-direction]').forEach((button) => button.onclick = () => { active = directions.find((item) => item.direction === button.dataset.sitemapDirection) || active; render(); });
+      $('#sitemapUse').onclick = () => {
+        sitemapPlan = active;
+        const onePager = $('#aiOnePager');
+        if (onePager) onePager.checked = false;
+        closeModal();
+        renderAI();
+        toast('Sitemap staged — the ' + active.direction + ' visitor journey will guide generation.', true);
+      };
+    };
+    render();
+  }
+
   function renderAI() {
     const cred = PLANS.store.creditsLeft();
     const pro = isPro();
@@ -6922,6 +6961,7 @@ const App = (() => {
       <div class="ai-card">
         <h3>Generate a site from a prompt</h3>
         ${stagedBlueprint ? `<div class="ai-blueprint-lock"><span>✦</span><div><b>${esc(stagedBlueprint.name)} direction staged</b><small>${esc(stagedBlueprint.signature || 'Distinctive art direction')} · your facts and copy remain yours</small></div><button class="linkish" id="aiClearBlueprint" type="button">Clear</button></div>` : ''}
+        ${sitemapPlan ? `<div class="ai-blueprint-lock sitemap-staged"><span>⌘</span><div><b>${sitemapPlan.pages.length}-page sitemap staged</b><small>${esc(sitemapPlan.rationale.headline)} · ${sitemapPlan.pages.map((p) => esc(p.name)).join(' · ')}</small></div><button class="linkish" id="aiClearSitemap" type="button">Clear</button></div>` : ''}
         <p class="sub">One click. A complete first draft: logo, ranked photos, and a layout that fits the business. Drop your own photos on the preview to swap them.</p>
         <textarea id="aiPrompt" placeholder="e.g. A modern bakery in Paris with a cozy, artisanal feel…">${lastAI ? esc(lastAI.prompt) : ''}</textarea>
         <div id="briefStrip" style="display:${briefs.length ? 'flex' : 'none'};gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">
@@ -6986,6 +7026,7 @@ const App = (() => {
           <button class="btn primary ai-run" id="aiRun" ${aiBusy ? 'disabled' : ''}>Generate site</button>
           <button class="btn ghost ai-interview" id="aiInterview" ${aiBusy ? 'disabled' : ''}>Shape the brief <small>4 questions</small></button>
           <button class="btn ghost ai-directions" id="aiDirections" ${aiBusy ? 'disabled' : ''}>Explore ${AI.DIRECTION_PROFILES.length} directions <small>(1 credit)</small></button>
+          <button class="btn ghost ai-sitemap" id="aiSitemap" ${aiBusy ? 'disabled' : ''}>Plan sitemap <small>free</small></button>
           <button class="btn ghost" id="aiSaveBrief" title="Save this prompt and brief for repeat client builds">💾 Save brief</button>
         </div>
         <div class="ai-progress" id="aiProgress" hidden></div>
@@ -7089,6 +7130,8 @@ const App = (() => {
 
     const clearBlueprint = $('#aiClearBlueprint');
     if (clearBlueprint) clearBlueprint.onclick = () => { selectedBlueprintId = ''; renderAI(); };
+    const clearSitemap = $('#aiClearSitemap');
+    if (clearSitemap) clearSitemap.onclick = () => { sitemapPlan = null; renderAI(); };
     const urlInp = $('#aiSiteUrl');
     if (urlInp) {
       urlInp.value = aiSiteUrl;
@@ -7110,6 +7153,8 @@ const App = (() => {
     $('#aiRun').onclick = runAI;
     $('#aiInterview').onclick = openCreativeInterview;
     $('#aiDirections').onclick = openDirectionLab;
+    const sitemapBtn = $('#aiSitemap');
+    if (sitemapBtn) sitemapBtn.onclick = openSitemapPlanner;
     $('#aiImagesReal').onclick = () => aiImages('real');
     $('#aiImagesAi').onclick = () => aiImages('ai');
     $('#aiPickBtn').onclick = aiPickPhotos;
@@ -7345,28 +7390,44 @@ const App = (() => {
   }
 
   function openCreativeInterview() {
+    // The interview is deliberately usable before a prompt exists. The answers
+    // are enough to create a first brief, and blocking the button here made the
+    // feature look broken to anyone who tried the obvious flow: Shape the brief
+    // before writing copy.
     const prompt = ($('#aiPrompt') && $('#aiPrompt').value.trim()) || '';
-    if (!prompt) return toast('Write a short brief first so the questions can adapt to it ✍️');
     const detected = AI.detectType ? AI.detectType(prompt) : null;
     const label = detected && (detected.name || detected.id) ? String(detected.name || detected.id) : 'your business';
-    openModal('✦ Creative brief interview', `
-      <div class="creative-interview-intro"><span class="direction-lab-mark">✦</span><div><b>Let’s give the generator a point of view.</b><p>Four quick choices, tailored for ${esc(label)}. Nothing here changes your confirmed business facts.</p></div></div>
+    openModal('✦ Shape the brief', `
+      <div class="creative-interview-intro"><span class="direction-lab-mark">✦</span><div><b>Let’s give the generator a point of view.</b><p>Eight quick choices for ${esc(label)}. Your answers become a usable creative brief; you can still edit every word afterwards.</p></div></div>
       <div class="creative-interview-grid">
+        <label><span>What are you making?</span><select id="creativeBusiness"><option value="service">A service people book or enquire about</option><option value="product">A product, shop or menu</option><option value="portfolio">A portfolio of work</option><option value="community">A community, event or cause</option><option value="education">A course, guide or knowledge hub</option></select></label>
         <label><span>What should a visitor do first?</span><select id="creativeGoal"><option value="learn">Understand what we do</option><option value="trust">See proof and feel confident</option><option value="book">Book or make an appointment</option><option value="buy">Browse prices or buy</option><option value="contact">Request a quote or enquire</option></select></label>
         <label><span>Who matters most?</span><select id="creativeAudience"><option value="local">Local customers</option><option value="professional">Professional buyers</option><option value="premium">People looking for a premium experience</option><option value="family">Families and everyday customers</option><option value="community">A community or cause</option></select></label>
         <label><span>Which visual mood feels right?</span><select id="creativePersonality"><option value="editorial">Editorial and considered</option><option value="cinematic">Cinematic and atmospheric</option><option value="tactile">Warm and tactile</option><option value="kinetic">Bold and energetic</option><option value="quiet">Quiet and spacious</option></select></label>
         <label><span>What should do the convincing?</span><select id="creativeProof"><option value="work">The work, products, or menu</option><option value="reviews">Reviews and results</option><option value="process">The process and expertise</option><option value="story">The founder or story</option><option value="offer">A clear offer and price</option></select></label>
+        <label><span>What should the page feel like?</span><select id="creativePace"><option value="focused">Focused and easy to scan</option><option value="immersive">Immersive and story-led</option><option value="dynamic">Dynamic and energetic</option><option value="spacious">Spacious and calm</option></select></label>
+        <label><span>What should visitors remember?</span><select id="creativeMemory"><option value="craft">The quality and craft</option><option value="people">The people behind it</option><option value="result">The result they can expect</option><option value="place">The place and atmosphere</option><option value="difference">What makes it different</option></select></label>
+        <label><span>Which signature moment sounds strongest?</span><select id="creativeSignature"><option value="process-route">A clear step-by-step process</option><option value="menu-reveal">A memorable menu or offer reveal</option><option value="proof-wall">A wall of proof and reviews</option><option value="case-study">A visual case-study gallery</option><option value="impact-ledger">A visible impact or results ledger</option><option value="story-pulse">A founder or origin story</option></select></label>
       </div>
-      <div class="creative-interview-foot"><span>Your answers become a creative constitution for the concept board.</span><div><button class="btn ghost small" id="creativeInterviewCancel">Cancel</button><button class="btn primary small" id="creativeInterviewGo">Show my directions</button></div></div>`);
+      <div class="creative-interview-foot"><span>Nothing is published or overwritten until you choose a direction.</span><div><button class="btn ghost small" id="creativeInterviewCancel">Cancel</button><button class="btn primary small" id="creativeInterviewGo">Show my directions</button></div></div>`);
     $('#creativeInterviewCancel').onclick = closeModal;
     $('#creativeInterviewGo').onclick = () => {
+      const business = $('#creativeBusiness').value;
+      const fragments = {
+        service: 'service-led', product: 'product-led', portfolio: 'portfolio-led', community: 'community-led', education: 'knowledge-led'
+      };
       creativeBrief = {
         goal: $('#creativeGoal').value,
         audience: $('#creativeAudience').value,
         personality: $('#creativePersonality').value,
         proof: $('#creativeProof').value,
-        version: 1
+        pace: $('#creativePace').value,
+        memory: $('#creativeMemory').value,
+        signature: $('#creativeSignature').value,
+        business: fragments[business] || business,
+        version: 2
       };
+      if (!prompt && $('#aiPrompt')) $('#aiPrompt').value = 'A distinctive ' + fragments[business] + ' website';
       closeModal();
       openDirectionLab();
     };
@@ -7403,19 +7464,22 @@ const App = (() => {
     const font = DB.getFont(project.site.font) || { name: project.site.font || 'Inter' };
     const display = project.site.fontDisplay ? (DB.getFont(project.site.fontDisplay) || {}).name : '';
     const order = sections.slice(0, 6).map((s) => (DB.sectionTypes[s.type] || {}).name || s.type).join(' · ');
+    const motion = Array.from(new Set(sections.map((s) => s && s.animation).filter(Boolean))).slice(0, 2).join(' · ') || 'quiet reveal';
+    const shell = project.site.shell && project.site.shell.language ? project.site.shell.language : 'adaptive shell';
+    const artBlocks = sections.slice(1, 5).map((s, i) => `<span class="direction-block direction-block-${i}" data-section-type="${esc(s.type || '')}" title="${esc((DB.sectionTypes[s.type] || {}).name || s.type || 'Content')}" style="background:${i === 0 ? pal.primary : i === 1 ? pal.accent : i === 2 ? pal.surface : pal.bg}"></span>`).join('');
     const title = profile.label || project.directionName || ('Direction ' + (index + 1));
     const blurb = profile.blurb || project.directionBlurb || 'A fresh, considered direction for this brief.';
     const heroTitle = project.site.name || 'Your brand';
     const heroSub = project.site.tagline || 'A considered first impression.';
-    return `<article class="direction-card ${selected ? 'selected' : ''}" data-direction-card="${index}">
+    return `<article class="direction-card direction-look-${esc(project.dnaLook || 'custom')} ${selected ? 'selected' : ''}" data-direction-card="${index}" data-direction-look="${esc(project.dnaLook || 'custom')}">
       <div class="direction-art" style="--dir-bg:${pal.bg};--dir-surface:${pal.surface};--dir-primary:${pal.primary};--dir-accent:${pal.accent};--dir-text:${pal.text}">
         <div class="direction-art-nav"><span style="background:${pal.primary}"></span><i></i><i></i><i></i></div>
         <div class="direction-art-copy"><small>${esc(hero.eyebrow || project.site.eyebrow || title)}</small><b>${esc(heroTitle)}</b><em>${esc(heroSub.slice(0, 88))}${heroSub.length > 88 ? '…' : ''}</em><strong style="background:${pal.primary}"></strong><u style="background:${pal.accent}"></u></div>
-        <div class="direction-art-blocks"><span style="background:${pal.primary}"></span><span style="background:${pal.accent}"></span><span style="background:${pal.surface}"></span></div>
+        <div class="direction-art-blocks" aria-label="Preview of the page structure">${artBlocks}</div>
       </div>
       <div class="direction-info"><div class="direction-heading"><span class="direction-icon">${profile.icon || '✦'}</span><div><h4>${esc(title)}</h4><p>${esc(blurb)}</p></div></div>
         <div class="direction-swatches"><span style="background:${pal.bg}"></span><span style="background:${pal.surface}"></span><span style="background:${pal.primary}"></span><span style="background:${pal.accent}"></span><small>${esc(pal.name)}</small></div>
-        <div class="direction-meta"><span><b>Look</b>${esc(project.dnaLook || project.directionId || 'custom')}</span><span><b>Type</b>${esc(font.name)}${display ? ' + ' + esc(display) : ''}</span><span><b>Flow</b>${esc(order || 'Hero · content · contact')}</span></div>${project.templateBlueprint ? `<div class="direction-blueprint"><b>${esc(project.templateBlueprint.category || 'Art direction')}</b><span>${esc(project.templateBlueprint.signature || project.templateBlueprint.name || '')}</span></div>` : ''}
+        <div class="direction-meta"><span><b>Look</b>${esc(project.dnaLook || project.directionId || 'custom')}</span><span><b>Type</b>${esc(font.name)}${display ? ' + ' + esc(display) : ''}</span><span><b>Flow</b>${esc(order || 'Hero · content · contact')}</span><span><b>Motion</b>${esc(motion)}</span><span><b>Shell</b>${esc(shell)}</span></div>${project.templateBlueprint ? `<div class="direction-blueprint"><b>${esc(project.templateBlueprint.category || 'Art direction')}</b><span>${esc(project.templateBlueprint.signature || project.templateBlueprint.name || '')}</span></div>` : ''}
       </div>
       <div class="direction-actions"><button class="btn ${selected ? 'primary' : 'ghost'} small" data-direction-use="${index}">${selected ? '✓ Selected' : 'Choose this direction'}</button><button class="btn ghost small" data-direction-remix="${index}">↻ Remix <small>(1 credit)</small></button></div>
     </article>`;
@@ -7440,8 +7504,10 @@ const App = (() => {
 
   async function openDirectionLab() {
     if (aiBusy || (directionState && directionState.busy)) return;
-    const prompt = ($('#aiPrompt') && $('#aiPrompt').value.trim()) || (current() && current().site.tagline) || '';
-    if (!prompt) return toast('Describe the site before exploring directions ✍️');
+    // Directions can be explored before the first generation. Previously this
+    // guard silently made the feature appear dead when the user pressed the
+    // button from a blank AI Studio screen.
+    const prompt = ($('#aiPrompt') && $('#aiPrompt').value.trim()) || (current() && current().site.tagline) || 'a distinctive, memorable business website';
     if (!ensureProjectCapacity()) return;
     if (!spendCredit()) return;
     const siteUrl = (($('#aiSiteUrl') && $('#aiSiteUrl').value.trim()) || aiSiteUrl).trim();
@@ -7687,6 +7753,7 @@ const App = (() => {
         originalityRepair: true,
         photoMode,
         creativeBrief: creativeBrief || undefined,
+        sitePlan: sitemapPlan || undefined,
         // A brand lock is enforced by the engine, not suggested to it.
         kernel: selectedKernel()
       });
@@ -7708,6 +7775,7 @@ const App = (() => {
       selectedSec = null;
       lastAI = { id: p.id, prompt };
       selectedBlueprintId = '';
+      sitemapPlan = null;
       setAIBusy(false);
       if (box) box.hidden = true;
       switchView('designer');

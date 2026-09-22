@@ -23,12 +23,15 @@ const plan = Director.compile({
     proofs: ['Same barber every visit', 'Open late on Thursdays']
   },
   factLedger: { clientFacts: [{ key: 'area', value: 'Leeds', confidence: 'client' }] },
-  creativeBrief: { personality: 'tactile', goal: 'book' }
+  creativeBrief: { personality: 'tactile', goal: 'book', pace: 'immersive', memory: 'craft', business: 'service-led' }
 });
 ok('compiles a versioned strategy', plan.version === 1 && plan.source === 'local-director');
 ok('infers a primary customer job', ['book', 'contact', 'learn'].includes(plan.primaryJob));
 ok('keeps the conversion path bounded', Array.isArray(plan.path) && plan.path.length <= 8);
 ok('creates visual guardrails', plan.visual && plan.visual.avoid.includes('generic hero stock'));
+ok('carries the interview pace into the visual constitution', plan.visual && plan.visual.pace === 'immersive');
+ok('carries the interview memory into the visual constitution', plan.visual && plan.visual.memory === 'craft');
+ok('records the experience contract', plan.experience && plan.experience.business === 'service-led');
 ok('retains client fact provenance only', plan.factsUsed.includes('area'));
 ok('compiled plan validates', Director.validate(plan).ok === true);
 ok('plan text is searchable', Director.planText(plan).includes(plan.primaryJob));
@@ -69,5 +72,8 @@ ok('the receipt explains the signature moment', appSource.includes('Signature mo
 ok('the receipt is responsive and collapsible', cssSource.includes('.strategy-receipt') && cssSource.includes('.strategy-grid'));
 ok('the receipt offers editable strategy controls', appSource.includes('openStrategyEditor') && appSource.includes('Generate revised direction'));
 ok('strategy controls have responsive styling', cssSource.includes('.strategy-editor-grid') && cssSource.includes('.strategy-editor-foot'));
+ok('direction previews expose the selected visual language', appSource.includes('data-direction-look') && appSource.includes('direction-block'));
+ok('direction previews expose motion and shell decisions', appSource.includes('<b>Motion</b>') && appSource.includes('<b>Shell</b>'));
+ok('direction preview languages have distinct block grammars', cssSource.includes('.direction-look-editorial') && cssSource.includes('.direction-look-bold') && cssSource.includes('.direction-look-minimal'));
 
 console.log('\nAI DIRECTOR SMOKE PASSED: ' + passed + ' checks');
