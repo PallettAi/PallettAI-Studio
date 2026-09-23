@@ -767,57 +767,100 @@ function main() {
   // splash is already saying the restart is happening.
   const UPDATE_QUIT_BEAT_MS = 250;
   const UPDATE_EXIT_GRACE_MS = 5000;
-  // How long Squirrel may take to read the archive before we stop waiting on it
-  // and hand the user back to their work.
-  const UPDATE_STAGE_TIMEOUT_MS = 3 * 60 * 1000;
+  // How long Squirrel may take to expand the archive before we stop waiting on
+  // it and hand the user back to their work. Ten minutes sounds excessive until
+  // you watch the step on a spinning disk: 239 MB of bundle has to be expanded
+  // and copied, and the machine that produced the measurements below is an iMac
+  // with an i5 and an HDD. The skip route stays available the whole time.
+  const UPDATE_PREPARE_TIMEOUT_MS = 10 * 60 * 1000;
 
   /*
-    Waiting for the archive, not for a stopwatch.
+    Waiting for the archive to be EXPANDED, not merely downloaded.
 
     On macOS the bytes reach Squirrel through a proxy server that electron-updater
     creates INSIDE THIS PROCESS (MacUpdater.setFeedURL → an http server on
-    127.0.0.1 that streams the already-downloaded zip). Squirrel then copies the
-    whole thing into its own staging folder under ~/Library/Caches. So the process
-    has to outlive that transfer.
+    127.0.0.1 that streams the already-downloaded zip). Squirrel then expands the
+    archive into its own staging folder under ~/Library/Caches, in this process
+    too, and only afterwards writes ShipItState.plist — the instructions ShipIt
+    reads — and starts ShipIt. So the process has to outlive all of that, and the
+    file it writes at the end is the only signal that says so.
 
-    It did not. This used to quit on a fixed timer — 250 ms of grace, then a hard
-    app.exit(0) five seconds later — and whenever the copy took longer than five
-    seconds the pipe died mid-stream. The evidence is unambiguous on the machine
-    this was found on: Squirrel's staging folder held a 53 MB fragment of the
-    129 MB archive, ShipIt's log had no install line at all, and electron-updater's
-    own update.zip in the cache was complete — 129 MB downloaded, 129 MB of it
-    re-read locally, and the update thrown away silently at the halfway mark. The
-    next launch then downloaded the same 129 MB again, which is what "the updater
-    is not working" looks like from the outside.
+    Two earlier versions of this quit too early, and both failed silently:
 
-    Electron's own autoUpdater is the one authority on when Squirrel has the file,
-    and MacUpdater itself waits on exactly this event. Note that electron-updater's
-    'update-downloaded' is NOT that moment — it fires just before the transfer
-    starts, so it is the wrong signal to quit on. This flag is set from the native
-    listener instead, and may already be true by the time we arm.
+    · On a fixed timer (250 ms of grace, then a hard exit five seconds later) the
+      transfer died mid-stream. Squirrel's staging folder held a 53 MB fragment of
+      a 129 MB archive, ShipIt's log had no install line at all, electron-updater's
+      own update.zip was complete, and the next launch downloaded all 129 MB again.
+    · Waiting for Electron's native 'update-downloaded' — the fix for that — still
+      quits a step early, because that event fires when the ZIP has finished
+      DOWNLOADING, before the expansion. 0.4.9 → 0.4.11 lost an update to exactly
+      this: the app left a minute after the download, the staging folder held a
+      73 MB fragment of a 239 MB bundle (a bare .dat.nosync file, no app inside),
+      ShipIt had no log line for that day, and Studio closed with nothing to say.
+
+    ShipIt's next step is to wait for this process to exit, so quitting IS ours to
+    do — but only after this. The file is rewritten for each attempt, so the check
+    is its mtime against the moment we armed, not its existence.
   */
-  let squirrelHasArchive = false;
+  let installArmedAt = 0;
 
-  function noteNativeStageSignal() {
-    try {
-      const native = require('electron').autoUpdater;
-      native.on('update-downloaded', () => { squirrelHasArchive = true; });
-    } catch (e) { /* no native updater (Linux/dev): nothing to wait for */ }
+  function shipItStatePath() {
+    // Squirrel.Mac names its cache folder after the bundle identifier, which
+    // electron-builder derives from appId (ai.pallettai.studio).
+    return path.join(app.getPath('home'), 'Library', 'Caches', 'ai.pallettai.studio.ShipIt', 'ShipItState.plist');
   }
 
-  function squirrelStaged() {
+  function installerPrepared() {
     // Windows installs from the file electron-updater downloaded itself, so there
-    // is no second transfer to wait for.
-    if (process.platform !== 'darwin' || squirrelHasArchive) return Promise.resolve(true);
-    return new Promise((resolve) => {
-      let settled = false;
-      const finish = (ok) => { if (settled) return; settled = true; resolve(ok); };
-      let native = null;
-      try { native = require('electron').autoUpdater; } catch (e) { return finish(true); }
-      native.once('update-downloaded', () => finish(true));
-      native.once('error', () => finish(false));
-      setTimeout(() => finish(false), UPDATE_STAGE_TIMEOUT_MS);
-    });
+    // is no second transfer or expansion to wait for.
+    if (!isMac) return true;
+    if (!installArmedAt) return false;
+    // Two seconds of tolerance: Squirrel can write the state in the same tick the
+    // install is armed, and a sub-millisecond miss here costs ten minutes of
+    // splash for an update that was ready all along.
+    try { return fs.statSync(shipItStatePath()).mtimeMs >= installArmedAt - 2000; } catch (e) { return false; }
+  }
+
+  /*
+    Coming back after the install.
+
+    Squirrel writes launchAfterInstallation:false for this build, and ShipIt obeys
+    it: the update installs and nothing opens. From the outside that is
+    indistinguishable from a broken updater — the app disappears and Studio does
+    not come back — so the one field is flipped once the state file exists and
+    parses. Written back as JSON in the shape Squirrel itself used, and only when
+    it parses, because a half-written state is not ours to repair while an install
+    is in flight.
+  */
+  function askToBeRelaunched() {
+    if (!isMac) return;
+    try {
+      const state = JSON.parse(fs.readFileSync(shipItStatePath(), 'utf8'));
+      if (!state || state.launchAfterInstallation === true) return;
+      state.launchAfterInstallation = true;
+      fs.writeFileSync(shipItStatePath(), JSON.stringify(state));
+    } catch (e) { /* no state file yet, or one we should not rewrite */ }
+  }
+
+  /*
+    Whether the user asked to get on with their work instead.
+
+    Only the startup gate can be skipped — it is the one with a splash and a skip
+    button. A manual check later in the same session must not inherit the flag the
+    launch left behind, or "Skip" at 9am would silently veto an update the user
+    asked for at 5pm.
+  */
+  const skipRequested = () => startupUpdateRunning && startupSkipped;
+
+  async function waitForInstaller() {
+    if (!isMac) return true;
+    const deadline = Date.now() + UPDATE_PREPARE_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (installerPrepared()) return true;
+      if (skipRequested()) return false;
+      await wait(1000);
+    }
+    return false;
   }
 
   function quitForUpdate() {
@@ -841,20 +884,26 @@ function main() {
   // squirrelStaged().
   async function armUpdateAndQuit() {
     if (!updater) return false;
+    // Stamped BEFORE arming: Squirrel writes the state file the moment it has
+    // finished expanding the archive, which can be the same tick on a fast disk.
+    installArmedAt = Date.now();
     try { updater.quitAndInstall(false, true); } catch (e) {
       // An installer that refuses to arm must not strand the user either: the
       // exit still happens, and the next launch is simply the same version.
       console.error('update install:', e && e.message);
     }
-    if (!(await squirrelStaged())) {
-      // Leaving now would cut the transfer in half and lose the update without
+    if (!(await waitForInstaller()) || skipRequested()) {
+      // Leaving now would cut the expansion in half and lose the update without
       // saying so. Keep the workspace open, then enable the library's fallback
       // only for this already-armed update so the user's next deliberate quit
       // can finish it. The normal path remains explicit and single-shot.
       try { updater.autoInstallOnAppQuit = true; } catch (_) {}
-      console.error('update hand-off: Squirrel had not finished reading the archive; staying open');
+      console.error(skipRequested()
+        ? 'update hand-off: the user chose to keep working; the update installs on the next quit'
+        : 'update hand-off: ShipIt was not ready in time; staying open');
       return false;
     }
+    askToBeRelaunched();
     quitForUpdate();
     return true;
   }
@@ -891,10 +940,6 @@ function main() {
     try {
       const { autoUpdater } = require('electron-updater');
       updater = autoUpdater;
-      // Start listening for the native "Squirrel has the archive" signal before
-      // anything can arm an install, because the transfer may already have
-      // finished by the time the installer is handed the job.
-      noteNativeStageSignal();
       // Startup owns the download explicitly so the main window cannot appear
       // before the update is installed. Manual checks use this same path.
       updater.autoDownload = false;
@@ -1003,11 +1048,16 @@ function main() {
       // — on a slow disk that copy is the longest part of the whole update, and a
       // splash that names the step it is on is the difference between waiting and
       // force-quitting the app.
-      setStartupStatus('Preparing the installer…', 'Handing the update to the installer.', 100);
+      // The expansion is the longest step of the whole update on a slow disk, so
+      // the splash says which step it is on and the skip button stays live for it
+      // (startupUpdateRunning stays true until we actually leave, or the escape
+      // hatch would be a button that does nothing during the step that needs it).
+      setStartupStatus('Preparing the installer…', 'Expanding the update — a few minutes on an older machine. Skip if you would rather work now.', 100);
+      const leaving = await armUpdateAndQuit();
       startupUpdateRunning = false;
       // The gate owns this when the installer arms: it must leave the process
       // alive long enough to hand over, and the helper owns the exit.
-      if (await armUpdateAndQuit()) return true;
+      if (leaving) return true;
       setStartupStatus('Starting current version', 'The update will finish installing when you next quit Studio.');
       await wait(600);
       return false;

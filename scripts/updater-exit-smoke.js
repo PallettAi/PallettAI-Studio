@@ -68,9 +68,14 @@ function bodyOf(name) {
 
 const quitSrc = bodyOf('quitForUpdate');
 const armSrc = bodyOf('armUpdateAndQuit');
-const stageSrc = bodyOf('squirrelStaged');
+const waitSrc = bodyOf('waitForInstaller');
+const preparedSrc = bodyOf('installerPrepared');
+const relaunchSrc = bodyOf('askToBeRelaunched');
 const beatMs = Number((/const UPDATE_QUIT_BEAT_MS = (\d+);/.exec(main) || [])[1]);
 const graceMs = Number((/const UPDATE_EXIT_GRACE_MS = (\d+);/.exec(main) || [])[1]);
+const prepareExpr = (/const UPDATE_PREPARE_TIMEOUT_MS = ([^;]+);/.exec(main) || [])[1] || '';
+let prepareMs = 0;
+try { prepareMs = Number(Function('return ' + prepareExpr)()); } catch (e) { prepareMs = 0; }
 
 console.log('== Shape ==');
 ok('quitForUpdate exists in main.js', !!quitSrc);
@@ -90,40 +95,52 @@ console.log('\n== Every installer call has an exit behind it ==');
   ok('the startup gate no longer calls the installer directly',
     !/startupUpdateRunning = false;\s*\n\s*updater\.quitAndInstall/.test(main));
   ok('and it reports a restart only when the installer armed',
-    /if \(await armUpdateAndQuit\(\)\) return true;/.test(main));
+    /const leaving = await armUpdateAndQuit\(\);/.test(main)
+    && /if \(leaving\) return true;/.test(main));
   ok('implicit quit installation is disabled so macOS cannot race the explicit hand-off',
     /updater\.autoInstallOnAppQuit = false;/.test(main));
 }
 
-console.log('\n== The hand-off waits for the archive, not for a stopwatch ==');
-// The macOS proxy server that feeds Squirrel lives in this process, so a quit
-// that arrives before Squirrel has read the file truncates it — a 129 MB update
-// lost at 53 MB, with no install line in ShipIt's log and no message to anyone.
+console.log('\n== The hand-off waits for the EXPANSION, not for the download ==');
+/*
+  Two versions of this quit too early, and both failed silently. A fixed timer
+  truncated the transfer at 53 MB of 129 MB. Electron's native
+  'update-downloaded' — the fix for that — fires when the ZIP has finished
+  DOWNLOADING, one step before Squirrel expands it in-process: 0.4.9 → 0.4.11
+  lost the update at 73 MB of 239 MB, with no ShipIt log line for that day and
+  Studio simply closing.
+*/
 {
-  ok('armUpdateAndQuit waits on the stage signal before quitting',
-    !!armSrc && /await squirrelStaged\(\)/.test(armSrc));
-  ok('and the wait is what decides whether to quit',
-    !!armSrc && /if \(!\(await squirrelStaged\(\)\)\)/.test(armSrc)
-    && armSrc.indexOf('await squirrelStaged()') < armSrc.indexOf('quitForUpdate()'));
-  ok('squirrelStaged exists and listens to the NATIVE updater',
-    !!stageSrc && /require\('electron'\)\.autoUpdater/.test(stageSrc)
-    && /native\.once\('update-downloaded'/.test(stageSrc));
-  // electron-updater's own 'update-downloaded' fires BEFORE the transfer starts.
-  // Quitting on it would reinstate the truncation, so the wait must not use it.
-  ok('it does not confuse electron-updater\u2019s event with Squirrel\u2019s',
-    !!stageSrc && !/updater\.on\('update-downloaded'/.test(stageSrc));
-  ok('a transfer that never finishes cannot hold the user hostage',
-    !!stageSrc && /setTimeout\(\(\) => finish\(false\), UPDATE_STAGE_TIMEOUT_MS\)/.test(stageSrc));
-  // Registered from initUpdater, which runs before the gate exists — so the
-  // signal cannot be missed by an install armed in the same launch.
-  ok('the native listener is registered when the updater is wired up',
-    !!bodyOf('initUpdater') && /noteNativeStageSignal\(\);/.test(bodyOf('initUpdater')));
-  ok('and the gate arms the install after that wiring',
-    !!bodyOf('initUpdater') && main.indexOf('function initUpdater()') < main.lastIndexOf('await armUpdateAndQuit()'));
-  ok('and it is registered on the native updater, not electron-updater',
-    !!bodyOf('noteNativeStageSignal') && /require\('electron'\)\.autoUpdater/.test(bodyOf('noteNativeStageSignal')));
+  ok('armUpdateAndQuit waits for the installer before quitting',
+    !!armSrc && /await waitForInstaller\(\)/.test(armSrc)
+    && armSrc.indexOf('await waitForInstaller()') < armSrc.indexOf('quitForUpdate()'));
+  ok('and the wait is what decides whether to quit at all',
+    !!armSrc && /if \(!\(await waitForInstaller\(\)\) \|\| skipRequested\(\)\)/.test(armSrc));
+  ok('the signal is ShipItState.plist, which Squirrel writes when the archive is expanded',
+    !!bodyOf('shipItStatePath') && /ShipItState\.plist/.test(bodyOf('shipItStatePath'))
+    && !!preparedSrc && /fs\.statSync/.test(preparedSrc));
+  ok('and it is timed against the moment the install was armed, not mere existence',
+    !!preparedSrc && /mtimeMs >= installArmedAt/.test(preparedSrc));
+  ok('the arm is stamped before quitAndInstall, so a fast disk cannot be missed',
+    !!armSrc && armSrc.indexOf('installArmedAt = Date.now()') < armSrc.indexOf('.quitAndInstall('));
+  ok('the download event is no longer what the exit waits on',
+    !/native\.once\('update-downloaded'/.test(main) && !/noteNativeStageSignal/.test(main));
+  ok('a slow expansion cannot hold the user hostage',
+    !!waitSrc && /Date\.now\(\) < deadline/.test(waitSrc) && prepareMs >= 5 * 60 * 1000, prepareMs + 'ms');
+  ok('the skip route stays live for the whole wait', !!waitSrc && /skipRequested\(\)/.test(waitSrc));
+  ok('and only the startup gate can be skipped, never a manual check later in the session',
+    /const skipRequested = \(\) => startupUpdateRunning && startupSkipped;/.test(main));
+  ok('the splash keeps its escape hatch valid while it waits',
+    /const leaving = await armUpdateAndQuit\(\);\s*\n\s*startupUpdateRunning = false;/.test(main));
+  ok('Studio is asked to come back after the install',
+    !!relaunchSrc && /launchAfterInstallation = true/.test(relaunchSrc)
+    && /JSON\.parse/.test(relaunchSrc));
+  ok('and the state file is left alone if it does not parse',
+    !!relaunchSrc && /try \{/.test(relaunchSrc) && /catch \(e\)/.test(relaunchSrc));
+  ok('the ask comes after the installer is confirmed ready',
+    !!armSrc && armSrc.indexOf('askToBeRelaunched()') > armSrc.indexOf('await waitForInstaller()'));
   ok('Windows does not wait for a second transfer that never happens',
-    !!stageSrc && /process\.platform !== 'darwin'/.test(stageSrc));
+    !!waitSrc && /if \(!isMac\) return true;/.test(waitSrc));
 }
 
 console.log('\n== The helper, actually run ==');
@@ -193,24 +210,37 @@ console.log('\n== The arming helper, actually run ==');
 let pendingArms = Promise.resolve();
 // bodyOf() returns the declaration as written, minus its `async` keyword — which
 // the await inside it needs to parse at all. Put it back.
-const armHelper = (updater, quitForUpdate, staged) => new Function(
-  'updater', 'quitForUpdate', 'squirrelStaged', 'console',
-  'async ' + armSrc + '\nreturn armUpdateAndQuit;'
-)(updater, quitForUpdate, staged, { log: () => {}, error: () => {} });
+const armHelper = (updater, quitForUpdate, wait, skipRequested, askToBeRelaunched) => new Function(
+  'updater', 'quitForUpdate', 'waitForInstaller', 'skipRequested', 'askToBeRelaunched', 'console',
+  'let installArmedAt = 0;\n'
+  + 'async ' + armSrc + '\nreturn armUpdateAndQuit;'
+)(
+  updater, quitForUpdate, wait,
+  skipRequested || (() => false),
+  askToBeRelaunched || (() => {}),
+  { log: () => {}, error: () => {} }
+);
 
 {
   const calls = [];
   const updater = { quitAndInstall: (a, b) => calls.push('install:' + a + ':' + b) };
   let release = null;
-  const arm = armHelper(updater, () => calls.push('quitForUpdate'), () => new Promise((r) => { release = r; }));
+  const arm = armHelper(
+    updater,
+    () => calls.push('quitForUpdate'),
+    () => new Promise((r) => { release = r; }),
+    () => false,
+    () => calls.push('askToBeRelaunched')
+  );
   pendingArms = (async () => {
     const leaving = arm();
     ok('arming installs the update at once', calls.join(',') === 'install:false:true', calls.join(','));
-    ok('and does NOT quit while the archive is still being handed over', calls.length === 1, calls.join(','));
+    ok('and does NOT quit while Squirrel is still expanding the archive', calls.length === 1, calls.join(','));
     await Promise.resolve();
     ok('the wait does not quietly resolve into a quit', calls.length === 1, calls.join(','));
     release(true);
-    ok('once Squirrel has the archive it leaves', (await leaving) === true && calls[calls.length - 1] === 'quitForUpdate', calls.join(','));
+    ok('once ShipIt is ready it leaves', (await leaving) === true && calls[calls.length - 1] === 'quitForUpdate', calls.join(','));
+    ok('and Studio is asked to come back before it goes', calls.indexOf('askToBeRelaunched') === calls.length - 2, calls.join(','));
     ok('and reports that the app is leaving, so no window is created', (await leaving) === true);
   })();
 }
@@ -223,22 +253,56 @@ const armHelper = (updater, quitForUpdate, staged) => new Function(
     const leaving = await arm();
     ok('an unfinished hand-off does not quit the app', calls.indexOf('quitForUpdate') === -1, calls.join(','));
     ok('and reports that nothing is leaving, so the workspace still opens', leaving === false);
+    // The library fallback is armed for THIS update only, so the work is not lost.
+    ok('and the update is kept for the next deliberate quit', updater.autoInstallOnAppQuit === true);
+  });
+}
+
+// The longest step of an update is the expansion, and it is the step the user is
+// most likely to lose patience with. A click on Skip must win, and the update must
+// still be waiting for them when they quit of their own accord.
+{
+  const calls = [];
+  const updater = { quitAndInstall: () => calls.push('install') };
+  const arm = armHelper(
+    updater, () => calls.push('quitForUpdate'),
+    () => Promise.resolve(true),   // the installer IS ready
+    () => true,                    // …and the user chose to work instead
+    () => calls.push('askToBeRelaunched')
+  );
+  pendingArms = pendingArms.then(async () => {
+    const leaving = await arm();
+    ok('a skip during the wait is honoured even once the installer is ready',
+      (await leaving) === false && calls.indexOf('quitForUpdate') === -1, calls.join(','));
+    ok('the app is not asked to come back on its own', calls.indexOf('askToBeRelaunched') === -1, calls.join(','));
+    ok('and the finished update still installs on the next quit', updater.autoInstallOnAppQuit === true);
   });
 }
 
 {
   const calls = [];
   const updater = { quitAndInstall: () => { throw new Error('no installer'); } };
-  const arm = armHelper(updater, () => calls.push('quitForUpdate'), () => Promise.resolve(true));
+  const arm = armHelper(
+    updater,
+    () => calls.push('quitForUpdate'),
+    () => { calls.push('waited'); return Promise.resolve(true); },
+    null,
+    () => calls.push('askToBeRelaunched')
+  );
   pendingArms = pendingArms.then(async () => {
-    ok('an installer that refuses to arm does not strand the user', (await arm()) === true && calls.length === 1, calls.join(','));
+    ok('an installer that refuses to arm does not strand the user', (await arm()) === true && calls.indexOf('quitForUpdate') >= 0, calls.join(','));
   });
 }
 
 {
-  const arm = armHelper(null, () => { throw new Error('should not be called'); }, () => Promise.resolve(true));
+  let waited = false;
+  const arm = armHelper(
+    null, () => { throw new Error('should not be called'); },
+    () => { waited = true; return Promise.resolve(true); }
+  );
   pendingArms = pendingArms.then(async () => {
     ok('with no updater at all nothing happens', (await arm()) === false);
+    ok('and no wait is started for an installer that will never run', waited === false);
   });
 }
 
