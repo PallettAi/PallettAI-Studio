@@ -33,3 +33,16 @@ supabase/.temp/
 .pallettai/
 *.pallettai.tmp
 .pallettai-smoke/
+
+# Local build scratch, none of it source. `vendor/ai-engine/` is 15 MB of
+# vendored WASM that no module requires or references; `assets/` is an OUTPUT
+# directory (modules/social-card.js writes og-image.* into it); the `.tmp-*
+# directories are model-subsetting caches. Named explicitly rather than
+# ignoring all of `vendor/` or `assets/`, so a future real asset or vendored
+# dependency is not silently unversioned. Ignored so an ordinary
+# `git add .` cannot sweep them into a release.
+vendor/ai-engine/
+assets/og-image.*
+.tmp-subset/
+.tmp-model-cache/
+.audit-probe.js
