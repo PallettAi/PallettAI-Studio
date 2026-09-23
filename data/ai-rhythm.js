@@ -245,6 +245,19 @@ const AiRhythm = (() => {
      call to action are the two things a small business site is FOR. */
   const TAIL = ['cta', 'contact'];
 
+  // Motion is part of the composition, not a final global afterthought. The
+  // renderer already supports these bounded effects; choosing a rhythm-specific
+  // sequence keeps a quiet editorial site from feeling like a SaaS dashboard and
+  // makes two otherwise similar page flows visibly distinct.
+  const MOTION_POOLS = {
+    hero: ['fade-in', 'zoom-in', 'flip-up', 'bounce-in'],
+    lead: ['slide-left', 'fade-up', 'zoom-in', 'fade-in'],
+    proof: ['fade-up', 'slide-right', 'flip-up', 'fade-in'],
+    body: ['fade-up', 'fade-in', 'slide-left', 'slide-right', 'zoom-in'],
+    tail: ['bounce-in', 'fade-in', 'slide-right', 'fade-up']
+  };
+  const MOTION_FALLBACK = ['fade-up', 'fade-in', 'slide-left', 'slide-right', 'zoom-in', 'flip-up', 'bounce-in'];
+
   function choose(seed, typeId, nicheId, opts) {
     const o = opts || {};
     const list = rhythmList(typeId, nicheId).filter((r) => !o.id || r.id === o.id);
@@ -334,21 +347,33 @@ const AiRhythm = (() => {
     ordered = ordered.filter((t, i) => ordered.indexOf(t) === i);
 
     const layouts = {};
-    ordered.forEach((type) => {
+    const animations = {};
+    ordered.forEach((type, index) => {
       const pool = (rhythm.layouts && rhythm.layouts[type]) || null;
       if (pool && pool.length) layouts[type] = pick(seed, 'layout:' + rhythm.id + ':' + type, pool);
       else if (ALL_LAYOUTS[type]) layouts[type] = pick(seed, 'layout:' + type, ALL_LAYOUTS[type]);
+      const motionPool = type === 'hero'
+        ? MOTION_POOLS.hero
+        : (index === 1 || (rhythm.lead || []).indexOf(type) !== -1)
+          ? MOTION_POOLS.lead
+          : (type === 'stats' || type === 'testimonials' || type === 'gallery')
+            ? MOTION_POOLS.proof
+            : (type === 'cta' || type === 'contact')
+              ? MOTION_POOLS.tail
+              : MOTION_POOLS.body;
+      animations[type] = pick(seed, 'motion:' + rhythm.id + ':' + type + ':' + index, motionPool) || MOTION_FALLBACK[index % MOTION_FALLBACK.length];
     });
 
     return {
       id: rhythm.id,
       order: ordered,
       layouts,
+      animations,
       dropped: available.filter((t) => ordered.indexOf(t) === -1)
     };
   }
 
-  return { RHYTHMS, FIT, ALL_LAYOUTS, NICHE_FAMILY, plan, choose, order, rhythmList, mix };
+  return { RHYTHMS, FIT, ALL_LAYOUTS, NICHE_FAMILY, MOTION_POOLS, plan, choose, order, rhythmList, mix };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = AiRhythm;

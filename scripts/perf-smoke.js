@@ -194,6 +194,26 @@ function buildPages(opts) {
     ok('online off: no preconnect', links.every((t) => !/fonts\.gstatic\.com|fonts\.googleapis\.com/.test(t)));
   }
 
+  // ---- 4b. the element count ignores non-element content ----------------
+  // A stylesheet is not DOM, and CSS can contain a '<' — @property's
+  // syntax:"<angle>" is the case that surfaced this. Counting those bodies as
+  // elements inflated the size signal on exactly the modern pages this report
+  // grades, so the three containers are pinned here.
+  console.log('\n4b. The DOM count counts elements, not embedded text');
+  {
+    const base = (extra) => Perf.analyze({
+      name: 'D', slug: 'd',
+      html: '<!doctype html><html><head><style>' + extra + '</style></head><body><p>hi</p></body></html>'
+    }).domNodes;
+    ok('a stylesheet containing a "<" is not counted as elements', base('@property --x{syntax:"<angle>"}') === base(''), base('@property --x{syntax:"<angle>"}') + ' != ' + base(''));
+    ok('an inline script body is not counted as elements', base('</style><script>var s="<div>";</script>') === base(''));
+    ok('an HTML comment is not counted as elements', Perf.analyze({ name: 'C', slug: 'c', html: '<body><!-- <div><span></span> --><p>x</p></body>' }).domNodes === 2);
+    // Opening tags only (closing tags are not separate elements), which is the
+    // long-standing behaviour of this counter: body + div + span = 3.
+    ok('real elements are still counted', Perf.analyze({ name: 'R', slug: 'r', html: '<body><div><span>a</span></div></body>' }).domNodes === 3,
+      String(Perf.analyze({ name: 'R', slug: 'r', html: '<body><div><span>a</span></div></body>' }).domNodes));
+  }
+
   // ---- 5. scoring behaviour --------------------------------------------
   console.log('\n5. Scoring');
   ok('a clean page scores 100', Perf.scoreOf([]) === 100);

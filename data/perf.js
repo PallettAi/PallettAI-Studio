@@ -243,8 +243,17 @@ const Perf = (() => {
     }).filter(Boolean)));
 
     // Rough element count — every '<tag' that starts a real element. Used only
-    // as a size signal, so an approximation is fine and overstated is safer.
-    const domNodes = count(html, /<[a-z][a-z0-9-]*[\s/>]/gi);
+    // as a size signal, so an approximation is fine. But it must not count the
+    // CONTENTS of <style>, <script> or a comment, because none of that is an
+    // element and CSS may legitimately contain a '<' — @property's
+    // syntax:"<angle>" and a font-family like "A<B" both do. Counting those
+    // bodies overstated the DOM on exactly the modern pages this report exists
+    // to grade, which is how a real perf warning turns into a false one.
+    const domSource = html
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+    const domNodes = count(domSource, /<[a-z][a-z0-9-]*[\s/>]/gi);
     const iframes = count(html, /<iframe\b/gi);
     const lazyIframes = count(html, /<iframe\b[^>]*\bloading=["']lazy["']/i);
 

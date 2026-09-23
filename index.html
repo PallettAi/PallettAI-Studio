@@ -8,10 +8,11 @@
   Content-Security-Policy for the studio shell.
 
   Threat model notes:
-  - The Designer preview renders exported sites in an about:srcdoc iframe,
-    which INHERITS this policy. Exported pages legitimately ship inline
-    scripts/styles (single-file HTML, no build step), so script-src must
-    keep 'unsafe-inline' or every preview goes silent.
+  - The Designer preview renders exported sites in a sandboxed about:srcdoc
+    iframe without allow-same-origin. Exported pages legitimately ship inline
+    scripts/styles (single-file HTML, no build step), so script-src must keep
+    'unsafe-inline' or the preview goes silent. The opaque sandbox origin keeps
+    preview code away from the Studio renderer and Electron bridge.
   - Remote <script> is still denied except the three analytics/chat hosts a
     generated site itself may embed; eval/Function-constructor usage is
     denied (verified: the codebase uses none).
@@ -109,6 +110,8 @@
       <button class="nav-item" data-view="database"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="10" cy="5.2" rx="6.2" ry="2.4"/><path d="M3.8 5.2v9.6c0 1.3 2.8 2.4 6.2 2.4s6.2-1.1 6.2-2.4V5.2"/><path d="M3.8 10c0 1.3 2.8 2.4 6.2 2.4s6.2-1.1 6.2-2.4"/></svg></span><span class="nav-label">Database</span></button>
       <button class="nav-item" data-view="qr" title="QR Codes"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="3.2" width="5.2" height="5.2" rx="1"/><rect x="11.6" y="3.2" width="5.2" height="5.2" rx="1"/><rect x="3.2" y="11.6" width="5.2" height="5.2" rx="1"/></svg></span><span class="nav-label">QR Codes</span></button>
       <button class="nav-item" data-view="tools"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><span style="font-size:15px">✦</span></span><span class="nav-label">Toolkit</span></button>
+      <button class="nav-item" data-view="tokens"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true">◈</span><span class="nav-label">Design Tokens</span></button>
+      <button class="nav-item" data-view="guides"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true">?</span><span class="nav-label">Guides</span></button>
       <button class="nav-item" data-view="settings"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.2"/><path d="M10 3.2v1.6M10 15.2v1.6M3.2 10h1.6M15.2 10h1.6M5.2 5.2l1.1 1.1M13.7 13.7l1.1 1.1M14.8 5.2l-1.1 1.1M6.3 13.7l-1.1 1.1"/></svg></span><span class="nav-label">Settings</span></button>
     </nav>
 
@@ -139,6 +142,33 @@
 
     <!-- Dashboard -->
     <section class="view active" id="view-dashboard">
+      <div class="studio-home-hero" id="studioHomeHero">
+        <div class="studio-home-copy">
+          <span class="studio-home-kicker">PALLETTAI STUDIO · CREATIVE WORKSPACE</span>
+          <h2>Turn a clear brief into a <span>site with a point of view.</span></h2>
+          <p>Start with an idea, shape the direction, and leave with something your client could not have found in a template marketplace.</p>
+          <div class="studio-home-actions">
+            <button class="btn primary" id="homeHeroGenerate">Generate a site</button>
+            <button class="btn secondary" id="homeHeroTemplates">Explore directions</button>
+          </div>
+          <div class="studio-home-proof"><span>✦ Local-first generation</span><span>◌ Editable output</span><span>⌁ Quality checked</span></div>
+        </div>
+        <div class="studio-home-art" aria-label="A design system assembling from layout, type and motion" role="img">
+          <div class="home-orbit orbit-one"></div><div class="home-orbit orbit-two"></div>
+          <div class="home-prism" aria-hidden="true">
+            <div class="home-prism-core"><span>✦</span><b>DNA</b><small>01</small></div>
+            <div class="home-prism-panel panel-palette"><small>PALETTE</small><div><i></i><i></i><i></i><i></i></div><b>ICE / SIGNAL</b></div>
+            <div class="home-prism-panel panel-type"><small>TYPE SYSTEM</small><strong>Aa</strong><b>Editorial · Sans</b></div>
+            <div class="home-prism-panel panel-flow"><small>VISITOR FLOW</small><div><i></i><i></i><i></i><i></i></div><b>BRIEF → BUILD</b></div>
+          </div>
+          <span class="home-art-label label-layout">LAYOUT · VARIES</span><span class="home-art-label label-motion">MOTION · READY</span>
+        </div>
+      </div>
+      <div class="studio-home-features" aria-label="Studio highlights">
+        <article><span>01</span><b>Distinct by design</b><p>Different structure, type, rhythm and motion for every brief.</p></article>
+        <article><span>02</span><b>Built to be edited</b><p>Copilot, Designer and reusable brand systems keep you in control.</p></article>
+        <article><span>03</span><b>Ready to deliver</b><p>Accessibility, SEO, links and export checks before the handoff.</p></article>
+      </div>
       <div class="job-tray" id="jobTray"></div>
       <div class="dash-actions">
         <button class="btn primary" id="btnNewProject">New project</button>
@@ -271,6 +301,12 @@
     <section class="view" id="view-tools">
       <div class="settings-wrap" id="toolsRoot"></div>
     </section>
+
+    <!-- Design Tokens -->
+    <section class="view" id="view-tokens"><div id="tokenInspector" class="token-inspector"></div></section>
+
+    <!-- Guides -->
+    <section class="view" id="view-guides"><div id="guidesRoot" class="guides-wrap"></div></section>
 
     <!-- Settings -->
     <section class="view" id="view-settings">
@@ -409,6 +445,11 @@
 <script src="data/preflight.js"></script>
 <script src="modules/modal-focus.js"></script>
 <script src="modules/supabase.js"></script>
+<script src="modules/ai-prompts.js"></script>
+<script src="ui/data-islands.js"></script>
+<script src="ui/inspector.js"></script>
+<script src="ui/copilot.js"></script>
+<script src="ui/guides.js"></script>
 <script src="modules/ai.js"></script>
 <script src="modules/builder.js"></script>
 <script src="modules/zip.js"></script>

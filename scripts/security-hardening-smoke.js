@@ -247,25 +247,24 @@ console.log('\n== Widget HTML escaping ==');
     assert(/secrets-get/.test(mainSrc) && /secrets-set/.test(mainSrc), 'main.js registers secrets IPC');
     assert(/secretsGet:/.test(preloadSrc) && /secretsSet:/.test(preloadSrc), 'preload exposes secretsGet/secretsSet');
 
-    // A WebContents is not a frame. The Designer renders the exported site in a
-    // same-origin srcdoc iframe, so a widget inside it shares this WebContents
-    // and can see window.pallettai through `parent`; only senderFrame separates
-    // the two. Asserting on `event.sender` alone is what let that path exist.
+    // A WebContents is not a frame. Privileged IPC still rejects subframes,
+    // while the Designer preview now has an independent defence: an opaque
+    // sandbox origin prevents imported/custom code from reaching the parent.
     assert(/const fromMainFrame = \(event, target\)/.test(mainSrc), 'main.js has a main-frame sender check');
     assert(/event\.sender !== target\.webContents/.test(mainSrc) && /const frame = event\.senderFrame/.test(mainSrc), 'and it inspects the actual senderFrame, not just the WebContents');
-    assert(/frame\.parent == null/.test(mainSrc), 'a subframe is refused by its parent, which is what a preview iframe always has');
+    assert(/frame\.parent == null/.test(mainSrc), 'a subframe is refused by its parent');
     assert(!/event\.sender !== win\.webContents/.test(mainSrc), 'no privileged channel still trusts the WebContents alone');
     const frameChecks = (mainSrc.match(/fromMainFrame\(event, (win|startupWindow)\)/g) || []).length;
     assert(frameChecks >= 8, 'every privileged channel goes through it (' + frameChecks + ' sites)');
 
-    // The template preview modal is sandboxed because nothing reads back into
-    // that frame; the Designer preview is NOT, because renderPreview() reads
-    // contentDocument to wire page navigation — so its safety comes from the
-    // frame check above, not from the attribute.
     const appSrc = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
     assert(/sandbox="allow-scripts allow-forms allow-modals allow-popups"[^>]*srcdoc=/.test(appSrc), 'the template preview iframe is sandboxed');
-    assert(/<iframe id="previewFrame" title="Live site preview"><\/iframe>/.test(appSrc), 'the Designer preview frame stays same-origin for contentDocument');
-    assert(/f\.contentDocument/.test(appSrc), 'and the Designer does read into it, so that trade-off is real');
+    assert(/<iframe id="previewFrame" title="Live site preview" sandbox="allow-scripts allow-forms allow-modals allow-popups"><\/iframe>/.test(appSrc), 'the Designer preview is sandboxed without allow-same-origin');
+    assert(!/f\.contentDocument/.test(appSrc), 'the Designer no longer reaches into the preview document');
+    assert(/channel !== 'pai-preview'/.test(appSrc) && /event\.source !== f\.contentWindow/.test(appSrc), 'preview messages validate channel and source');
+    const builderSrc = fs.readFileSync(path.join(ROOT, 'modules', 'builder.js'), 'utf8');
+    assert(/channel: 'pai-preview'/.test(builderSrc) && /postMessage/.test(builderSrc), 'the generated page uses the narrow preview message bridge');
+    assert(/data-legal/.test(builderSrc) && /data-page/.test(builderSrc), 'the bridge covers legal and multi-page navigation');
   }
 
   if (failed) {

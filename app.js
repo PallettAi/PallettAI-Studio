@@ -262,6 +262,11 @@ const App = (() => {
       if (!['professional','friendly','minimal'].includes(settings.clientTone)) settings.clientTone = 'professional';
       if (typeof settings.defaultEnquiryLabel !== 'string') settings.defaultEnquiryLabel = DB.defaultSettings.defaultEnquiryLabel;
       settings.defaultEnquiryLabel = String(settings.defaultEnquiryLabel).slice(0,120);
+      if (!['real','ai','none'].includes(settings.aiPhotoMode)) settings.aiPhotoMode = 'real';
+      if (!['auto','classic'].includes(settings.aiLayoutMode)) settings.aiLayoutMode = 'auto';
+      ['aiOnePager','aiPhotoGrade','aiConfirmDestructive','aiOriginalityStrict','aiShowReceipts'].forEach((k) => {
+        if (typeof settings[k] !== 'boolean') settings[k] = DB.defaultSettings[k];
+      });
     } catch (e) { settings = { ...DB.defaultSettings }; }
     applyTheme();
   }
@@ -3124,7 +3129,7 @@ const App = (() => {
     $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
     $$('.view').forEach((v) => v.classList.remove('active'));
     $('#view-' + name).classList.add('active');
-    const titles = { dashboard: 'Dashboard', templates: 'Templates', designer: 'Designer', ai: 'AI Studio', suites: 'Upgrade Suites', database: 'Database', settings: 'Settings', qr: 'QR Codes', tools: 'Toolkit', care: 'Site Care' };
+    const titles = { dashboard: 'Dashboard', templates: 'Templates', designer: 'Designer', ai: 'AI Studio', suites: 'Upgrade Suites', database: 'Database', settings: 'Settings', qr: 'QR Codes', tools: 'Toolkit', care: 'Site Care', tokens: 'Design Tokens', guides: 'Studio Guides' };
     $('#viewTitle').textContent = chromeTitle(name) || titles[name] || name;
     if (name === 'dashboard') renderDashboard();
     if (name === 'templates') renderTemplates();
@@ -3135,6 +3140,8 @@ const App = (() => {
     if (name === 'settings') renderSettings();
     if (name === 'qr') renderQr();
     if (name === 'tools' && window.PallettAITools) window.PallettAITools.init();
+    if (name === 'tokens' && window.PallettAITokens) window.PallettAITokens.open();
+    if (name === 'guides' && window.PallettAIGuides) window.PallettAIGuides.open();
     if (name === 'care') renderCare();
     $('#projectChip').hidden = !(name === 'designer' || name === 'suites' || name === 'database') || !current();
     if (current() && ['designer', 'suites', 'database'].includes(name)) {
@@ -3973,6 +3980,10 @@ const App = (() => {
     dashboardListKey = projectListKey();
     renderDashOverview();
     renderTemplateDoor();
+    const heroGenerate = $('#homeHeroGenerate');
+    if (heroGenerate) heroGenerate.onclick = () => switchView('ai');
+    const heroTemplates = $('#homeHeroTemplates');
+    if (heroTemplates) heroTemplates.onclick = () => switchView('templates');
 
     const grid = $('#projectsGrid');
     // renderDashboard re-runs on every save/refresh, so keep exactly one
@@ -4414,14 +4425,11 @@ const App = (() => {
             <input type="number" id="pwW" value="" min="280" max="2200" step="1" title="Exact preview width (px)" placeholder="px" style="width:58px;padding:4px 6px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.75rem">
           </div>
         </div>
-        <!-- Deliberately NOT sandboxed. renderPreview() reads f.contentDocument to
-             wire multi-page links and the legal-page preview into this frame, and
-             an opaque origin would make contentDocument unreachable — the whole
-             page bar would go dead. The privilege that actually matters is closed
-             in main.js instead, where every IPC channel refuses anything whose
-             senderFrame is not this window's main frame, so a widget running
-             inside the preview cannot read the publish secrets. -->
-        <iframe id="previewFrame" title="Live site preview"></iframe>
+        <!-- The preview is an untrusted rendering surface. It is sandboxed without
+             allow-same-origin so imported projects and custom JS cannot reach the
+             Studio renderer, localStorage or Electron bridge. Navigation and
+             section selection use a narrow postMessage protocol. -->
+        <iframe id="previewFrame" title="Live site preview" sandbox="allow-scripts allow-forms allow-modals allow-popups"></iframe>
         <div id="photoDropOverlay" class="photo-drop-overlay" hidden>
           <div class="photo-drop-slots" id="photoDropSlots"></div>
         </div>
@@ -4766,69 +4774,70 @@ const App = (() => {
       } catch (e) { /* preview falls back to the site page */ }
     }
     let viewingLegal = null;
-
-    // Keep the load hook even for a one-page site: section targeting is useful
-    // there too. Legal-page navigation is handled conditionally inside the hook.
-    f.onload = () => {
-      const d = f.contentDocument;
-      if (!d) return;
-      // Click-to-direct Copilot targeting: the rendered section is the source of
-      // truth, so a click selects the exact model section rather than asking the
-      // Copilot to infer what “the middle bit” meant. Interactive children keep
-      // their normal behaviour; clicking the surrounding section opens its
-      // editor and makes the next Copilot instruction precise.
-      d.querySelectorAll('main section[id^="sec-"]').forEach((node) => {
-        node.setAttribute('tabindex', '0');
-        node.setAttribute('aria-label', 'Select this section in Designer');
-        const selectRenderedSection = (event) => {
-          if (event && event.target && event.target.closest && event.target.closest('a,button,input,select,textarea')) return;
-          const index = Number(node.getAttribute('data-section-index'));
-          const pageId = String(node.getAttribute('data-page-id') || '');
-          const open = current();
-          if (!open || !Number.isInteger(index)) return;
-          const pages = (typeof Builder !== 'undefined' && Builder.pages) ? Builder.pages(open) : [];
-          const page = pageId ? pages.find((pg) => pg && pg.id === pageId) : (pages[0] || null);
-          if (!page || !Array.isArray(page.sections) || !page.sections[index]) return;
-          if (event && event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
-          if (event && event.type === 'keydown') event.preventDefault();
-          if (page.id && open.site.activePageId !== page.id) {
-            open.site.activePageId = page.id;
-            open.site.sections = page.sections;
-          }
-          selectedSec = index;
-          renderSecList();
-          renderEditor();
-          const editor = $('#secEditor');
-          if (editor && editor.scrollIntoView) editor.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-          if (typeof chatAdd === 'function' && event && event.type === 'keydown') chatAdd('bot note', 'Selected the ' + (page.sections[index].type || 'section') + ' section on ' + (page.name || 'this page') + ' — your next Copilot instruction will target it.');
-        };
-        node.addEventListener('click', selectRenderedSection);
-        node.addEventListener('keydown', selectRenderedSection);
-      });
-      d.querySelectorAll('a.page-link').forEach((a) => {
-        a.onclick = (e) => { e.preventDefault(); const id = a.getAttribute('data-page'); if (id) { viewingLegal = null; setActivePage(id); } };
-      });
-      if (!legalOn) return;
-      d.querySelectorAll('a[data-legal]').forEach((a) => {
-        a.onclick = (e) => {
-          e.preventDefault();
-          const slug = a.getAttribute('data-legal');
-          if (!legalFiles[slug]) return;
-          viewingLegal = slug;
-          f.srcdoc = legalFiles[slug];
-        };
-      });
-      // A legal page is a dead end otherwise: the page bar has no entry for it
-      // and a single-page site's nav is all in-page anchors.
-      if (viewingLegal && d.body) {
-        const back = d.createElement('button');
-        back.type = 'button';
-        back.textContent = '\u2190 Back to your site';
-        back.setAttribute('style', 'position:fixed;left:16px;bottom:16px;z-index:9999;font:600 .8rem/1 system-ui,sans-serif;padding:10px 14px;border-radius:999px;border:1px solid rgba(0,0,0,.2);background:#111;color:#fff;cursor:pointer');
-        back.addEventListener('click', () => { viewingLegal = null; renderPreview(); });
-        d.body.appendChild(back);
-      }
+    const setPreviewBack = (show) => {
+      const host = f.parentElement;
+      if (!host) return;
+      let back = host.querySelector('.preview-back');
+      if (!show) { if (back) back.remove(); return; }
+      if (back) return;
+      back = document.createElement('button');
+      back.type = 'button';
+      back.className = 'preview-back btn primary small';
+      back.textContent = '← Back to your site';
+      back.style.cssText = 'position:absolute;left:16px;bottom:16px;z-index:20;box-shadow:0 8px 20px rgba(0,0,0,.25)';
+      back.onclick = () => { viewingLegal = null; setPreviewBack(false); f.srcdoc = Builder.buildSiteHTML(c, settings); };
+      host.appendChild(back);
     };
+    setPreviewBack(false);
+
+    // The preview is sandboxed, so it cannot be inspected or wired by reaching
+    // into contentDocument. The generated page sends only small, typed messages;
+    // the handler below accepts messages from this iframe and validates every id
+    // against the current project before mutating Studio state.
+    const handlePreviewMessage = (event) => {
+      const msg = event.data;
+      if (!msg || typeof msg !== 'object' || msg.channel !== 'pai-preview' || typeof msg.type !== 'string') return;
+      if (msg.type === 'design-tokens') {
+        if (event.source !== window) return;
+        const vars = msg.vars && typeof msg.vars === 'object' ? msg.vars : null;
+        if (!vars) return;
+        const allowed = ['--brand-oklch', '--bg-surface', '--space-section', '--btn-radius', '--btn-shadow'];
+        const clean = {};
+        allowed.forEach((key) => { if (typeof vars[key] === 'string' && vars[key].length <= 160 && !/[<>]/.test(vars[key])) clean[key] = vars[key]; });
+        if (Object.keys(clean).length && f.contentWindow) f.contentWindow.postMessage({ channel: 'pai-preview', type: 'design-tokens', vars: clean }, '*');
+        return;
+      }
+      if (event.source !== f.contentWindow) return;
+      if (msg.type === 'navigate') {
+        const id = typeof msg.pageId === 'string' ? msg.pageId.slice(0, 80) : '';
+        if (id && Builder.pages(c).some((pg) => pg && pg.id === id)) { viewingLegal = null; setPreviewBack(false); setActivePage(id); }
+        return;
+      }
+      if (msg.type === 'legal') {
+        const slug = typeof msg.slug === 'string' ? msg.slug.slice(0, 40) : '';
+        if (legalOn && legalFiles[slug]) { viewingLegal = slug; setPreviewBack(true); f.srcdoc = legalFiles[slug]; }
+        return;
+      }
+      if (msg.type !== 'select-section') return;
+      const index = Number(msg.index);
+      const pageId = typeof msg.pageId === 'string' ? msg.pageId.slice(0, 80) : '';
+      const open = current();
+      if (!open || !Number.isInteger(index) || index < 0) return;
+      const pages = (typeof Builder !== 'undefined' && Builder.pages) ? Builder.pages(open) : [];
+      const page = pageId ? pages.find((pg) => pg && pg.id === pageId) : (pages[0] || null);
+      if (!page || !Array.isArray(page.sections) || !page.sections[index]) return;
+      if (page.id && open.site.activePageId !== page.id) { open.site.activePageId = page.id; open.site.sections = page.sections; }
+      selectedSec = index;
+      if (window.PallettAISectionCopilot && typeof window.PallettAISectionCopilot.select === 'function') window.PallettAISectionCopilot.select({ pageId: page.id || pageId, index });
+      renderSecList();
+      renderEditor();
+      const editor = $('#secEditor');
+      if (editor && editor.scrollIntoView) editor.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    };
+    if (f._paiPreviewMessageHandler) window.removeEventListener('message', f._paiPreviewMessageHandler);
+    f._paiPreviewMessageHandler = handlePreviewMessage;
+    window.addEventListener('message', handlePreviewMessage);
+    f.onload = () => { /* opaque sandbox: communication is postMessage-only */ };
   }
 
   function photoTargets(project) {
@@ -6994,8 +7003,7 @@ const App = (() => {
             </select>
             <input id="aiProof1" placeholder="Proof 1" autocomplete="off">
             <input id="aiProof2" placeholder="Proof 2" autocomplete="off">
-            <input id="aiProof3" placeholder="Proof 3" autocomplete="off">
-            <label class="ai-onepager"><input type="checkbox" id="aiOnePager"> Generate a one-page site</label>
+            <input id="aiProof3" placeholder="Proof 3" autocomplete="off">              <label class="ai-onepager"><input type="checkbox" id="aiOnePager"${settings.aiOnePager ? ' checked' : ''}> Generate a one-page site</label>
           </div>
           <div class="ai-comps">
             <input id="aiComp1" class="ai-in" placeholder="Competitor URL 1 (optional — structure only)" autocomplete="off" spellcheck="false">
@@ -7006,18 +7014,18 @@ const App = (() => {
           <div class="chip-row" id="aiChips"></div>
           <div class="ai-opts">
             <select id="aiPack" title="Finish the site with a signature look"><option value="">No style pack</option>${AI.stylePacks.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>
-            <select id="aiFlavor" title="How the AI arranges sections"><option value="auto">Auto layouts</option><option value="classic">Classic layouts only</option></select>
+            <select id="aiFlavor" title="How the AI arranges sections"><option value="auto"${settings.aiLayoutMode === 'auto' ? ' selected' : ''}>Auto layouts</option><option value="classic"${settings.aiLayoutMode === 'classic' ? ' selected' : ''}>Classic layouts only</option></select>
             <select id="aiPhoto" title="Where the site's photos come from">
-              <option value="real">Real photos from the web (recommended)</option>
-              <option value="ai">Generated art</option>
-              <option value="none">No photos</option>
+              <option value="real"${settings.aiPhotoMode === 'real' ? ' selected' : ''}>Real photos from the web (recommended)</option>
+              <option value="ai"${settings.aiPhotoMode === 'ai' ? ' selected' : ''}>Generated art</option>
+              <option value="none"${settings.aiPhotoMode === 'none' ? ' selected' : ''}>No photos</option>
             </select>
             <select id="aiKernel" title="Lock this client's approved visual system. A locked field is enforced on the generated site — the AI cannot restyle past it.">
               <option value="">No brand lock — let the AI choose</option>
               ${brandPresets.map((p) => `<option value="${esc(p.id)}"${c && c.site && c.site.kernel && c.site.kernel.presetId === p.id ? ' selected' : ''}>🔒 ${esc(p.name)}</option>`).join('')}
             </select>
             <label class="ai-onepager ai-photo-grade" title="Optional. Soft palette blend on photos only — faces and food stay real.">
-              <input type="checkbox" id="aiPhotoGrade">
+              <input type="checkbox" id="aiPhotoGrade"${settings.aiPhotoGrade ? ' checked' : ''}>
               <span>Tint photos to the palette <small>off by default · not a filter</small></span>
             </label>
           </div>
@@ -7177,7 +7185,8 @@ const App = (() => {
       const K = kernelLib();
       const kernel = proj.site && proj.site.kernel;
       const kernTag = (K && kernel) ? `<span class="chip" title="${esc(K.promptContract(kernel).join(' '))}">🔒 ${esc(K.describe(kernel))}</span>` : '';
-      res.innerHTML = `<div class="ai-result-line"><span>✦ “${esc(proj.site.name)}” generated from “${esc(lastAI.prompt.slice(0, 48))}${lastAI.prompt.length > 48 ? '…' : ''}”</span><span class="ai-result-tags">${nicheTag}${studiedTag}${transTag}${kernTag}</span></div>${strategyReceipt(proj)}${originalityResultCard(proj)}<div class="ai-result-actions"><button class="btn ghost small" id="aiLockLook">${(K && kernel) ? '🔓 Unlock this brand' : '🔒 Lock this look'}</button><button class="btn primary small" id="aiOpen">Open in Designer</button></div>`;
+      const receipt = settings.aiShowReceipts === false ? '' : `${strategyReceipt(proj)}${originalityResultCard(proj)}`;
+      res.innerHTML = `<div class="ai-result-line"><span>✦ “${esc(proj.site.name)}” generated from “${esc(lastAI.prompt.slice(0, 48))}${lastAI.prompt.length > 48 ? '…' : ''}”</span><span class="ai-result-tags">${nicheTag}${studiedTag}${transTag}${kernTag}</span></div>${receipt}<div class="ai-result-actions"><button class="btn ghost small" id="aiLockLook">${(K && kernel) ? '🔓 Unlock this brand' : '🔒 Lock this look'}</button><button class="btn primary small" id="aiOpen">Open in Designer</button></div>`;
       $('#aiOpen').onclick = () => { currentId = proj.id; selectedSec = null; switchView('designer'); };
       const refine = $('#aiRefineStrategy');
       if (refine) refine.onclick = () => openStrategyEditor(proj);
@@ -7700,11 +7709,15 @@ const App = (() => {
     try {
       if (box) {
         box.hidden = false;
-        box.innerHTML = steps.map((t, i) => `<div class="ai-step" id="aiStep${i}"><span class="spinner"></span>${t}</div>`).join('');
+        box.innerHTML = `<div class="ai-progress-head"><span class="ai-progress-kicker">CREATIVE DIRECTION IN MOTION</span><b>Building your first point of view</b><span class="ai-progress-percent" id="aiProgressPercent">0%</span></div><div class="ai-progress-track"><span id="aiProgressFill"></span></div><div class="ai-step-list">${steps.map((t, i) => `<div class="ai-step" id="aiStep${i}"><span class="spinner"></span>${t}</div>`).join('')}</div>`;
       }
       for (let i = 0; i < steps.length; i++) {
         const el = $('#aiStep' + i);
         if (el) el.classList.add('on');
+        const fill = $('#aiProgressFill');
+        const percent = $('#aiProgressPercent');
+        if (fill) fill.style.width = Math.max(8, Math.round((i / steps.length) * 100)) + '%';
+        if (percent) percent.textContent = Math.max(8, Math.round((i / steps.length) * 100)) + '%';
         if (steps[i].indexOf('Studying') === 0) {
           // give the site a real chance: direct fetch is usually CORS-blocked, so
           // studySite falls back to a proxy within the same total deadline
@@ -7719,6 +7732,10 @@ const App = (() => {
         }
         const done = $('#aiStep' + i);
         if (done) { done.classList.add('done'); done.classList.remove('on'); }
+        const finalFill = $('#aiProgressFill');
+        const finalPercent = $('#aiProgressPercent');
+        if (finalFill) finalFill.style.width = Math.round(((i + 1) / steps.length) * 100) + '%';
+        if (finalPercent) finalPercent.textContent = Math.round(((i + 1) / steps.length) * 100) + '%';
       }
       const packId = $('#aiPack') ? $('#aiPack').value : '';
       const flavor = $('#aiFlavor') ? $('#aiFlavor').value : 'auto';
@@ -7750,7 +7767,7 @@ const App = (() => {
         studied: studied.length ? studied : undefined,
         website: website || undefined,
         existingProjects: projects.slice(0, 32),
-        originalityRepair: true,
+        originalityRepair: settings.aiOriginalityStrict !== false,
         photoMode,
         creativeBrief: creativeBrief || undefined,
         sitePlan: sitemapPlan || undefined,
@@ -10402,13 +10419,14 @@ const App = (() => {
       client: uiIcon('user'),
       privacy: uiIcon('shield'),
       studio: uiIcon('gear'),
+      ai: uiIcon('spark'),
       about: uiIcon('info')
     };
     const TABS = [
       ['account', 'Account & billing'], ['identity', 'Identity'], ['appearance', 'Appearance'], ['branding', 'Branding'],
       ['defaults', 'Project defaults'], ['client', 'Client handoff'], ['accessibility', 'Accessibility'],
       ['export', 'Export'], ['online', 'Online data'], ['privacy', 'Privacy & data'],
-      ['studio', 'Studio'], ['about', 'About']
+      ['studio', 'Studio'], ['ai', 'AI preferences'], ['about', 'About']
     ];
     const cards = (name, html) => (settingsTab === name ? html : '');
     $('#settingsRoot').innerHTML =
@@ -10674,6 +10692,25 @@ const App = (() => {
           <select id="setDashRecentCount"><option value="3" ${String(s.dashboardRecentCount) === '3' ? 'selected' : ''}>3</option><option value="6" ${String(s.dashboardRecentCount||6) === '6' ? 'selected' : ''}>6</option><option value="9" ${String(s.dashboardRecentCount) === '9' ? 'selected' : ''}>9</option><option value="12" ${String(s.dashboardRecentCount) === '12' ? 'selected' : ''}>12</option></select></div>
       </div>
 `) +
+      cards('ai', `
+      <div class="settings-card">
+        <h3>AI generation preferences</h3>
+        <p class="sub">Set your usual starting point for new AI drafts. Every brief can still override these choices before generation.</p>
+        <div class="set-row"><div><label>Photo source</label><div class="set-desc">Choose whether new drafts start with web photos, generated art, or no photos.</div></div>
+          <select id="setAiPhotoMode"><option value="real" ${s.aiPhotoMode === 'real' ? 'selected' : ''}>Real photos</option><option value="ai" ${s.aiPhotoMode === 'ai' ? 'selected' : ''}>Generated art</option><option value="none" ${s.aiPhotoMode === 'none' ? 'selected' : ''}>No photos</option></select></div>
+        <div class="set-row"><div><label>Layout freedom</label><div class="set-desc">Auto lets the originality engine vary structure; Classic keeps the familiar layout recipes.</div></div>
+          <select id="setAiLayoutMode"><option value="auto" ${s.aiLayoutMode === 'auto' ? 'selected' : ''}>Auto layouts (recommended)</option><option value="classic" ${s.aiLayoutMode === 'classic' ? 'selected' : ''}>Classic layouts</option></select></div>
+        <div class="set-row"><div><label>Generate a one-page site by default</label><div class="set-desc">Useful for campaigns and simple local businesses. Turn off for multi-page planning.</div></div><label class="switch"><input type="checkbox" id="setAiOnePager" ${s.aiOnePager ? 'checked' : ''}><span class="slider"></span></label></div>
+        <div class="set-row"><div><label>Tint photos to the palette</label><div class="set-desc">Applies the optional soft palette grade to photo surfaces only.</div></div><label class="switch"><input type="checkbox" id="setAiPhotoGrade" ${s.aiPhotoGrade ? 'checked' : ''}><span class="slider"></span></label></div>
+      </div>
+      <div class="settings-card">
+        <h3>AI safety & review</h3>
+        <p class="sub">Keep creative automation transparent and reversible. These preferences never bypass the existing credit, privacy or brand-lock safeguards.</p>
+        <div class="set-row"><div><label>Ask before risky Copilot changes</label><div class="set-desc">Keep a confirmation step before actions that remove or replace content.</div></div><label class="switch"><input type="checkbox" id="setAiConfirm" ${s.aiConfirmDestructive !== false ? 'checked' : ''}><span class="slider"></span></label></div>
+        <div class="set-row"><div><label>Strict originality checks</label><div class="set-desc">Prefer a more distinct direction when a draft is too close to recent projects.</div></div><label class="switch"><input type="checkbox" id="setAiOriginality" ${s.aiOriginalityStrict !== false ? 'checked' : ''}><span class="slider"></span></label></div>
+        <div class="set-row"><div><label>Show generation receipts</label><div class="set-desc">Show the strategy, originality and reference-distance summary after a draft.</div></div><label class="switch"><input type="checkbox" id="setAiReceipts" ${s.aiShowReceipts !== false ? 'checked' : ''}><span class="slider"></span></label></div>
+      </div>
+`) +
       cards('about', `
       <div class="settings-card">
         <h3>About</h3>
@@ -10765,6 +10802,13 @@ const App = (() => {
     on('#setNavSticky', 'change', (e) => { settings.defaultNavSticky = e.target.checked; saveSettings(); });
     on('#setThemeToggle', 'change', (e) => { settings.defaultThemeToggle = e.target.checked; saveSettings(); });
     on('#setWidgetRefresh', 'change', (e) => { settings.widgetRefreshSec = +e.target.value || 0; saveSettings(); });
+    on('#setAiPhotoMode', 'change', (e) => { settings.aiPhotoMode = ['real','ai','none'].includes(e.target.value) ? e.target.value : 'real'; saveSettings(); });
+    on('#setAiLayoutMode', 'change', (e) => { settings.aiLayoutMode = e.target.value === 'classic' ? 'classic' : 'auto'; saveSettings(); });
+    on('#setAiOnePager', 'change', (e) => { settings.aiOnePager = e.target.checked; saveSettings(); });
+    on('#setAiPhotoGrade', 'change', (e) => { settings.aiPhotoGrade = e.target.checked; saveSettings(); });
+    on('#setAiConfirm', 'change', (e) => { settings.aiConfirmDestructive = e.target.checked; saveSettings(); });
+    on('#setAiOriginality', 'change', (e) => { settings.aiOriginalityStrict = e.target.checked; saveSettings(); });
+    on('#setAiReceipts', 'change', (e) => { settings.aiShowReceipts = e.target.checked; saveSettings(); });
     on('#setAutosave', 'change', (e) => { settings.autosave = e.target.checked; saveSettings(); });
     on('#setAutosaveMs', 'change', (e) => { settings.autosaveMs = +e.target.value || 2000; saveSettings(); });
     on('#setStartupView', 'change', (e) => { settings.startupView = e.target.value; saveSettings(); });
@@ -11802,6 +11846,19 @@ const App = (() => {
     chatScroll();
   }
 
+  function copilotNeedsConfirmation(act) {
+    if (!settings.aiConfirmDestructive || !act) return false;
+    return ['removeSection', 'removePage', 'unsuite', 'rewriteAll', 'rewriteItems', 'repair'].includes(act.op);
+  }
+
+  function confirmCopilotAction(act) {
+    return new Promise((resolve) => {
+      confirmModal('Confirm Copilot change', 'This action can remove, replace, or rewrite existing content. Your undo history will still be available, but nothing will run until you confirm.', () => resolve(true), 'Apply change');
+      const cancel = $('#confirmNo');
+      if (cancel) cancel.onclick = () => { closeModal(); resolve(false); };
+    });
+  }
+
   async function chatExecute(acts, text) {
     const out = { reply: '', summary: [], changed: false, full: false, needsCredit: '', spent: 0 };
     for (const act of (acts || [])) {
@@ -11809,6 +11866,10 @@ const App = (() => {
       if (!c) break;
       if (act.op === 'help') { out.reply = AI.chatHelp; continue; }
       if (act.op === 'closeChat') { chatOpenPanel(false); continue; }
+      if (copilotNeedsConfirmation(act)) {
+        const confirmed = await confirmCopilotAction(act);
+        if (!confirmed) { out.summary.push(act.label + ' — cancelled'); continue; }
+      }
       // These produce a rendered answer rather than an edit, and are drawn by
       // chatApplyPlan once the plan is known.
       if (act.op === 'ask' || act.op === 'review' || act.op === 'options') continue;
@@ -13243,7 +13304,7 @@ const App = (() => {
       renderDbList();
     });
     $('#dbSearch').oninput = renderDbList;
-    (function(){ const v=['dashboard','templates','designer','ai','database','tools'].includes(settings.startupView)?settings.startupView:'dashboard'; switchView(v); })();
+    (function(){ const v=['dashboard','templates','designer','ai','database','tools','tokens','guides'].includes(settings.startupView)?settings.startupView:'dashboard'; switchView(v); })();
     // first visit: offer the 2-minute guided tour after the UI settles
     try { if (!localStorage.getItem(TOUR_KEY)) setTimeout(startTour, 700); } catch (e) {}
     // what's new: once per version, after the UI settles (skip first-ever run —

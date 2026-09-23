@@ -10,6 +10,7 @@
 
 const AI = (() => {
   const STOP = new Set(['in', 'the', 'for', 'and', 'with', 'of', 'a', 'an', 'to', 'at', 'by', 'my', 'our', 'we', 'i', 'want', 'need', 'make', 'build', 'create', 'design', 'site', 'website', 'web', 'page', 'for']);
+  const DESIGN_DNA = (typeof PallettAIDesignDNA !== 'undefined') ? PallettAIDesignDNA : null;
 
   const hash = (s) => {
     let h = 7;
@@ -2704,6 +2705,10 @@ const AI = (() => {
       Object.keys(rhythmPlan.layouts).forEach((t) => {
         const row = sections.find((x) => x && x.type === t);
         if (row) row.layout = rhythmPlan.layouts[t];
+      });
+      Object.keys(rhythmPlan.animations || {}).forEach((t) => {
+        const row = sections.find((x) => x && x.type === t);
+        if (row && rhythmPlan.animations[t]) row.animation = rhythmPlan.animations[t];
       });
       sections.forEach((row) => { if (row) delete row.__used; });
     }
@@ -6678,7 +6683,7 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
     return Originality && Originality.audit ? Originality.audit(project, peers, references) : null;
   };
 
-  return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, studySite, isPublicFetchUrl, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, shuffleLook, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatPlanOne, copilotRoute, originalityReport, splitCompound, chatHelp, sampleSection, copyOptions, imageBase, photoPicks, polarity, designMention, designAlternatives,
+  return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, studySite, isPublicFetchUrl, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, shuffleLook, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatPlanOne, copilotRoute, originalityReport, splitCompound, chatHelp, sampleSection, copyOptions, imageBase, photoPicks, polarity, designMention, designAlternatives, designDNA: DESIGN_DNA,
     nthSecOfType, sectionOrdinal, resolveTarget, positionalMention, followMiss, repeatMiss, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES, templateCatalog: templateCatalogLib(), applyNicheExtras, addServicesPage, matchNiche,
     critiquePass, brandKernel: kernelLib };
 })();

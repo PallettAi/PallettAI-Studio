@@ -22,3 +22,14 @@ supabase/.temp/
 
 # Local design-system preview output (scripts/school-preview.js)
 .preview/
+
+# Incremental compiler cache (modules/compiler-cache.js). Derived entirely
+# from the project and rebuildable at any time, so it is never source.
+.build-cache/
+.build-cache-test*
+
+# Project snapshot vault (modules/project-vault.js) and the atomic-write
+# temp files it uses. Local recovery data, never source.
+.pallettai/
+*.pallettai.tmp
+.pallettai-smoke/

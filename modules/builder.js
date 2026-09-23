@@ -369,7 +369,7 @@ body.photo-grade{
     const animCss = (DB.getAnimation(anim) || {}).css || '';
     const cls = anim === 'none' ? '' : 'reveal';
     const pageId = (_ctx.page && _ctx.page.id) || '';
-    const shell = shellClasses(section);
+    const shell = [shellClasses(section), backgroundClasses(section)].filter(Boolean).join(' ');
     return `
     <section id="sec-${section.type}-${index}" class="section sec-${section.type}${shell ? ' ' + shell : ''}" data-page-id="${esc(pageId)}" data-section-index="${index}">
       <div class="container ${cls}" data-anim-css="${esc(animCss)}">
@@ -446,7 +446,7 @@ body.photo-grade{
     // The hero builds its own wrapper rather than going through sectionShell, so
     // it has to read the shell itself. Without this the shape pass decided the
     // hero's width and vertical air and nothing rendered the decision.
-    const shell = shellClasses(s);
+    const shell = [shellClasses(s), backgroundClasses(s)].filter(Boolean).join(' ');
     const hasImg = !!(s.image || '').trim();
     const bg = s.image || '';
     const placeholder = hasImg ? '' : heroPlaceholder(p, s, i);
@@ -903,7 +903,7 @@ body.photo-grade{
       ${posts}
       <div class="newsletter">
         <div><strong>Never miss a post</strong><p>One email a month, no spam, ever.</p></div>
-        <form class="nl-form" data-form="Newsletter subscription"><input type="email" name="email" placeholder="you@email.com" required><button class="btn solid" type="submit">Subscribe</button></form>
+        <form class="nl-form" data-form="Newsletter subscription"><input type="email" name="email" aria-label="you@email.com" autocomplete="email" placeholder="you@email.com" required><button class="btn solid" type="submit">Subscribe</button></form>
       </div>
       <div class="modal" id="postModal" aria-hidden="true">
         <div class="modal-card"><button class="modal-x" data-modal="close">✕</button>
@@ -966,12 +966,26 @@ body.photo-grade{
     // Every variant ships the same three fields with the same names and the same
     // data-contact hook: the delivery pipeline, the client editor and the exported
     // form all key off those, so a layout choice can never change what is sent.
+    //
+    // Every field carries an accessible name and an autofill hint:
+    //
+    //   * aria-label — these fields are placeholders by design, and a
+    //     placeholder is NOT an accessible name. A screen reader announced
+    //     "edit text, blank" on the one form the whole page exists to get
+    //     filled in. The label deliberately repeats the placeholder word for
+    //     word rather than describing the field differently: WCAG 2.5.3 wants
+    //     the accessible name to contain the visible text, so a visitor using
+    //     speech input can still say "click Your name". Nothing is translated
+    //     into these attributes, so mirroring the placeholder cannot drift.
+    //   * autocomplete — without it a browser will not offer to fill a name or
+    //     an address, and the visitor types it out on a phone keyboard. The
+    //     Concierge form already did this; every other form did not.
     const fields = (rows, paired) => `
           ${paired ? '<div class="cf-row">' : ''}
-          <input name="name" placeholder="Your name" required>
-          <input name="email" type="email" placeholder="Your email" required>
+          <input name="name" aria-label="Your name" autocomplete="name" placeholder="Your name" required>
+          <input name="email" type="email" aria-label="Your email" autocomplete="email" placeholder="Your email" required>
           ${paired ? '</div>' : ''}
-          <textarea name="message" rows="${rows}" placeholder="Tell us about your project…" required></textarea>`;
+          <textarea name="message" rows="${rows}" aria-label="Tell us about your project…" placeholder="Tell us about your project…" required></textarea>`;
 
     // Tiles — details as three cards across the top, form wide underneath.
     if (s.layout === 'cards') {
@@ -1062,7 +1076,7 @@ body.photo-grade{
             <h2>${esc(s.title || 'Stay in the loop')}</h2>
             <p>${esc(s.text || '')}</p>
           </div>
-          <form class="nl-form cta-nl" data-form="Email capture"><input type="email" name="email" placeholder="you@email.com" required><button class="btn solid" type="submit">Subscribe</button></form>
+          <form class="nl-form cta-nl" data-form="Email capture"><input type="email" name="email" aria-label="you@email.com" autocomplete="email" placeholder="you@email.com" required><button class="btn solid" type="submit">Subscribe</button></form>
         </div>`);
     }
     return sectionShell(s, i, `
@@ -1229,7 +1243,7 @@ body.photo-grade{
       <div class="review-form-card card">
         <strong>Been a customer? Leave a review</strong>
         <form class="rv-form" data-form="Customer review">
-          <input type="text" name="name" placeholder="Your name" required>
+          <input type="text" name="name" aria-label="Your name" autocomplete="name" placeholder="Your name" required>
           <select name="rating" aria-label="Rating" required>
             <option value="5">★★★★★ Excellent</option>
             <option value="4">★★★★ Good</option>
@@ -1237,7 +1251,7 @@ body.photo-grade{
             <option value="2">★★ Poor</option>
             <option value="1">★ Bad</option>
           </select>
-          <textarea name="review" rows="3" placeholder="How was your experience?" required></textarea>
+          <textarea name="review" rows="3" aria-label="How was your experience?" placeholder="How was your experience?" required></textarea>
           <button class="btn solid" type="submit">Submit review</button>
         </form>
       </div>`);
@@ -1265,8 +1279,8 @@ body.photo-grade{
       <div class="rsvp-card card" hidden id="rsvpPanel">
         <strong>RSVP — reserve your place</strong>
         <form class="rsvp-form" data-form="RSVP">
-          <input type="text" name="name" placeholder="Your name" required>
-          <input type="email" name="email" placeholder="you@email.com" required>
+          <input type="text" name="name" aria-label="Your name" autocomplete="name" placeholder="Your name" required>
+          <input type="email" name="email" aria-label="you@email.com" autocomplete="email" placeholder="you@email.com" required>
           <select name="guests" aria-label="Number of guests">
             <option value="1">Just me</option><option value="2">2 people</option><option value="3">3 people</option><option value="4">4 people</option>
           </select>
@@ -1363,7 +1377,7 @@ body.photo-grade{
     const chips = s.filter !== false && cats.length
       ? `<div class="coll-chips" role="group" aria-label="Filter by category"><button class="coll-chip active" data-cat="all">All</button>${cats.map((c) => `<button class="coll-chip" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>` : '';
     const searchBox = s.search !== false
-      ? `<div class="coll-search"><input type="search" placeholder="Search…" aria-label="Search this collection"></div>` : '';
+      ? `<div class="coll-search"><input type="search" aria-label="Search this collection" autocomplete="off" enterkeyhint="search" placeholder="Search…"></div>` : '';
     const sortBox = s.sort !== false
       ? `<div class="coll-sort"><select aria-label="Sort"><option value="none">Sort</option><option value="az">A → Z</option><option value="za">Z → A</option></select></div>` : '';
     const tools = (searchBox || sortBox)
@@ -1478,11 +1492,11 @@ body.photo-grade{
     <nav class="nav${cls}">
       <div class="nav-inner container">
         <a class="brand" href="${anchorRef('#top')}">${mark}${esc(s.name || 'My Site')}</a>
-        <div class="nav-links">${links.join('')}${ctaMobile}</div>
+        <div class="nav-links" id="nav-menu">${links.join('')}${ctaMobile}</div>
         ${cart}
         ${themeBtn}
         ${cta}
-        <button class="burger" aria-label="Menu"><span></span><span></span><span></span></button>
+        <button class="burger" type="button" aria-label="Menu" aria-controls="nav-menu" aria-expanded="false"><span></span><span></span><span></span></button>
       </div>
     </nav>`;
   }
@@ -1618,8 +1632,48 @@ body.photo-grade{
   }
 
   // ---------------- generated site CSS ----------------
+  /*
+    A design token is a CSS value, and a CSS value that reaches the stylesheet
+    unexamined can end its declaration and open a new rule — a project.json is
+    data, not code, and it arrives from outside. So this closes the character set
+    rather than trying to escape it: every colour, length, keyword and simple
+    function a corner, shadow, border or transform needs is expressible in what is
+    allowed below, and the characters that would break out (`;` `{` `}` `<` `>`
+    `@` `\` and both quote styles) are not expressible at all.
+
+    A value that does not fit is replaced by the default rather than sanitised
+    into something similar, because a typo that silently becomes a different
+    look is harder to notice than one that does nothing. `url(` is refused
+    separately: it is spellable from the allowed characters, and a token has no
+    business making a network request.
+  */
+  const CSS_VALUE_SHAPE = /^[a-zA-Z0-9#%.,()/\s!+-]+$/;
+  const cssVal = (value, fallback, max) => {
+    const v = String(value == null ? '' : value).trim();
+    if (!v || v.length > (max || 120)) return fallback;
+    if (!CSS_VALUE_SHAPE.test(v)) return fallback;
+    if (/url\s*\(/i.test(v)) return fallback;
+    return v;
+  };
+  // Contrast can only be *verified* for a colour this code can measure, so a
+  // brand override is accepted as hex or not at all — see siteCSS().
+  const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+
   const design = (p) => {
     const raw = p && p.site && p.site.design && typeof p.site.design === 'object' ? p.site.design : {};
+    /*
+      The same knobs also arrive under the schema spellings an imported
+      project.json uses — `design_tokens`, keyed by CSS custom-property name.
+      Both are read into one shape here so that no renderer has to learn two
+      vocabularies, and the Studio's own camelCase wins if a project carries
+      both, because that is the one the editor writes.
+    */
+    const tokens = (p && p.site && p.site.designTokens && typeof p.site.designTokens === 'object')
+      ? p.site.designTokens
+      : ((p && p.design_tokens && typeof p.design_tokens === 'object') ? p.design_tokens : {});
+    const token = (camel, kebab, fallback, max) => cssVal(
+      raw[camel] != null ? raw[camel] : tokens[kebab], fallback, max
+    );
     const number = (value, fallback, min) => {
       const n = Number(value);
       return Number.isFinite(n) && n >= min ? n : fallback;
@@ -1628,11 +1682,96 @@ body.photo-grade{
       containerWidth: number(raw.containerWidth, 1140, 1),
       radius: number(raw.radius, 20, 0),
       spacing: number(raw.spacing, 96, 1),
+      /*
+        Buttons are the one element a project asks to change by name, so the four
+        knobs describing them are tokens rather than literals buried in rules.
+        Every default below is the exact value those rules used to hard-code, so
+        a project that sets none of them renders as it did before they existed —
+        the token surface is additive, not a redesign.
+      */
+      btnRadius: token('btnRadius', '--btn-radius', '999px', 40),
+      btnShadow: token('btnShadow', '--btn-shadow', '0 10px 30px rgba(0,0,0,.25)', 160),
+      btnBorder: token('btnBorder', '--btn-border', '2px solid transparent', 90),
+      btnHover: token('btnTransformHover', '--btn-transform-hover', 'translateY(-2px)', 80),
+      // Brand overrides. Sanitised like the rest because they land in the same
+      // stylesheet, and hex-only because the readable text roles built on them
+      // are *derived by measurement* — an unmeasurable colour cannot be checked.
+      brandColor: HEX_COLOR.test(token('brandColor', '--brand-color', '', 60)) ? token('brandColor', '--brand-color', '', 60) : '',
+      bgSurface: HEX_COLOR.test(token('bgSurface', '--bg-surface', '', 60)) ? token('bgSurface', '--bg-surface', '', 60) : '',
       customCss: String(raw.customCss || ''),
       customJs: String(raw.customJs || ''),
       styleCss: String(raw.styleCss || '')
     };
   };
+
+  // ---------------- section backgrounds ----------------
+  // Schema-driven section backgrounds. The field arrives as `background_style`
+  // from an imported project.json and as `bgStyle` from the Studio's own model,
+  // so both spellings resolve to one whitelisted class. A value is never
+  // interpolated into the stylesheet — only a name that is already in this table
+  // becomes a class, which is what stops a hand-edited project injecting CSS
+  // through a background name.
+  const BG_STYLES = {
+    grid: 'bgp-grid', 'pattern-grid': 'bgp-grid',
+    dots: 'bgp-dots', 'pattern-dots': 'bgp-dots',
+    noise: 'bgp-noise', 'pattern-noise': 'bgp-noise',
+    split: 'bgs-split', 'split-contrast': 'bgs-split'
+  };
+  function backgroundClasses(section) {
+    const raw = section && (section.background_style || section.bgStyle);
+    const key = String(raw == null ? '' : raw).trim().toLowerCase();
+    return BG_STYLES[key] ? 'has-bg ' + BG_STYLES[key] : '';
+  }
+
+  // Every background a project actually asks for across all its pages. The
+  // stylesheet is written from this rather than always, for two reasons: a site
+  // that uses none of this should carry none of its bytes, and the export has an
+  // existing promise that a non-cinematic build ships no procedural grain and no
+  // clip-path, which an always-present rule would quietly break.
+  function usedBackgrounds(p) {
+    const used = [];
+    const pages = (p && p.site && Array.isArray(p.site.pages) && p.site.pages.length)
+      ? p.site.pages
+      : [{ sections: (p && p.site && p.site.sections) || [] }];
+    pages.forEach((pg) => {
+      (Array.isArray(pg && pg.sections) ? pg.sections : []).forEach((s) => {
+        const cls = backgroundClasses(s);
+        if (cls && used.indexOf(cls) === -1) used.push(cls);
+      });
+    });
+    return used;
+  }
+
+  // The declarations for those classes only. Kept as a function rather than a
+  // block in the stylesheet because the set of classes is per project.
+  const BG_RULES = {
+    'has-bg': '.section.has-bg{isolation:isolate}',
+    'overlays': '.section.has-bg::before,.section.has-bg::after{content:\'\';position:absolute;inset:0;z-index:-1;pointer-events:none}',
+    'bgp-grid': '.bgp-grid::before{background-image:linear-gradient(color-mix(in srgb,var(--text) 8%,transparent) 1px,transparent 1px),linear-gradient(90deg,color-mix(in srgb,var(--text) 8%,transparent) 1px,transparent 1px);background-size:52px 52px}',
+    'bgp-dots': '.bgp-dots::before{background-image:radial-gradient(color-mix(in srgb,var(--text) 14%,transparent) 1.5px,transparent 1.5px);background-size:22px 22px}',
+    'bgp-noise': '.bgp-noise::before{background-image:url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'160\' height=\'160\'%3E%3Cfilter id=\'sn\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.8\' numOctaves=\'3\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23sn)\'/%3E%3C/svg%3E");background-size:160px 160px;opacity:.06}',
+    'bgs-split': '.bgs-split::after{background:var(--accent);opacity:.14;clip-path:polygon(0 0,100% 0,100% 85%,0 100%)}'
+  };
+
+  /*
+    Section backgrounds (schema background_style). An overlay layer behind the
+    section's own content rather than a replacement for it: the palette still
+    paints the section, and the pattern sits over that and under the words.
+    isolation:isolate plus z-index:-1 is what puts the layer beneath the content
+    without having to give every child a position and a z-index of its own.
+  */
+  function backgroundCSS(p) {
+    const used = usedBackgrounds(p);
+    if (!used.length) return '';
+    const rules = [BG_RULES['has-bg'], BG_RULES.overlays];
+    used.forEach((cls) => {
+      cls.split(' ').forEach((name) => {
+        const rule = BG_RULES[name];
+        if (rule && rules.indexOf(rule) === -1) rules.push(rule);
+      });
+    });
+    return '\n' + rules.join('\n');
+  }
 
   // Resolve an uploaded font before falling back to the catalog. Brand presets
   // can carry custom font files between projects, so the generated site's CSS
@@ -1652,11 +1791,43 @@ body.photo-grade{
   // reveal base state is *visible*, so a browser without the API gets a correct
   // static site rather than a blank one. Off by default only when the Animation
   // Pack suite is absent, so existing projects keep today's behaviour.
+  // Three tiers. `subtle` drops the loud hero effects, `full` is the default
+  // and the long-standing behaviour, and `cinematic` adds a native-CSS layer on
+  // top of full (scroll/view timelines, clip-path masks, procedural grain and
+  // pointer micro-interactions). An unknown value falls back to `full` rather
+  // than silently turning motion off, so a project carrying a value written by
+  // a newer build on an older one still renders a moving site.
   function motionLevel(p) {
     const suite = (p.suites || []).includes('animation');
     const raw = String((p.site && p.site.motion) || 'full');
     if (!suite || raw === 'off') return 'off';
-    return raw === 'subtle' ? 'subtle' : 'full';
+    if (raw === 'subtle') return 'subtle';
+    if (raw === 'cinematic') return 'cinematic';
+    return 'full';
+  }
+  const cinematicOn = (p) => motionLevel(p) === 'cinematic';
+
+  // The decorative wordmark band a cinematic site runs across a section break.
+  // It is built from the site's OWN name, so what scrolls past is the client's
+  // brand rather than a generic slogan, and it is inserted after the first
+  // section so it reads as a transition instead of furniture at the top. A
+  // project with no name gets no band — which is also the guard against an
+  // empty stream that would animate nothing.
+  function kineticBand(p) {
+    if (!cinematicOn(p)) return '';
+    const name = String((p.site && p.site.name) || '').trim();
+    if (!name) return '';
+    const cell = `<span class="kin-word">${esc(name)}</span><span class="kin-dot" aria-hidden="true">◆</span>`;
+    const run = cell.repeat(5);
+    // Two identical halves, and the keyframe travels exactly -50%: the seam is
+    // invisible and the loop is continuous without JS measuring anything.
+    return `\n<div class="kin-wrap" aria-hidden="true"><div class="kin-band"><div class="kin-track">${run}${run}</div></div></div>`;
+  }
+  function withKineticBand(p, html) {
+    const band = kineticBand(p);
+    if (!band) return html;
+    const at = html.indexOf('</section>');
+    return at === -1 ? html + band : html.slice(0, at + 10) + band + html.slice(at + 10);
   }
   const motionOn = (p) => motionLevel(p) !== 'off';
 
@@ -1690,7 +1861,7 @@ body.photo-grade{
   /* Scroll-progress rail moves to the compositor, so the JS width write stops. */
   .progress{width:100%;transform:scaleX(0);transform-origin:0 50%;animation:mv-progress linear both;animation-timeline:scroll(root block)}
   @keyframes mv-progress{to{transform:scaleX(1)}}`
-      + (level === 'full' ? `
+      + (level !== 'subtle' ? `
   /* Hero depth: the artwork drifts and the whole hero dissolves as you leave it. */
   .sec-hero .hero-bg{animation:mv-parallax linear both;animation-timeline:scroll(root block);animation-range:0 70vh}
   @keyframes mv-parallax{from{transform:scale(1.06) translateY(0)}to{transform:scale(1.14) translateY(-6vh)}}
@@ -1698,6 +1869,78 @@ body.photo-grade{
   @keyframes mv-dissolve{from{opacity:1}to{opacity:0}}` : '')
       + `
 }`
+      + (level === 'cinematic' ? `
+/* ============================================================
+   Cinematic tier — site.motion = 'cinematic'
+   ------------------------------------------------------------
+   Everything here is a native browser feature (scroll/view
+   timelines, clip-path, OKLCH mixes) or a compositor-only
+   transform, and every rule is scoped to body.motion-cine, a class
+   only a cinematic project's body element carries. A browser that lacks
+   one of the features never sees the rule fire, and reduced motion
+   stills the whole layer — so an ordinary project's bytes are
+   untouched and a cinematic one degrades to a correct static page.
+   ============================================================ */
+/* A longer, slower reveal range than the full tier: the same timeline,
+   driven further, so entrances read as deliberate rather than springy. */
+body.motion-cine .reveal{animation-range:entry 2% cover 46%}
+@supports (animation-timeline: view()){
+  /* Vertical scroll drives the gallery rail sideways, on the compositor,
+     with no scroll listener and no library.
+
+     The timeline is DECLARED on the strip and CONSUMED by the track -
+     never declared on the track itself - and that is load-bearing.
+     .gal-strip is an overflow-x scroll container, so a view() timeline on
+     its child would bind to the strip's own box, which only ever scrolls
+     horizontally, and freeze at a single progress value forever. A named
+     view timeline declared on the in-flow strip resolves against the page
+     document instead, so the rail actually tracks the visitor's scroll. */
+  body.motion-cine .gal-strip{view-timeline-name:--mv-strip;view-timeline-axis:block}
+  body.motion-cine .gs-track{animation:mv-rail linear both;animation-timeline:--mv-strip;animation-range:cover 0% cover 100%}
+  @keyframes mv-rail{from{transform:translate3d(0,0,0)}to{transform:translate3d(-12%,0,0)}}
+  /* The collage lead drifts a little slower than its neighbours, so the
+     masked frames do not travel in lockstep. Same named-timeline pattern. */
+  body.motion-cine .gcoll-1{view-timeline-name:--mv-collage;view-timeline-axis:block}
+  body.motion-cine .gcoll-1 img{animation:mv-zoom linear both;animation-timeline:--mv-collage;animation-range:cover 0% cover 100%}
+  @keyframes mv-zoom{from{transform:scale(1.02)}to{transform:scale(1.12)}}
+}
+@supports (clip-path:polygon(0 0)){
+  /* Angular crops. Taking the corner off a photo grid is the cheapest
+     way to stop it reading as a template, and clip-path costs nothing
+     to paint because it is applied at composite time. */
+  body.motion-cine .gcoll-1,body.motion-cine .gal-m.mos-1{clip-path:polygon(0 0,100% 2.4vw,100% 100%,0 calc(100% - 2.4vw))}
+  body.motion-cine .gr-stage{clip-path:polygon(0 0,calc(100% - 2.2vw) 0,100% 100%,0 100%)}
+}
+/* Procedural grain — one inline feTurbulence tile, no request and no DOM
+   node. Fixed and pointer-transparent, so it never blocks a click or
+   affects layout. Kept at 3.5% so it reads as film, not noise. */
+body.motion-cine:after{content:'';position:fixed;inset:0;z-index:9998;pointer-events:none;opacity:.035;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");background-size:160px 160px}
+/* Registered custom properties. The browser now knows these two are angles,
+   so it can INTERPOLATE them — which is the difference between a tilt that
+   snaps back and one that eases to rest. It is also why the tilt script below
+   writes two variables instead of a whole transform string: the easing lives
+   in CSS, and the invariants (perspective, the rotation order) live here. */
+@property --mv-rx{syntax:"<angle>";inherits:false;initial-value:0deg}
+@property --mv-ry{syntax:"<angle>";inherits:false;initial-value:0deg}
+body.motion-cine .card,body.motion-cine .bento-card{transform:perspective(900px) rotateX(var(--mv-rx)) rotateY(var(--mv-ry));transition:--mv-rx .34s ease-out,--mv-ry .34s ease-out,box-shadow .3s}
+body.motion-cine .hero-cta .btn,body.motion-cine .btn.solid{transition:transform .35s cubic-bezier(.2,.7,.2,1),filter .25s,border-color .25s}
+/* Kinetic type band: a wordmark stream running at a slight diagonal across a
+   section break, compositor-only, with no marquee library. It is decorative
+   and aria-hidden, and the wrapper clips it so the rotation can never create
+   horizontal overflow. */
+body.motion-cine .kin-wrap{overflow:hidden;padding:4px 0}
+body.motion-cine .kin-band{transform:rotate(-2.4deg) scale(1.06);background:var(--grad);color:#fff;padding:15px 0;overflow:hidden}
+body.motion-cine .kin-track{display:flex;align-items:center;gap:1.1rem;width:max-content;font-family:var(--fontd);font-weight:800;font-size:clamp(1.35rem,3.2vw,2.5rem);letter-spacing:-.02em;line-height:1.15;white-space:nowrap;animation:kin-scroll 30s linear infinite}
+body.motion-cine .kin-word{text-transform:uppercase}
+body.motion-cine .kin-dot{font-size:.42em;opacity:.72}
+@keyframes kin-scroll{to{transform:translate3d(-50%,0,0)}}
+@media (prefers-reduced-motion:reduce){body.motion-cine .kin-band{transform:none;background:var(--surface);color:var(--text)}}
+body.motion-cine .mv-cursor{position:fixed;top:0;left:0;z-index:9999;pointer-events:none;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;background:var(--brand-tint);border:1px solid color-mix(in srgb,var(--text) 38%,transparent);mix-blend-mode:difference;opacity:0;transition:width .25s,height .25s,margin .25s,opacity .3s}
+body.motion-cine .mv-cursor.on{opacity:1}
+body.motion-cine .mv-cursor.big{width:62px;height:62px;margin:-31px 0 0 -31px;border-radius:14px}
+@media (prefers-contrast: more){body.motion-cine:after{display:none}}
+@media (prefers-reduced-motion:reduce){body.motion-cine:after{display:none}body.motion-cine .mv-cursor{display:none}}
+` : '')
       + (multi ? `
 /* Cross-document View Transitions: navigating between pages morphs the
    wordmark instead of hard-cutting. Only the nav mark is named — the footer
@@ -1708,7 +1951,21 @@ body.photo-grade{
   }
 
   const siteCSS = (p, settings) => {
-    const pal = DB.getPalette(p.site.palette);
+    const d = design(p);
+    const basePal = DB.getPalette(p.site.palette);
+    /*
+      A schema-supplied brand colour replaces the palette's, and the readable
+      text roles are then derived from the NEW colour rather than the palette's.
+      Skipping that derivation is the whole risk of the feature: it is exactly
+      how a brand override puts unreadable text on the page, which is the failure
+      DB.textRoles was written to prevent in the first place. Only hex is
+      accepted (see design()), so the derivation can always actually measure it.
+    */
+    const pal = (d.brandColor || d.bgSurface)
+      ? Object.assign({}, basePal,
+        d.brandColor ? { primary: d.brandColor } : null,
+        d.bgSurface ? { surface: d.bgSurface } : null)
+      : basePal;
     const isDark = pal.dark;
     /*
       Brand colours are not all readable as text. `--primary-text` and
@@ -1736,7 +1993,6 @@ body.photo-grade{
     const f = siteFont(p.site, p.site.font);
     // optional display/heading family (AI Studio design DNA) — falls back to body
     const fd = (p.site.fontDisplay && p.site.fontDisplay !== p.site.font) ? siteFont(p.site, p.site.fontDisplay) : null;
-    const d = design(p);
     const typoScale = Number(p.site && p.site.typoScale || 1);
     const typoTrack = Number(p.site && p.site.typoTracking || 0);
     const typoHLh = Number(p.site && p.site.typoHeadingLh || 1.18);
@@ -1751,12 +2007,69 @@ body.photo-grade{
   --font:${bodyFont ? `'${bodyFont.name}',system-ui,sans-serif` : `'${f.name}',system-ui,sans-serif`};
   --fontd:${fd ? `'${fd.name}',Georgia,'Times New Roman',serif` : 'var(--font)'};
   --grad:linear-gradient(135deg,${pal.primary},${pal.accent});
+  /* Button geometry, as tokens. Defaults are the literals the .btn rules used to
+     hard-code, so nothing moves for a project that sets none of them. */
+  --btn-radius:${d.btnRadius}; --btn-shadow:${d.btnShadow};
+  --btn-border:${d.btnBorder}; --btn-transform-hover:${d.btnHover};
+  /* Validation colours, mixed toward --text. --text is dark on a light theme
+     and light on a dark one, so one pair of tokens stays legible in both
+     instead of a second set to keep in step. Mixed in oklab, not srgb: a
+     red/green blend keeps its perceived lightness that way. */
+  --valid:color-mix(in oklab,#10b981 58%,var(--text));
+  --invalid:color-mix(in oklab,#ef4444 58%,var(--text));
+  /* Fluid modular type scale. Each step is a clamp() over the viewport, so
+     the type breathes with the screen instead of jumping at breakpoints;
+     --fs-hero and --fs-h2 are consumed below, and the rest is the scale a
+     project's own custom CSS can build on. The * --typo-scale multiple is
+     kept on the consuming rule so the user's type-scale setting still wins. */
+  --fs-hero:clamp(2.6rem,7vw,4.8rem); --fs-h1:clamp(2.25rem,1rem + 4.4vw,5rem);
+  --fs-h2:clamp(1.8rem,4vw,2.6rem); --fs-h3:clamp(1.15rem,.98rem + .9vw,1.5rem);
+  --fs-body:clamp(1rem,.97rem + .25vw,1.1rem); --fs-eyebrow:.8rem;
+  /* OKLCH brand mixes. srgb is the fallback the @supports block below
+     upgrades: OKLCH keeps perceived lightness even as chroma is mixed, so
+     a tint stays the same *brightness* as its source hue on every palette
+     rather than muddying towards mid-grey. */
+  --brand-tint:color-mix(in srgb,var(--primary) 12%,transparent);
+  --surface-accent:color-mix(in srgb,var(--accent) 10%,transparent);
   --typo-scale:${typoScale}; --typo-track:${typoTrack}em; --typo-hlh:${typoHLh}; --typo-blh:${typoBLh};
   --sec-pad:${d.spacing}px;
 }
+@supports (color: oklch(50% 0.1 200)){
+  :root{--brand-tint:color-mix(in oklch,var(--primary) 12%,transparent);--surface-accent:color-mix(in oklch,var(--accent) 10%,transparent)}
+}
+/* ---- entry orchestration (@starting-style) ----------------------------
+   Elements animate in as they enter the DOM, declared in CSS alone — no
+   JavaScript init timer and no hidden pre-animation class. Only the
+   transition-capable components are listed, and the whole block sits in
+   the visitor's no-preference query, so a reduced-motion visitor (and any
+   browser without @starting-style) gets exactly today's page. */
+@media (prefers-reduced-motion: no-preference){
+  @starting-style{
+    .card,.coll-item,.faq-item,.pstack-row,.bento-card,.num-row,.tl-item,.gr-thumb{opacity:0;transform:translateY(10px)}
+  }
+}
 *{margin:0;padding:0;box-sizing:border-box}
-html{scroll-behavior:smooth}
+/* scroll-padding-top keeps an in-page anchor from landing UNDER the fixed nav
+   (which is 68px tall and already offset by the schedule bar). Without it every
+   "Contact" link scrolls the heading behind the bar. scrollbar-gutter keeps the
+   layout from shifting sideways when the scrollbar appears on a short page. */
+html{scroll-behavior:smooth;scroll-padding-top:calc(var(--pai-sched-h,0px) + 84px);scrollbar-gutter:stable}
+/* Native surfaces follow the palette instead of the OS default: the caret, the
+   checkbox/radio fill and the scrollbar track all take the brand colour, and
+   color-scheme keeps the browser's own chrome (scrollbar, pickers, autofill)
+   legible on a dark site. The :has() pair re-points color-scheme when the
+   visitor flips the theme toggle, which a class on body alone cannot do for
+   the viewport scrollbar. */
+html{color-scheme:${isDark ? 'dark' : 'light'};accent-color:var(--primary-text)}
+html:has(body.theme-light){color-scheme:light}
+html:has(body.theme-dark){color-scheme:dark}
+::selection{background:color-mix(in srgb,var(--primary) 34%,transparent);color:var(--text)}
+/* Interpolate between a length and an intrinsic keyword (Baseline progressive).
+   It is what lets a <details> open to its natural height in CSS below, and it
+   is ignored wholesale where it is unsupported. */
+:root{interpolate-size:allow-keywords}
 body{font-family:var(--font);background:var(--bg);color:var(--text);line-height:1.65;overflow-x:hidden;overflow-wrap:break-word}
+p,li{text-wrap:pretty}
 h1,h2,h3,h4{font-family:var(--fontd);line-height:var(--typo-hlh);letter-spacing:var(--typo-track);text-wrap:balance}
 body{line-height:var(--typo-blh)}
 h1,h2,h3,h4,p,li{overflow-wrap:break-word}
@@ -1814,11 +2127,11 @@ body.theme-dark .sec-hero h1{background:linear-gradient(120deg,#fff 20%,color-mi
 body.theme-dark .hero-tag{color:#e8eaf2}
 .eyebrow{color:var(--primary-text);font-weight:700;letter-spacing:.14em;text-transform:uppercase;font-size:.8rem;margin-bottom:10px}
 .sec-head{max-width:640px;margin-bottom:48px}
-.sec-head h2{font-size:calc(clamp(1.8rem,4vw,2.6rem) * var(--typo-scale));line-height:1.15;letter-spacing:-.02em}
+.sec-head h2{font-size:calc(var(--fs-h2) * var(--typo-scale));line-height:1.15;letter-spacing:-.02em}
 .sub{color:var(--muted);margin-top:10px;font-size:1.05rem}
-.btn{display:inline-block;padding:13px 28px;border-radius:999px;font-weight:700;font-size:.95rem;border:2px solid transparent;cursor:pointer;transition:.25s;font-family:var(--font);white-space:nowrap}
-.btn.solid{background:var(--grad);color:#fff;box-shadow:0 10px 30px rgba(0,0,0,.25)}
-.btn.solid:hover{transform:translateY(-2px);filter:brightness(1.08)}
+.btn{display:inline-block;padding:13px 28px;border-radius:var(--btn-radius);font-weight:700;font-size:.95rem;border:var(--btn-border);cursor:pointer;transition:.25s;font-family:var(--font);white-space:nowrap}
+.btn.solid{background:var(--grad);color:#fff;box-shadow:var(--btn-shadow)}
+.btn.solid:hover{transform:var(--btn-transform-hover);filter:brightness(1.08)}
 .btn.ghost{border-color:color-mix(in srgb,var(--text) 35%,transparent);background:transparent}
 .btn.ghost:hover{border-color:var(--primary);color:var(--primary-text)}
 .btn.small{padding:9px 18px;font-size:.85rem}
@@ -1903,7 +2216,7 @@ body.theme-dark .hero-tag{color:#e8eaf2}
    accent's *text* colour, verified against the page and a card rather than
    against a 25% wash of another hue. */
 .hero-badge{display:inline-block;background:color-mix(in srgb,var(--primary) 25%,transparent);color:var(--accent-text);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);padding:7px 18px;border-radius:999px;font-size:.8rem;font-weight:700;letter-spacing:.08em;margin-bottom:22px}
-.sec-hero h1{font-size:calc(clamp(2.6rem,7vw,4.8rem) * var(--typo-scale));line-height:1.05;letter-spacing:-.03em;background:${heroH1};-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:${heroShadow}}
+.sec-hero h1{font-size:calc(var(--fs-hero) * var(--typo-scale));line-height:1.05;letter-spacing:-.03em;background:${heroH1};-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:${heroShadow}}
 .hero-tag{font-size:clamp(1.15rem,2.6vw,1.6rem);color:${heroTag};margin-top:14px;font-weight:500}
 .hero-desc{color:${heroDesc};max-width:620px;margin:18px auto 0}
 .hero-cta{display:flex;gap:14px;justify-content:center;margin-top:34px;flex-wrap:wrap}
@@ -1992,6 +2305,16 @@ body.theme-dark .hero-tag{color:#e8eaf2}
 /* faq */
 .faq-list{max-width:760px;margin:0 auto;display:grid;gap:14px}
 .faq-item{background:var(--surface);border:1px solid color-mix(in srgb,var(--text) 8%,transparent);border-radius:14px;padding:0 22px;box-shadow:var(--shadow)}
+/* An accordion that opens to its natural height in CSS alone — no measured
+   pixel value in JS and no hidden wrapper. ::details-content is the part the
+   browser generates, so animating it is the spec's own answer to "why can't I
+   animate <details>". Both the pseudo-element and interpolate-size are new, so
+   the whole block is behind selector() support and a browser without it keeps
+   the instant open/close it has always had. */
+@supports selector(::details-content){
+  .faq-item::details-content{block-size:0;overflow:hidden;transition:block-size .34s cubic-bezier(.2,.7,.2,1),content-visibility .34s allow-discrete}
+  .faq-item[open]::details-content{block-size:auto}
+}
 .faq-item summary{list-style:none;cursor:pointer;padding:20px 0;font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:12px}
 .faq-item summary::-webkit-details-marker{display:none}
 .faq-item[open] summary{color:var(--primary-text)}
@@ -2039,6 +2362,29 @@ body.theme-dark .hero-tag{color:#e8eaf2}
 .contact-form{display:grid;gap:14px}
 .contact-form input,.contact-form textarea{background:color-mix(in srgb,var(--text) 6%,transparent);border:1px solid color-mix(in srgb,var(--text) 12%,transparent);border-radius:12px;padding:14px 16px;font-family:var(--font);color:var(--text);font-size:.95rem;transition:.2s}
 .contact-form input:focus-visible,.contact-form textarea:focus-visible{border-color:var(--primary)}
+/* Post-interaction validation. :invalid matches from the moment the document
+   loads, so a pristine empty form would render head to toe in the error style
+   before the visitor has typed a character. :user-invalid only matches a field
+   the visitor has changed themselves, which is the guarantee that matters: an
+   untouched form is never painted as broken. Measured in Chrome 130, it starts
+   matching as soon as they type into a field they have altered and keeps
+   matching after they leave it — so this is interaction-level, not blur-level,
+   and it is deliberately the browser's own rule rather than a JS one.
+   Elements rather than classes, so a form the renderers add later is covered
+   without a second rule. border-color alone is not enough: .nl-form inputs are
+   border:none, where a colour change paints nothing, so the box-shadow ring
+   carries the signal there — and under forced-colors (where box-shadow is
+   forced to none) the dashed border below is what survives. */
+input:user-invalid,textarea:user-invalid,select:user-invalid{border-color:var(--invalid);box-shadow:0 0 0 3px color-mix(in oklab,var(--invalid) 24%,transparent)}
+input:user-valid,textarea:user-valid,select:user-valid{border-color:color-mix(in oklab,var(--valid) 55%,transparent)}
+@media(forced-colors:active){
+  /* The system palette takes the colour away, so the invalid state keeps a
+     non-colour cue: its border shape changes. This is the audience most likely
+     to need an error shown unmistakably, so it is the one place worth spending
+     a rule on — everywhere else this stylesheet is already forced-colors safe,
+     because it draws its boundaries with borders rather than shadows. */
+  input:user-invalid,textarea:user-invalid,select:user-invalid{border-style:dashed}
+}
 .form-note{color:var(--muted);font-size:.82rem;text-align:center}
 .map{width:100%;height:300px;border:0;border-radius:var(--radius);margin-top:40px;filter:saturate(.9)}
 /* cta */
@@ -2443,6 +2789,7 @@ ${settings.proExport === true ? '' : `
      label on a phone reads better than a squeezed single line. */
   .btn{width:100%;text-align:center;white-space:normal}
 }
+${backgroundCSS(p)}
 ${motionCSS(p)}
 @media(prefers-reduced-motion:reduce){
   *{animation:none !important;transition:none !important}
@@ -2488,9 +2835,70 @@ ${motionCSS(p)}
     }
     const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
-    // mobile nav
+    // Studio preview bridge. Exported sites remain ordinary standalone pages:
+    // this only intercepts internal links and section selection when embedded in
+    // an iframe. The parent validates the source and the referenced project id.
+    const inStudioPreview = window.parent !== window;
+    const previewMessage = (type, extra) => {
+      if (!inStudioPreview || !window.parent || typeof window.parent.postMessage !== 'function') return;
+      window.parent.postMessage(Object.assign({ channel: 'pai-preview', type: type }, extra || {}), '*');
+    };
+    if (inStudioPreview) {
+      document.addEventListener('click', (event) => {
+        const link = event.target && event.target.closest ? event.target.closest('a.page-link, a[data-legal]') : null;
+        if (link) {
+          event.preventDefault();
+          const pageId = link.getAttribute('data-page');
+          const slug = link.getAttribute('data-legal');
+          if (pageId) previewMessage('navigate', { pageId: String(pageId).slice(0, 80) });
+          else if (slug) previewMessage('legal', { slug: String(slug).slice(0, 40) });
+          return;
+        }
+        const section = event.target && event.target.closest ? event.target.closest('main section[data-section-index]') : null;
+        if (section && !(event.target.closest && event.target.closest('a,button,input,select,textarea'))) {
+          previewMessage('select-section', {
+            pageId: String(section.getAttribute('data-page-id') || '').slice(0, 80),
+            index: Number(section.getAttribute('data-section-index'))
+          });
+        }
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        const section = event.target && event.target.closest ? event.target.closest('main section[data-section-index]') : null;
+        if (!section || (event.target.closest && event.target.closest('a,button,input,select,textarea'))) return;
+        event.preventDefault();
+        previewMessage('select-section', {
+          pageId: String(section.getAttribute('data-page-id') || '').slice(0, 80),
+          index: Number(section.getAttribute('data-section-index'))
+        });
+      });
+    }
+
+    // mobile nav. The panel was a bare class toggle, so none of it was exposed
+    // and nothing ever closed it again: no aria-expanded, Escape did nothing,
+    // and the menu stayed over the page after a link was followed. State now
+    // lives in one place (setMenu) so the class and the attribute cannot
+    // disagree. The 860px test matches the breakpoint that defines the panel.
     const burger = $('.burger'), links = $('.nav-links');
-    if (burger) burger.addEventListener('click', () => links.classList.toggle('open'));
+    if (burger && links) {
+      const setMenu = (open) => {
+        links.classList.toggle('open', open);
+        burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+      };
+      setMenu(false);
+      burger.addEventListener('click', () => setMenu(!links.classList.contains('open')));
+      // Escape closes and hands focus back to the control that opened it, so
+      // the next Tab carries on from the burger instead of the page top.
+      addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && links.classList.contains('open')) { setMenu(false); burger.focus(); }
+      });
+      links.addEventListener('click', (e) => { if (e.target.closest('a')) setMenu(false); });
+      // Past the breakpoint the panel becomes the inline desktop bar again; the
+      // attribute would otherwise still claim a menu is open over the page.
+      addEventListener('resize', () => {
+        if (innerWidth > 860 && links.classList.contains('open')) setMenu(false);
+      });
+    }
 
     // client dark/light theme toggle
     const themeBtn = $('.theme-btn');
@@ -2574,6 +2982,56 @@ ${motionCSS(p)}
       io.observe(el);
     });
 
+    // Cinematic micro-interactions. Gated twice over: the build flag decides
+    // whether the tier is on at all, and the runtime test keeps every handler
+    // off touch devices, reduced-motion visitors and keyboards. Each listener
+    // writes only transform/opacity, and the cursor is a single element with
+    // pointer-events:none, so nothing here can intercept a click or a form.
+    if (CFG.cine && !REDUCED && typeof matchMedia === 'function'
+      && matchMedia('(hover:hover) and (pointer:fine)').matches) {
+      // magnetic primary CTAs
+      $$('.hero-cta .btn, .btn.solid').forEach((el) => {
+        el.addEventListener('mousemove', (e) => {
+          const r = el.getBoundingClientRect();
+          const x = (e.clientX - (r.left + r.width / 2)) * 0.28;
+          const y = (e.clientY - (r.top + r.height / 2)) * 0.28;
+          el.style.transform = 'translate3d(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px,0)';
+        });
+        el.addEventListener('mouseleave', () => { el.style.transform = ''; });
+      });
+      // 3D tilt on the card language, read from the pointer's own offset. Only
+      // the two registered angles are written; perspective and rotation order
+      // stay in the stylesheet, and the easing back to rest is a CSS transition
+      // on those registered properties rather than a JS frame loop.
+      $$('.card, .bento-card').forEach((el) => {
+        el.addEventListener('mousemove', (e) => {
+          const r = el.getBoundingClientRect();
+          const rx = ((e.clientY - (r.top + r.height / 2)) / r.height) * -6;
+          const ry = ((e.clientX - (r.left + r.width / 2)) / r.width) * 6;
+          el.style.setProperty('--mv-rx', rx.toFixed(2) + 'deg');
+          el.style.setProperty('--mv-ry', ry.toFixed(2) + 'deg');
+        });
+        el.addEventListener('mouseleave', () => {
+          el.style.setProperty('--mv-rx', '0deg');
+          el.style.setProperty('--mv-ry', '0deg');
+        });
+      });
+      // context-aware cursor: it widens over the work, following the cursor's
+      // existing meaning (a gallery tile is a thing to look at).
+      const cur = document.createElement('div');
+      cur.className = 'mv-cursor';
+      cur.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(cur);
+      addEventListener('mousemove', (e) => {
+        cur.style.transform = 'translate3d(' + e.clientX + 'px,' + e.clientY + 'px,0)';
+        cur.classList.add('on');
+      }, { passive: true });
+      $$('.gal-item, .gcoll, .gal-m').forEach((el) => {
+        el.addEventListener('mouseenter', () => cur.classList.add('big'));
+        el.addEventListener('mouseleave', () => cur.classList.remove('big'));
+      });
+    }
+
     function count(el) {
       const target = parseFloat(el.dataset.count || '0');
       const suffix = el.dataset.suffix || '';
@@ -2638,7 +3096,20 @@ ${motionCSS(p)}
     let toastTimer;
     function toast(msg, ok) {
       let t = $('.toast');
-      if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); }
+      if (!t) {
+        t = document.createElement('div');
+        t.className = 'toast';
+        // A form result appeared and vanished in silence, so a screen-reader
+        // visitor never learned whether their message actually sent — on the
+        // one interaction the page exists to enable. The node is created once
+        // and only its text changes afterwards, which is what makes a live
+        // region announce dependably. Failures are raised assertively: anyone
+        // waiting on that result should stop waiting.
+        t.setAttribute('role', 'status');
+        t.setAttribute('aria-live', 'polite');
+        document.body.appendChild(t);
+      }
+      t.setAttribute('aria-live', ok ? 'polite' : 'assertive');
       t.textContent = msg; t.classList.toggle('ok', !!ok); t.classList.add('show');
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
@@ -3170,16 +3641,20 @@ ${motionCSS(p)}
     // Add the same stable targeting metadata to every section after rendering,
     // so the Designer can select an exact page/section in a multi-page preview
     // without guessing from a duplicated `sec-hero-0` id.
-    const body = renderedBody.replace(/<section\b([^>]*\bid="sec-[^"]+-(\d+)"[^>]*)>/gi, (all, attrs, index) => {
+    const body = withKineticBand(p, renderedBody.replace(/<section\b([^>]*\bid="sec-[^"]+-(\d+)"[^>]*)>/gi, (all, attrs, index) => {
       if (/\bdata-section-index\s*=/.test(attrs)) return all;
       return '<section' + attrs + ' data-page-id="' + esc(page.id || '') + '" data-section-index="' + index + '">';
-    });
+    }));
 
     const pal2 = DB.getPalette(p.site.palette);
     const storageKeys = storageFor(p);
     const cfg = {
       proAnimations: (p.suites || []).includes('animation'),
       motion: motionOn(p),
+      // The cinematic tier's extra layer (grain, masks, pointer micro-
+      // interactions) is opt-in per project; the page script reads this
+      // rather than re-deriving the setting from the DOM.
+      cine: cinematicOn(p),
       projectName: (p.site.name || 'site').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
       // The keys this site stores under — named after the client, disclosed by
       // the client's own cookie policy (see storageFor above).
@@ -3292,6 +3767,7 @@ ${motionCSS(p)}
     // explicitly chosen pack is a deliberate override and must still win.
     const systemCss = (sysId && SysLib) ? `<style>${cssSafe(SysLib.css(sysId))}</style>` : '';
     const bodyClass = [sysId ? 'sys-' + sysId : '',
+      cinematicOn(p) ? 'motion-cine' : '',
       grade.on ? ('photo-grade' + (grade.blend === 'soft-light' ? ' photo-grade-soft' : '')) : '']
       .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
     let html = `<!DOCTYPE html>

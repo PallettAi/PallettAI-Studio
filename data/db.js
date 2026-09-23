@@ -1559,7 +1559,16 @@ DB.defaultSettings = {
   clientTone: 'professional',
   defaultEnquiryLabel: 'Send an enquiry',
   defaultBookingUrl: '',
-  defaultEnquiryEmail: ''
+  defaultEnquiryEmail: '',
+  // AI Studio defaults are preferences, not project data. They pre-fill the
+  // generator but remain overridable for each individual brief.
+  aiPhotoMode: 'real',
+  aiLayoutMode: 'auto',
+  aiOnePager: false,
+  aiPhotoGrade: false,
+  aiConfirmDestructive: true,
+  aiOriginalityStrict: true,
+  aiShowReceipts: true
 };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = DB;

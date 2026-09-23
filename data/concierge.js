@@ -400,10 +400,10 @@ const Concierge = (() => {
     <div class="cn-escalate" data-cn-escalate hidden>
       <p class="cn-esc-note" data-cn-esc-note></p>
       <form class="cn-form" data-form="Concierge question" data-cn-contact>
-        <input type="text" name="name" placeholder="Your name" required autocomplete="name">
-        <input type="email" name="email" placeholder="Email" required autocomplete="email">
+        <input type="text" name="name" aria-label="Your name" placeholder="Your name" required autocomplete="name">
+        <input type="email" name="email" aria-label="Email" placeholder="Email" required autocomplete="email">
         <input type="hidden" name="question" data-cn-q>
-        <textarea name="message" rows="2" placeholder="Anything to add?" data-cn-msg></textarea>
+        <textarea name="message" rows="2" aria-label="Anything to add?" placeholder="Anything to add?" data-cn-msg></textarea>
         <button type="submit" class="cn-send">Send to the team</button>
       </form>
     </div>

@@ -1,0 +1,13 @@
+'use strict';
+const assert = require('assert');
+const DNA = require('../modules/ai-prompts.js');
+const Islands = require('../ui/data-islands.js');
+assert.strictEqual(DNA.list().length, 6);
+assert(DNA.prompt.includes('project schema') && DNA.prompt.includes('--btn-radius'));
+assert(DNA.archetypes.BENTO_GLASS.includes('9999px'));
+const island = Islands.island([{ title: 'Hello', tags: ['a'] }]);
+assert(island.includes('type="application/json"') && island.includes('pai-cms-data'));
+assert(!island.includes('<script>alert'));
+const helper = Islands.helper();
+assert(helper.includes('PallettAISearch') && helper.includes('JSON.parse'));
+console.log('UI FEATURES SMOKE PASSED');

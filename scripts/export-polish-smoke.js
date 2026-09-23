@@ -433,7 +433,7 @@ console.log('\n5. The navigation holds its shape');
   const barHref = (nav.match(/class="btn solid small nav-cta" href="([^"]*)"/) || [])[1] || '';
   const menuHref = (nav.match(/class="btn solid small nav-cta-mobile" href="([^"]*)"/) || [])[1] || '';
   ok('the mobile menu carries the same action', !!menuHref && menuHref === barHref, barHref + ' vs ' + menuHref);
-  ok('the menu copy lives inside the menu', /<div class="nav-links">[\s\S]*nav-cta-mobile[\s\S]*?<\/div>/.test(nav));
+  ok('the menu copy lives inside the menu', /<div class="nav-links"[^>]*>[\s\S]*nav-cta-mobile[\s\S]*?<\/div>/.test(nav));
 
   // The trap that made the first attempt useless: an inline `display:none` on the
   // menu copy outranks the media query that reveals it, so the phone would never

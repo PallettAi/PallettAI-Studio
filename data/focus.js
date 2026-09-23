@@ -69,6 +69,60 @@ const Focus = (() => {
       .replace(/<!--[\s\S]*?-->/g, '');
   }
 
+  // ---- form control names ---------------------------------------------------
+  // A placeholder is not a label. It is a prompt that disappears the moment the
+  // visitor types, and assistive tech reads the control as "edit text, blank".
+  // The audit already reported an empty link, which is the same defect on a far
+  // less important element, so this was the gap worth closing — and it was a
+  // real one: every generated form shipped placeholder-only fields with no name
+  // at all, on the surface the whole page exists to get filled in.
+  //
+  // Exact-by-necessity: the header of this file promises the audits do not cry
+  // wolf, so a name is accepted from any of the sources the accessible-name
+  // calculation itself accepts, and a control that has one is never counted.
+  const CONTROL = /<(input|textarea|select)\b[^>]*>/gi;
+  // Buttons are named by their own value, and a hidden field is never reached.
+  const NO_NAME_NEEDED = /\btype=["'](hidden|submit|button|reset)["']/i;
+  // An image input is the one control named by alt — and it still needs one, so
+  // it is deliberately NOT in the list above. Accepting alt on any other
+  // control would be convenient and wrong: accname does not take it there, so a
+  // genuinely unnamed text field would pass the audit.
+  const IMAGE_INPUT = /\btype=["']image["']/i;
+
+  function unlabelledControls(html) {
+    // Strips scripts and comments itself rather than trusting the caller to:
+    // the export inlines JS whose source contains strings that look like
+    // markup, and measuring those reports fields that do not exist.
+    const src = markupOnly(html);
+
+    // <label for="x"> names the control with that id.
+    const forIds = new Set();
+    const forRe = /<label\b[^>]*\sfor=["']([^"']+)["']/gi;
+    let hit;
+    while ((hit = forRe.exec(src))) forIds.add(hit[1].toLowerCase());
+
+    // A control wrapped in its own <label> is named by it.
+    const bodies = [];
+    const wrapRe = /<label\b[^>]*>([\s\S]*?)<\/label>/gi;
+    while ((hit = wrapRe.exec(src))) bodies.push(hit[1]);
+
+    let bare = 0;
+    CONTROL.lastIndex = 0;
+    let m;
+    while ((m = CONTROL.exec(src))) {
+      const tag = m[0];
+      if (NO_NAME_NEEDED.test(tag)) continue;
+      // alt names an image input; anything else falls through and is counted.
+      if (IMAGE_INPUT.test(tag) && /\balt=["'][^"']*["']/i.test(tag)) continue;
+      if (/\baria-label(ledby)?\b/i.test(tag)) continue;
+      const id = (tag.match(/\bid=["']([^"']+)["']/i) || [])[1];
+      if (id && forIds.has(id.toLowerCase())) continue;
+      if (bodies.some((b) => b.indexOf(tag) !== -1)) continue;
+      bare++;
+    }
+    return bare;
+  }
+
   // ---- pass -----------------------------------------------------------------
   // Idempotent: running it twice must not produce two skip links or a doubled
   // id, because the export path can legitimately re-run the polish steps.
@@ -166,7 +220,20 @@ const Focus = (() => {
       findings.push({ level: 'warn', msg: emptyLinks + ' empty link' + (emptyLinks === 1 ? '' : 's'), fix: 'Give each one a label or an aria-label.' });
     }
 
-    // 8. On a multi-page site the navigation should say which page you are on.
+    // 8. Every form control needs a name of its own. Reported as an error, at
+    //    the same severity as a missing lang: this is the element a visitor has
+    //    to operate to convert, and an unnamed one cannot be operated by voice
+    //    or announced by a screen reader.
+    const bare = unlabelledControls(html);
+    if (bare > 0) {
+      findings.push({
+        level: 'error',
+        msg: bare + ' form control' + (bare === 1 ? '' : 's') + ' with no accessible name',
+        fix: 'A placeholder is not a label — add aria-label="…" or a <label for="…"> to each field.'
+      });
+    }
+
+    // 9. On a multi-page site the navigation should say which page you are on.
     //    `page-link` is the marker the renderer puts on cross-page links, so a
     //    single-page site (whose nav is on-page anchors) is not asked for this.
     const multiPage = /class=["'][^"']*\bpage-link\b/i.test(html);
@@ -208,7 +275,7 @@ const Focus = (() => {
     };
   }
 
-  return { SKIP_CLASS, MAIN_ID, skipLink, css, pass, audit, auditPage, markupOnly, attr, hasAttr };
+  return { SKIP_CLASS, MAIN_ID, skipLink, css, pass, audit, auditPage, markupOnly, unlabelledControls, attr, hasAttr };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = Focus;

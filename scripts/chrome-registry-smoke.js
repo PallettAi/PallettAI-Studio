@@ -65,6 +65,10 @@ assert(/--primary:\s*#7cc0f8/.test(css) && /--accent:\s*#9fd4ff/.test(css), 'bra
 assert(/\.btn\.primary\{[^}]*background:\s*var\(--grad-cta\)/.test(css.replace(/\s+/g, '')), 'primary buttons use the pale ice CTA gradient');
 assert(!/CORE TOOLS/.test(app) && !/Everything you need to ship/.test(app), 'generic CORE TOOLS dashboard is gone');
 assert(!/Design stunning/.test(html), 'marketing hero line is gone');
+const dashboard = (html.match(/<section class="view active" id="view-dashboard">[\s\S]*?<\/section>/) || [''])[0];
+assert(/studio-home-hero/.test(dashboard) && /home-prism/.test(dashboard), 'Dashboard has a distinct Studio hero, not the website terminal');
+assert(/studio-home-features/.test(dashboard) && /Distinct by design/.test(dashboard), 'Dashboard hero carries product-specific feature promises');
+assert(!/terminal/i.test(dashboard), 'Dashboard markup contains no terminal presentation');
 assert(/id="dashTemplates"/.test(html) && /id="btnNewProject"/.test(html), 'dashboard keeps Templates doorway and New project');
 assert(/CHROME\.viewTitle|chromeViewTitle/.test(app), 'switchView titles read from the registry');
 

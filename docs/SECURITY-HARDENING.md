@@ -113,48 +113,31 @@ Everything above is additive: no existing handler or behaviour was replaced.
 
 ---
 
-## 2. Deliberately NOT changed: the Designer preview iframe
+## 2. Designer preview isolation
 
-**This is the highest-priority remaining item.** It is recorded here as an
-accepted, understood risk — not an oversight.
+The Designer preview is now treated as an untrusted rendering surface. The
+`previewFrame` uses `sandbox="allow-scripts allow-forms allow-modals allow-popups"`
+without `allow-same-origin`, so imported projects and custom JavaScript receive
+an opaque origin and cannot reach the Studio renderer, its local storage or the
+Electron preload bridge.
 
-`app.js` creates `<iframe id="previewFrame">` with **no `sandbox` attribute** and
-sets `f.srcdoc = Builder.buildSiteHTML(...)`. An `about:srcdoc` frame inherits
-the parent origin, and the app relies on that (it reads `f.contentDocument` to
-wire up page links). Built sites legitimately include the project's `customJs`
-as a real `<script>` (`jsSafe` only escapes `</script`).
+The old `contentDocument` wiring has been removed. Generated pages use a small
+`postMessage` protocol (`channel: 'pai-preview'`) for:
 
-Consequence: script running inside the preview can reach `parent.pallettai` —
-i.e. `secretsGet('publish.netlifyToken')`, `secretsSet`, and the
-safeStorage-backed `sessionStore()` — plus `parent.localStorage`. The IPC
-handlers validate `event.sender === win.webContents`, but a same-origin subframe
-*is* that webContents, so the guard passes. The tight CSP still allows exfil to
-`https://*.supabase.co` and `api.allorigins.win`.
+- multi-page navigation;
+- legal-page navigation;
+- section selection for Copilot targeting.
 
-Trigger: opening a shared/imported `.pallettai.json` (this is a client-work
-tool, so project files travel) or pasting a snippet into the "Custom JS
-(advanced)" field.
+The parent accepts messages only when `event.source === previewFrame.contentWindow`,
+checks the message shape and validates page IDs, section indexes and legal slugs
+against the current project before changing Studio state. Privileged Electron
+IPC continues to require the main frame through `senderFrame` validation.
 
-**Why it's deferred this cycle:** the fix is not a one-line attribute. The app's
-same-origin `contentDocument` access and the preview's own `localStorage` both
-depend on the current setup, so it needs a small refactor, and doing it blind —
-without being able to run the app in this environment — risked breaking the
-editor.
-
-**The fix when you take it on:**
-
-1. Add `sandbox="allow-scripts"` (deliberately **without** `allow-same-origin`),
-   which gives the frame an opaque origin and makes `parent` unreachable.
-2. Have `Builder.buildSiteHTML()` inject a tiny `postMessage` bridge for the
-   page-link navigation that `renderPreview()` currently wires via
-   `contentDocument`; the parent listens and calls `setActivePage`.
-3. Optionally go further: have main perform the Netlify/Neocities publish calls
-   so the renderer never holds those tokens at all, which independently removes
-   the prize for any renderer-execution bug.
-
-Being honest about the blast radius: until step 1 lands, the fuses, safeStorage
-and IPC-sender work are all bypassable by anything that executes inside the
-preview.
+Custom JavaScript remains intentionally available in exported sites as an
+advanced, user-controlled feature. It is not treated as safely sanitizable
+source code; instead, it is isolated from Studio during preview. A future strict
+export option may disable custom JavaScript for clients who want a narrower
+runtime policy.
 
 ---
 
@@ -169,7 +152,7 @@ preview.
 | 5 | Add the **Windows fuses verification** CI step (mirror of the mac one) | `.github/workflows/build-windows.yml` | Windows packaging is otherwise unverified |
 | 6 | Run `npm audit` (needs Node) and triage Electron/Chromium CVEs | local machine | Still unverified — this environment has no `node` |
 | 7 | `spctl --assess` the built `.dmg`, and confirm auto-update end to end | macOS | Signature/notarization assertions |
-| 8 | Decide on the preview fix in §2 | `app.js` + `modules/builder.js` | The one real hole left |
+| 8 | Add a strict-export option that disables custom JavaScript | `app.js` + `modules/builder.js` | Useful for high-assurance client deliveries; preview isolation is now in place |
 | 9 | If the website is ever fronted by Cloudflare, serve `pallettai-website/_headers` | Cloudflare Pages | GitHub Pages can't set `X-Frame-Options`/HSTS; a meta CSP can't express `frame-ancestors` |
 
 ---

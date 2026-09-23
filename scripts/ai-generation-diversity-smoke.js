@@ -18,16 +18,19 @@ console.log('\n== Same brief gets genuinely different sites ==');
 const signatures = new Set();
 const looks = new Set();
 const orders = new Set();
+const motion = new Set();
 for (let salt = 1; salt <= 16; salt++) {
   const project = AI.generateSite('a local florist for weddings', { salt, tier: 'free', layouts: 'auto', onePager: true });
   const sections = project.site.sections || [];
   signatures.add(sections.map((s) => s.type + ':' + (s.layout || '') + ':' + (s.animation || '')).join('>'));
   looks.add(project.dnaLook);
   orders.add(sections.map((s) => s.type).join('>'));
+  motion.add(sections.map((s) => s.animation || 'none').join('>'));
 }
 ok('sixteen fresh builds produce at least eight structural signatures', signatures.size >= 8);
 ok('fresh builds use at least four visual looks', looks.size >= 4);
 ok('fresh builds use at least six page orders', orders.size >= 6);
+ok('fresh builds use at least six distinct motion signatures', motion.size >= 6);
 
 console.log('\n== Explicit blueprint changes composition ==');
 const signal = AI.generateSite('a software product for teams', { blueprintId: 'signal-house', salt: 31, tier: 'pro', layouts: 'auto', onePager: true });

@@ -458,6 +458,8 @@ function checkBuilder() {
   runScript(['scripts/release-guard-smoke.js'], 'Release guard smoke');
   runScript(['scripts/review-reward-smoke.js'], 'Review reward smoke');
   runScript(['scripts/ai-studio-upgrade-smoke.js'], 'AI Studio upgrade smoke');
+  runScript(['scripts/ai-preferences-smoke.js'], 'AI preferences smoke');
+  runScript(['scripts/ai-render-compare-smoke.js'], 'AI rendered comparison smoke');
   await runSmokeSuites();
   checkZipLimits();
   checkBuilder();

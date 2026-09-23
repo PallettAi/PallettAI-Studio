@@ -14,6 +14,7 @@ function loadAI() {
   };
   sandbox.DB = require(path.join(ROOT, 'data', 'db.js'));
   sandbox.AiBrief = require(path.join(ROOT, 'data', 'ai-brief.js'));
+  sandbox.PallettAIDesignDNA = require(path.join(ROOT, 'modules', 'ai-prompts.js'));
   sandbox.AiNichesExtra = require(path.join(ROOT, 'data', 'ai-niches-extra.js'));
   sandbox.AiFollowup = require(path.join(ROOT, 'data', 'ai-followup.js'));
   sandbox.AiScope = require(path.join(ROOT, 'data', 'ai-scope.js'));

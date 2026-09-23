@@ -262,7 +262,175 @@ const Preflight = (() => {
     }));
   }
 
-  return { run, targetSlug, normSlug, exportPages };
+  // ---- the compiled page, checked before it is bundled ----------------------
+  // `run` above judges the PROJECT: slugs, nav targets, copy, contact details.
+  // Everything it cannot see lives in the pages the builder actually produced —
+  // an image with no alt, an anchor with nowhere to go, a palette whose body
+  // text fails AA, a JSON-LD block that is absent or malformed. Those checks
+  // already exist, spread across the audits this product grew one at a time, so
+  // this COMPOSES them rather than reimplementing any of them: two contrast
+  // calculators or two alt-text parsers would be two things to keep in step, and
+  // the one that is wrong would be the one somebody acted on.
+  //
+  // Same vocabulary and same verdict as `run`, deliberately. A second gate
+  // reporting {success, errors, warnings} would give the product two answers to
+  // the same question — and this file exists precisely to give it one.
+  function sibling(globalName, file) {
+    try { if (typeof globalThis[globalName] !== 'undefined' && globalThis[globalName]) return globalThis[globalName]; } catch (e) { /* fall through */ }
+    try { return (typeof require === 'function') ? require('./' + file) : null; } catch (e) { return null; }
+  }
+
+  function compiledRun(project, pages, opts) {
+    const o = opts || {};
+    const list = (Array.isArray(pages) ? pages : []).filter(Boolean).map((pg, i) => ({
+      name: pg.name || ('Page ' + (i + 1)),
+      slug: String(pg.slug || ''),
+      html: String(pg.html == null ? '' : pg.html)
+    }));
+    const blockers = [];
+    const warnings = [];
+    const notes = [];
+    const add = (level, area, msg, fix, where) => {
+      const f = { id: 'pre-c-' + (blockers.length + warnings.length + notes.length), level: level, area: area, msg: msg, fix: fix || '', where: where || null };
+      if (level === 'blocker') blockers.push(f);
+      else if (level === 'warning') warnings.push(f);
+      else notes.push(f);
+      return f;
+    };
+    // The audits use their own levels; this file has one rule for translating
+    // them, stated once here and once above rather than invented per check.
+    const carry = (findings, fallbackArea) => {
+      (Array.isArray(findings) ? findings : []).forEach((f) => {
+        const level = LEVEL_FROM_CARE[f.level] || 'note';
+        add(level, f.area || fallbackArea, f.msg, f.fix, null);
+      });
+    };
+
+    // ---- 1. accessibility of the produced markup ---------------------------
+    const FocusMod = sibling('Focus', 'focus.js');
+    if (FocusMod && FocusMod.audit) carry(FocusMod.audit(list).findings, 'accessibility');
+
+    // ---- 2. images: an alt attribute, and a source that is not empty -------
+    const ImagesMod = sibling('Images', 'images.js');
+    if (ImagesMod && ImagesMod.audit) {
+      const img = ImagesMod.audit(list);
+      const noAlt = (img.totals && img.totals.noAlt) || 0;
+      if (noAlt > 0) {
+        add('warning', 'images',
+          noAlt + ' image' + (noAlt === 1 ? '' : 's') + ' on the exported pages have no alt text.',
+          'Describe what each picture shows, or leave alt empty for purely decorative ones.', null);
+      }
+      carry(img.findings, 'images');
+    }
+
+    // ---- 3. links: every anchor needs somewhere to go ----------------------
+    const LinksMod = sibling('Links', 'links.js');
+    if (LinksMod && LinksMod.audit) {
+      const lk = LinksMod.audit(list, o.files);
+      carry(lk.findings, 'links');
+    }
+
+    // ---- 4. contrast, on the palette the pages were actually painted with ---
+    // Read from the palette rather than scraped out of the emitted CSS: the
+    // stylesheet already derives its readable text roles from these very values
+    // (DB.textRoles), so measuring the palette measures what a visitor sees,
+    // and does it with the same arithmetic the builder used to choose them.
+    const DB = sibling('DB', 'db.js');
+    const site = (project && project.site) || {};
+    if (DB && DB.paletteChecks && DB.getPalette) {
+      const checks = DB.paletteChecks(DB.getPalette(site.palette)) || [];
+      checks.forEach((c) => {
+        if (!(c.ratio < c.need)) return;
+        const ratio = Math.round(c.ratio * 100) / 100;
+        // Body text a visitor has to read is a blocker here rather than a
+        // warning, because there is no version of the page where it is fine.
+        const isBody = /body text/i.test(c.role || '');
+        add(isBody ? 'blocker' : 'warning', 'contrast',
+          c.role + ' sits at ' + ratio + ':1, under the ' + c.need + ':1 WCAG AA minimum.',
+          isBody ? 'Choose a palette whose page text clears AA.' : 'Use this colour for lines and fills rather than for words.', null);
+      });
+    }
+
+    // ---- 5. structured data ------------------------------------------------
+    // The head either explains the business to a search engine or it does not.
+    // Malformed JSON is worse than absent: an absent block costs rich results, a
+    // broken one is discarded silently and can take the rest of the head with it
+    // depending on the consumer.
+    if (list.length) {
+      let found = 0;
+      let malformed = 0;
+      list.forEach((pg) => {
+        const blocks = pg.html.match(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi) || [];
+        blocks.forEach((block) => {
+          const body = block.replace(/^[\s\S]*?>/, '').replace(/<\/script>$/i, '');
+          found++;
+          try { const parsed = JSON.parse(body.trim()); if (!parsed || typeof parsed !== 'object') malformed++; } catch (e) { malformed++; }
+        });
+      });
+      if (malformed > 0) {
+        add('blocker', 'schema',
+          malformed + ' JSON-LD block' + (malformed === 1 ? '' : 's') + ' on the exported pages is not valid JSON, so search engines discard it.',
+          'Fix the structured data, or switch it off rather than shipping it broken.', null);
+      } else if (found === 0) {
+        add('warning', 'schema',
+          'No JSON-LD structured data on the exported pages, so search results show the name and nothing else.',
+          'The builder injects schema.org/WebSite when a site address is set — check that it is on.', null);
+      }
+    }
+
+    const ready = blockers.length === 0;
+    let headline;
+    if (!blockers.length && !warnings.length && !notes.length) headline = 'Every exported page passed its pre-bundle checks.';
+    else if (blockers.length) headline = 'Not ready to bundle: ' + blockers.length + ' thing' + (blockers.length === 1 ? '' : 's') + ' would be wrong on the live site.';
+    else if (warnings.length) headline = 'Ready to bundle, with ' + warnings.length + ' thing' + (warnings.length === 1 ? '' : 's') + ' worth a look.';
+    else headline = 'Ready to bundle.';
+
+    return {
+      kind: 'pallettai-preflight-compiled',
+      checkedAt: (o.now ? new Date(o.now) : new Date()).toISOString(),
+      ready: ready,
+      headline: headline,
+      counts: { blocker: blockers.length, warning: warnings.length, note: notes.length },
+      blockers: blockers,
+      warnings: warnings,
+      notes: notes,
+      pages: list.length
+    };
+  }
+
+  // One verdict from both halves. The model is judged first, the produced pages
+  // second, and the results merge into a single blocker/warning/note list — so a
+  // caller presses Publish and gets an answer, not two reports to reconcile.
+  function all(project, pages, opts) {
+    const model = run(project, opts);
+    const built = compiledRun(project, pages, opts);
+    const blockers = model.blockers.concat(built.blockers);
+    const warnings = model.warnings.concat(built.warnings);
+    const notes = model.notes.concat(built.notes);
+    const ready = blockers.length === 0;
+    const total = blockers.length + warnings.length + notes.length;
+    let headline;
+    if (!total) headline = 'Ready to publish — nothing outstanding.';
+    else if (blockers.length) headline = 'Not ready to publish: ' + blockers.length + ' thing' + (blockers.length === 1 ? '' : 's') + ' would be wrong on the live site.';
+    else if (warnings.length) headline = 'Ready to publish, with ' + warnings.length + ' thing' + (warnings.length === 1 ? '' : 's') + ' worth a look first.';
+    else headline = 'Ready to publish.';
+    return {
+      kind: 'pallettai-preflight',
+      checkedAt: model.checkedAt,
+      ready: ready,
+      headline: headline,
+      counts: { blocker: blockers.length, warning: warnings.length, note: notes.length },
+      blockers: blockers,
+      warnings: warnings,
+      notes: notes,
+      model: model,
+      compiled: built,
+      pages: model.pages,
+      sections: model.sections
+    };
+  }
+
+  return { run, compiledRun, all, targetSlug, normSlug, exportPages };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = Preflight;
