@@ -291,6 +291,54 @@ async function runSmokeSuites() {
 }
 
 // ============================================================
+// 3b. Packaging: every script the shell loads is shipped
+// ============================================================
+/*
+  This failure shipped once: four scripts under ui/ were loaded by index.html and
+  missing from electron-builder's file list, so the feature screens worked in
+  development and did not exist in an installed build. Nothing else in the gate can
+  see it — the syntax check reads the file from the working tree, and the smokes
+  require it directly — which is exactly why it needs its own check.
+*/
+function checkPackaging() {
+  console.log('\n== 3b. Packaging covers every local script index.html loads ==');
+  let html;
+  let yml;
+  try {
+    html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+    yml = fs.readFileSync(path.join(ROOT, 'electron-builder.yml'), 'utf8');
+  } catch (e) {
+    fail('could not read index.html / electron-builder.yml: ' + e.message);
+    return;
+  }
+
+  const patterns = [];
+  let inFiles = false;
+  for (const line of yml.split('\n')) {
+    if (!inFiles && /^files:\s*$/.test(line)) { inFiles = true; continue; }
+    if (!inFiles) continue;
+    if (line.trim() && /^\S/.test(line)) break; // the next top-level key
+    const m = line.match(/^\s+-\s+(.+?)\s*$/);
+    if (!m) continue;
+    const value = m[1].replace(/^['"]|['"]$/g, '');
+    if (!value.startsWith('!')) patterns.push(value);
+  }
+  if (!patterns.length) { fail('no files: patterns found in electron-builder.yml'); return; }
+
+  const covered = (rel) => patterns.some((p) => (p.endsWith('/**') ? rel.startsWith(p.slice(0, -2)) : rel === p));
+  const refs = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)]
+    .map((m) => m[1])
+    .filter((src) => !/^https?:|^\/\//.test(src));
+  if (!refs.length) { fail('index.html loads no local scripts at all'); return; }
+
+  refs.forEach((rel) => {
+    if (!fs.existsSync(path.join(ROOT, rel))) { fail('index.html loads a script that is not on disk: ' + rel); return; }
+    if (!covered(rel)) { fail('index.html loads a script the packager would not ship: ' + rel); return; }
+    pass('packaged ' + rel);
+  });
+}
+
+// ============================================================
 // 3. ZIP export limits (modules/zip.js)
 // ============================================================
 function checkZipLimits() {
@@ -455,6 +503,14 @@ function checkBuilder() {
   runScript(['scripts/modal-focus-smoke.js'], 'Modal focus smoke');
   runScript(['scripts/studio-chrome-smoke.js'], 'Studio chrome smoke');
   runScript(['scripts/chrome-registry-smoke.js'], 'Chrome registry smoke');
+  // The section toolbar and the token inspector are two halves — a UI script and
+  // an app-level handler — and each half alone looks finished. This suite pins
+  // the join, plus the phrases the toolbar seeds into the Copilot.
+  runScript(['scripts/ui-features-smoke.js'], 'UI features & wiring smoke');
+  // The same features against a stub DOM: the toolbar's buttons are clicked and
+  // the contrast badge is measured, because both failures look identical to a
+  // working panel until someone presses something.
+  runScript(['scripts/ui-dom-smoke.js'], 'UI behaviour smoke (toolbar clicks, contrast badge)');
   runScript(['scripts/release-guard-smoke.js'], 'Release guard smoke');
   runScript(['scripts/review-reward-smoke.js'], 'Review reward smoke');
   runScript(['scripts/ai-studio-upgrade-smoke.js'], 'AI Studio upgrade smoke');
@@ -463,6 +519,7 @@ function checkBuilder() {
   await runSmokeSuites();
   checkZipLimits();
   checkBuilder();
+  checkPackaging();
 
   console.log('\n' + '='.repeat(60));
   if (failures) {

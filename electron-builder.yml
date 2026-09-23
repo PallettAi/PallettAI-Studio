@@ -23,6 +23,16 @@ files:
   - data/**
   - modules/**
   - vendor/**
+  # The feature screens index.html loads from ui/. Named one by one rather than
+  # as `ui/**`: the folder also holds scripts no page references, and shipping a
+  # file nothing loads only enlarges the asar. release-check asserts that every
+  # script index.html asks for is covered here, so a new one cannot be forgotten
+  # the way these four were — they were in index.html and not in this list, so
+  # the features existed in development and vanished in an installed build.
+  - ui/data-islands.js
+  - ui/inspector.js
+  - ui/copilot.js
+  - ui/guides.js
   - '!**/*.map'
   - '!**/*.md'
 

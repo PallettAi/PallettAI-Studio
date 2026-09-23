@@ -542,7 +542,7 @@ function getCardBackground(archetype) {
 /**
  * Get text color based on archetype and text type
  */
-function getTextColor(resolvedArchetype, type = 'primary') {
+function getTextColor(archetype, type = 'primary') {
   const dna = DESIGN_DNA_ARCHETYPES[archetype];
   const isDark = isDarkColor(dna.primaryColor);
 

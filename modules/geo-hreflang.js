@@ -229,6 +229,33 @@ function getCountryName(code) {
  * @param {Object} matrix - Hreflang matrix
  * @returns {string} Complete hreflang link tags
  */
+/**
+ * Return a URL safe inside a quoted href, or '' to drop it.
+ *
+ * Sanitised by rejection rather than entity escaping, because these strings
+ * are concatenated into markup directly: an escaped entity would be doubly
+ * escaped by any serializer that runs afterwards.
+ */
+function sanitiseHref(value) {
+  const url = String(value === null || value === undefined ? '' : value).trim();
+  if (!url) return '';
+  if (/["'<>`\\\u0000-\u001F\u007F]/.test(url)) return '';
+  // Browsers ignore whitespace and control characters when resolving a
+  // scheme, so "java\tscript:" must be normalised before the check.
+  if (/^(javascript|vbscript|data|blob):/i.test(url.replace(/[\u0000-\u0020\u007F]/g, ''))) return '';
+  return url;
+}
+
+/**
+ * A locale key that may appear in an hreflang attribute.
+ * `x-default` is the one non-locale value the spec allows.
+ */
+function sanitiseHreflangValue(locale) {
+  const value = String(locale === null || locale === undefined ? '' : locale).trim();
+  if (value === 'x-default') return value;
+  return isValidLocaleCode(value) ? value : '';
+}
+
 function generateHreflangTagsString(matrix) {
   if (!matrix || !matrix.locales) return '';
 
@@ -237,8 +264,11 @@ function generateHreflangTagsString(matrix) {
   Object.entries(matrix.locales).forEach(([locale, data]) => {
     if (!data.valid) return;
 
-    const hreflangValue = locale === 'x-default' ? 'x-default' : locale;
-    const href = data.url;
+    const hreflangValue = sanitiseHreflangValue(locale);
+    const href = sanitiseHref(data.url);
+
+    // Skip rather than emit a malformed or hostile tag.
+    if (!hreflangValue || !href) return;
 
     tags += `  <link rel="alternate" hreflang="${hreflangValue}" href="${href}" />\n`;
   });
@@ -266,10 +296,16 @@ function injectHreflangTags(htmlContent, localeMappings) {
   let tags = '';
 
   Object.entries(localeMappings).forEach(([locale, url]) => {
-    if (!locale || !url) return;
+    const rawUrl = String(url === null || url === undefined ? '' : url).trim();
+    if (!locale || !rawUrl) return;
 
-    const hreflangValue = locale === 'x-default' ? 'x-default' : locale;
-    const href = url.startsWith('http') ? url : `${getBaseUrl(htmlContent)}${url}`;
+    const hreflangValue = sanitiseHreflangValue(locale);
+    if (!hreflangValue) return;
+
+    // Coerce to a string first: a non-string mapping used to throw
+    // "url.startsWith is not a function" and take the whole export down.
+    const href = sanitiseHref(rawUrl.indexOf('http') === 0 ? rawUrl : getBaseUrl(htmlContent) + rawUrl);
+    if (!href) return;
 
     tags += `  <link rel="alternate" hreflang="${hreflangValue}" href="${href}" />\n`;
   });

@@ -46,3 +46,8 @@ assets/og-image.*
 .tmp-subset/
 .tmp-model-cache/
 .audit-probe.js
+
+# One-off check scripts written while auditing (`.check-debug.js` and friends).
+# They are session scratch, not source, so they stay out of a release build and
+# out of an ordinary `git add .`.
+.check-*.js

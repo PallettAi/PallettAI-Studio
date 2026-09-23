@@ -238,6 +238,20 @@ function generateCORSHeaders(options = {}) {
  * @param {Object} paths - Path-specific header overrides
  * @returns {string} Complete _headers file content
  */
+/**
+ * Collapse a value to a single safe line for a `_headers` or `_redirects` file.
+ *
+ * Both formats are line-oriented, so a newline inside a value is not a
+ * formatting quirk — it injects a whole new header or redirect rule. Control
+ * characters and tabs go with it, since a tab is the field separator in
+ * `_redirects` and a stray one shifts every field to its right.
+ */
+function sanitiseConfigValue(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+    .trim();
+}
+
 function generateHeadersFile(securityOptions = {}, paths = {}) {
   const {
     csp = {},
@@ -260,12 +274,18 @@ function generateHeadersFile(securityOptions = {}, paths = {}) {
     currentPath = path;
 
     if (path) {
-      lines.push(path);
+      lines.push(sanitiseConfigValue(path));
     }
 
     for (const [key, value] of Object.entries(headers)) {
       if (value !== undefined && value !== null && value !== false) {
-        lines.push(`  ${key}: ${value}`);
+        const name = sanitiseConfigValue(key);
+        const text = sanitiseConfigValue(value);
+
+        // A header name is a token, and a header with no value is meaningless.
+        if (!/^[A-Za-z0-9-]+$/.test(name) || !text) continue;
+
+        lines.push(`  ${name}: ${text}`);
       }
     }
   }
@@ -457,9 +477,19 @@ function formatRedirectRule(rule) {
     return null;
   }
 
-  const from = rule.from;
-  const to = rule.to;
-  const status = rule.status || 301;
+  // Each field is collapsed to one line before assembly. The tabs in the
+  // template below are the real separators, so a tab or newline smuggled into
+  // a field would otherwise add extra fields, or a whole extra rule.
+  const from = sanitiseConfigValue(rule.from);
+  const to = sanitiseConfigValue(rule.to);
+  if (!from || !to) return null;
+
+  // Quotes, angle brackets, backticks, pipes and backslashes are never valid
+  // in a redirect path, and they are exactly what a malformed or hostile rule
+  // needs to express something other than what it appears to.
+  if (/["'<>`|\\]/.test(from) || /["'<>`|\\]/.test(to)) return null;
+
+  const status = sanitiseConfigValue(rule.status || 301);
   const force = rule.force ? ' !' : '';
   const sparce = rule.sparce ? ' ' : ' /*';
 
@@ -470,19 +500,19 @@ function formatRedirectRule(rule) {
     const conditionParts = [];
 
     if (rule.conditions.country) {
-      conditionParts.push(`country=${rule.conditions.country}`);
+      conditionParts.push(`country=${sanitiseConfigValue(rule.conditions.country)}`);
     }
 
     if (rule.conditions.role) {
-      conditionParts.push(`role=${rule.conditions.role}`);
+      conditionParts.push(`role=${sanitiseConfigValue(rule.conditions.role)}`);
     }
 
     if (rule.conditions.language) {
-      conditionParts.push(`language=${rule.conditions.language}`);
+      conditionParts.push(`language=${sanitiseConfigValue(rule.conditions.language)}`);
     }
 
     if (rule.conditions.header) {
-      conditionParts.push(`header=${rule.conditions.header}`);
+      conditionParts.push(`header=${sanitiseConfigValue(rule.conditions.header)}`);
     }
 
     if (conditionParts.length > 0) {

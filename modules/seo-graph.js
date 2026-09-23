@@ -91,8 +91,25 @@ function isValidPhone(phone) {
 /**
  * Generate a JSON-LD script tag for a schema graph
  */
+/**
+ * Serialise JSON for embedding in an inline <script> element.
+ *
+ * JSON.stringify leaves `<`, `>` and `&` as-is, so a business or article name
+ * containing `</script>` terminates the block and everything after it becomes
+ * live markup. Escaping them as `\u003c`-style sequences keeps the JSON
+ * byte-identical when parsed while removing the breakout.
+ */
+function serializeJsonForScript(value) {
+  return JSON.stringify(value, null, 2)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
 function generateJsonLdScript(graph) {
-  const json = JSON.stringify(graph, null, 2);
+  const json = serializeJsonForScript(graph);
   return `<script type="application/ld+json">\n${json}\n<\/script>`;
 }
 
@@ -937,6 +954,13 @@ function generateSitemapIndex(sitemaps, domain = '') {
  * @param {string} sitemapUrl - URL to sitemap (optional)
  * @returns {string} robots.txt content
  */
+/** Collapse a robots.txt value to a single line. */
+function sanitiseRobotsValue(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+    .trim();
+}
+
 function generateRobotsTxt(domain, allowIndexing = true, sitemapUrl = '') {
   const lines = [];
 
@@ -958,12 +982,17 @@ function generateRobotsTxt(domain, allowIndexing = true, sitemapUrl = '') {
   lines.push('Crawl-delay: 1');
   lines.push('');
 
-  // Sitemap reference
-  if (sitemapUrl) {
-    lines.push(`Sitemap: ${sitemapUrl}`);
-    lines.push('');
-  } else if (domain) {
-    lines.push(`Sitemap: ${domain}/sitemap.xml`);
+  // Sitemap reference.
+  //
+  // robots.txt is line-oriented, so a newline in the URL would not be a
+  // formatting problem — it would add directives of the attacker's choosing,
+  // including a site-wide `Disallow: /`. Collapse to one line first.
+  const sitemapTarget = sitemapUrl
+    ? sanitiseRobotsValue(sitemapUrl)
+    : (domain ? sanitiseRobotsValue(`${domain}/sitemap.xml`) : '');
+
+  if (sitemapTarget) {
+    lines.push(`Sitemap: ${sitemapTarget}`);
     lines.push('');
   }
 

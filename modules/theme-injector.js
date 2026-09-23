@@ -150,11 +150,22 @@
       });
     }
 
+    // Custom-property names come from project/palette data. The CSSOM
+    // throws on a malformed name, which would abort the whole injection
+    // mid-way, so names are shape-checked and the call is guarded — a
+    // bad token is skipped and reported, never fatal.
+    var SAFE_PROP_RE = /^--[a-z0-9_-]+$/i;
     for (var i = 0; i < keys.length; i++) {
       var prop = keys[i], val = flat[prop];
       if (val == null || val === '') { skipped.push(prop); continue; }
+      if (!SAFE_PROP_RE.test(prop)) { skipped.push(prop); continue; }
       if (owned[prop] === val && !opts.replace) { continue; } // unchanged — don't touch transitions
-      target.setProperty(prop, val);
+      try {
+        target.setProperty(prop, val);
+      } catch (e) {
+        skipped.push(prop);
+        continue;
+      }
       owned[prop] = val;
       applied.push(prop);
     }

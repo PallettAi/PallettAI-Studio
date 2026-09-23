@@ -3140,7 +3140,7 @@ const App = (() => {
     if (name === 'settings') renderSettings();
     if (name === 'qr') renderQr();
     if (name === 'tools' && window.PallettAITools) window.PallettAITools.init();
-    if (name === 'tokens' && window.PallettAITokens) window.PallettAITokens.open();
+    if (name === 'tokens' && window.PallettAITokens) { window.PallettAITokens.sync(tokenSnapshot()); window.PallettAITokens.open(); }
     if (name === 'guides' && window.PallettAIGuides) window.PallettAIGuides.open();
     if (name === 'care') renderCare();
     $('#projectChip').hidden = !(name === 'designer' || name === 'suites' || name === 'database') || !current();
@@ -4828,7 +4828,11 @@ const App = (() => {
       if (!page || !Array.isArray(page.sections) || !page.sections[index]) return;
       if (page.id && open.site.activePageId !== page.id) { open.site.activePageId = page.id; open.site.sections = page.sections; }
       selectedSec = index;
-      if (window.PallettAISectionCopilot && typeof window.PallettAISectionCopilot.select === 'function') window.PallettAISectionCopilot.select({ pageId: page.id || pageId, index });
+      if (window.PallettAISectionCopilot && typeof window.PallettAISectionCopilot.select === 'function') {
+        // The kind travels with the selection: the toolbar names the section in
+        // the sentence it writes, and it cannot read the project to find out.
+        window.PallettAISectionCopilot.select({ pageId: page.id || pageId, index, type: (page.sections[index] || {}).type || '' });
+      }
       renderSecList();
       renderEditor();
       const editor = $('#secEditor');
@@ -11064,6 +11068,121 @@ const App = (() => {
   const chatState = { open: false, busy: false };
   let chatLastEdit = { raw: '', targetType: '', ops: [] };
 
+  /* ---------------- the section toolbar, wired ----------------
+    ui/copilot.js draws the bar and reports which section the preview selected;
+    what a click MEANS is decided here, because only this file can reach the
+    project, the planner and the chat. Every button becomes a sentence in the
+    chat rather than a private edit path: same planner, same credit accounting,
+    same single undo step, same honest refusal when the sentence is not a request.
+
+    The sentences are the ones the planner is known to understand for the section
+    they name. The layout button only offers a catalog variant of THIS section's
+    own type, because a variant phrase names its own kind — offering a foreign one
+    would change a different section (see AI.layoutOptions).
+  */
+  const SECTION_ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
+
+  /*
+    How the sentence says which section it means. A position first, because the
+    client is looking at the page: "the second section" is unambiguous to them,
+    while a kind repeats as soon as a site has two galleries. Past the tenth
+    section the position would have to be a number the planner does not parse, so
+    the kind is the fallback there.
+  */
+  function sectionRef(section) {
+    const idx = Number(section && section.index);
+    if (Number.isInteger(idx) && idx >= 0 && idx < SECTION_ORDINALS.length) return SECTION_ORDINALS[idx] + ' section';
+    const type = String((section && section.type) || '').trim();
+    return type ? type + ' section' : '';
+  }
+
+  function sectionAt(section) {
+    const c = current();
+    if (!c || !section) return null;
+    const pages = (typeof Builder !== 'undefined' && Builder.pages) ? Builder.pages(c) : [];
+    const page = (section.pageId && pages.find((pg) => pg && pg.id === section.pageId)) || pages[0];
+    if (!page || !Array.isArray(page.sections)) return null;
+    const sec = page.sections[Number(section.index)];
+    return sec ? { project: c, page: page, sec: sec } : null;
+  }
+
+  function seedCopilot(text) {
+    chatOpenPanel(true);
+    const inp = $('#chatInput');
+    if (!inp) return;
+    inp.value = text;
+    inp.focus();
+    try { inp.setSelectionRange(text.length, text.length); } catch (e) { /* not a text input */ }
+  }
+
+  function sectionCopilotRequest(req) {
+    const action = String((req && req.action) || '');
+    const target = sectionAt(req && req.section);
+    if (!target) return 'Open a section first — the toolbar edits the one you select.';
+    const ref = sectionRef(req.section);
+    if (!ref) return 'I could not tell which section that is.';
+    if (action === 'copy') {
+      seedCopilot('Make the ' + ref + ' punchier');
+      return 'Sent to Copilot — press enter to run it.';
+    }
+    if (action === 'layout') {
+      const type = String(target.sec.type || '');
+      const options = (typeof AI !== 'undefined' && AI.layoutOptions) ? AI.layoutOptions(type) : [];
+      if (!options.length) return 'There is no catalog layout for a ' + type + ' section — describe the change you want in Copilot and it will handle it.';
+      // Shadowing nothing: `current` is the open-project accessor in this file.
+      const existing = String(target.sec.layout || '');
+      const next = options.find((o) => o && o.layout !== existing) || options[0];
+      seedCopilot('Make the ' + ref + ' ' + next.phrase);
+      return 'Sent to Copilot — press enter for the ' + next.name + ' layout.';
+    }
+    // Mutate: the planner has no generic "make this more interesting" op, so this
+    // one hands over the sentence and the client finishes it. Promising a rewrite
+    // the engine cannot do is how a toolbar teaches people not to trust it.
+    seedCopilot('Make the ' + ref + ' ');
+    return 'Finish the sentence — e.g. "… a numbered list" or "… a bold statement".';
+  }
+
+  /* ---------------- Design Tokens, wired ----------------
+    ui/inspector.js owns the five controls; the values it edits live here, in the
+    project, because that is the only place a change survives a reopen, reaches
+    the export and takes part in undo. The panel is handed the colours the project
+    actually resolves to, so its legibility badge measures body text on surface
+    rather than a decorative pair nobody reads.
+  */
+  function tokenSnapshot() {
+    const c = current();
+    if (!c) return null;
+    const d = (c.site && c.site.design && typeof c.site.design === 'object') ? c.site.design : {};
+    const pal = (typeof DB !== 'undefined' && DB.getPalette) ? DB.getPalette(c.site.palette) : null;
+    /*
+      The exported stylesheet states the light and dark pairs outright: the theme
+      bodies override --bg, --surface and --text. So the badge has to read the
+      pair this project actually ships, and fall back to the palette otherwise.
+    */
+    const theme = String(c.site.theme || '');
+    const light = theme === 'light';
+    const dark = theme === 'dark' || (!light && !!(pal && pal.dark));
+    const text = light ? '#151827' : dark ? '#eef0ff' : (pal ? pal.text : '#eef0ff');
+    const surface = light ? '#ffffff' : dark ? '#161a30' : (pal ? pal.surface : '#ffffff');
+    return {
+      brand: d.brandColor || (pal ? pal.primary : '#7cc0f8'),
+      surface: d.bgSurface || surface,
+      text: text,
+      space: d.spacing != null ? d.spacing : 96,
+      radius: d.btnRadius != null ? d.btnRadius : '999px',
+      shadow: d.btnShadow != null ? d.btnShadow : '0 10px 30px rgba(0,0,0,.25)'
+    };
+  }
+
+  function applyTokenPatch(patch) {
+    const c = current();
+    if (!c || !patch || !Object.keys(patch).length) return;
+    c.site.design = Object.assign({}, c.site.design || {}, patch);
+    // touch() saves and schedules the preview repaint, so a slider drag is one
+    // write and one repaint per step rather than a rebuild per pixel.
+    touch(c);
+  }
+
   function chatOpenPanel(open) {
     chatState.open = !!open && !!current();
     const el = $('#chatPanel');
@@ -12043,7 +12162,14 @@ const App = (() => {
         // here instead.
         let layout = act.layout ? chatChoice('layout:' + act.type, act.layout) : '';
         if (act.layout && !layout) return { skipped: true, reason: 'that is not a layout this build ships for that section' };
-        const i = chatLastIdx(s, act.type);
+        /*
+          The planner pins the section when the client pointed at one, so the
+          toolbar's "change this section's layout" changes that section rather
+          than the last section of its kind. -1 still means "the last one", which
+          is what an unpinned variant phrase has always meant here.
+        */
+        const pinned = Number(act.idx);
+        const i = (Number.isInteger(pinned) && pinned >= 0 && s.sections[pinned]) ? pinned : chatLastIdx(s, act.type);
         if (i === -1) {
           if (!isPro() && totalSections(c) >= PLANS.getPlan('free').limits.sectionsPerSite) {
             return { skipped: true, reason: 'the free plan allows ' + PLANS.getPlan('free').limits.sectionsPerSite + ' sections per site — upgrade for unlimited' };
@@ -13268,6 +13394,8 @@ const App = (() => {
       }
     });
     $('#chatInput').addEventListener('input', chatRenderSlash);
+    if (window.PallettAISectionCopilot) window.PallettAISectionCopilot.onRequest = sectionCopilotRequest;
+    if (window.PallettAITokens) window.PallettAITokens.onChange = applyTokenPatch;
     $('#chatList').addEventListener('click', (e) => {
       const b = e.target.closest('[data-chat-undo]');
       if (b) histUndo();

@@ -5,7 +5,7 @@
 //
 // encryptSecret(plainTextSecret, masterPassphrase)
 //   AES-256-GCM with PBKDF2-HMAC-SHA256 (100,000 iterations,
-//   16-byte random salt, 8-byte random IV). Authentication tag
+//   16-byte random salt, 12-byte random IV). Authentication tag
 //   included — wrong passphrases fail GCM auth, they do not
 //   yield garbage. Output is a self-describing JSON payload:
 //     { v, kdf:'pbkdf2-sha256', iter, salt, iv, tag, ct }
@@ -44,6 +44,10 @@
   const vault = {};
 
   var PBKDF2_ITERATIONS = 100000;
+  // Upper bound on accepted iteration counts: a crafted vault payload
+  // with iter=1e12 would block pbkdf2Sync for hours and hang the app,
+  // so an implausible count is rejected rather than honoured.
+  var MAX_ITERATIONS = 10000000;
   var SALT_BYTES = 16;
   var IV_BYTES = 12;
   var KEY_BYTES = 32; // AES-256
@@ -190,7 +194,7 @@
       return { ok: false, error: 'Refusing to double-encrypt an existing payload.' };
     }
 
-    var iter = Math.max(100000, Number(opts.iterations) || PBKDF2_ITERATIONS);
+    var iter = Math.min(MAX_ITERATIONS, Math.max(100000, Number(opts.iterations) || PBKDF2_ITERATIONS));
     var salt = crypto.randomBytes(SALT_BYTES);
     var iv = crypto.randomBytes(IV_BYTES);
     var key = deriveKeyBuffer(masterPassphrase, salt, iter);
@@ -254,7 +258,7 @@
     }
 
     var iter = Number(payload.iter);
-    if (!isFinite(iter) || iter < 100000) {
+    if (!isFinite(iter) || iter < 100000 || iter > MAX_ITERATIONS) {
       return { ok: false, error: 'Payload iteration count is implausible — refusing.' };
     }
 
@@ -320,8 +324,10 @@
     var envelope = JSON.stringify({ v: VAULT_VERSION, created: new Date().toISOString(), secrets: entries }, null, 2);
     try {
       fs.mkdirSync(path.dirname(path.resolve(vaultPath)), { recursive: true });
-      var tmp = vaultPath + '.tmp-' + require('crypto').randomBytes(4).toString('hex');
-      fs.writeFileSync(tmp, envelope);
+      var tmp = vaultPath + '.tmp-' + crypto.randomBytes(4).toString('hex');
+      // 0600: the vault holds credentials; keep it owner-only even
+      // though the contents are encrypted.
+      fs.writeFileSync(tmp, envelope, { mode: 0o600 });
       fs.renameSync(tmp, vaultPath);
     } catch (e) {
       return { ok: false, error: 'vault write failed: ' + (e && e.message ? e.message : String(e)) };
@@ -387,7 +393,7 @@
     if (typeof masterPassphrase !== 'string' || masterPassphrase.length < 8) {
       return Promise.reject(new Error('masterPassphrase must be at least 8 characters.'));
     }
-    var iter = Math.max(100000, Number(iterations) || PBKDF2_ITERATIONS);
+    var iter = Math.min(MAX_ITERATIONS, Math.max(100000, Number(iterations) || PBKDF2_ITERATIONS));
     var salt = c.getRandomValues(new Uint8Array(SALT_BYTES));
     var iv = c.getRandomValues(new Uint8Array(IV_BYTES));
     var enc = new TextEncoder();
@@ -433,7 +439,7 @@
       return Promise.reject(new Error('Payload is not a recognizable encrypted envelope.'));
     }
     var iter = Number(payload.iter);
-    if (!isFinite(iter) || iter < 100000) {
+    if (!isFinite(iter) || iter < 100000 || iter > MAX_ITERATIONS) {
       return Promise.reject(new Error('Payload iteration count is implausible — refusing.'));
     }
     var salt = bufferFromB64(payload.salt);

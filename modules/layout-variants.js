@@ -86,6 +86,21 @@
     });
   }
 
+  /**
+   * Escaping quotes stops attribute breakout, but an href still needs a
+   * scheme check: `javascript:alert(1)` is a valid attribute value that
+   * executes on click. Only http/https/mailto/tel and scheme-less
+   * relative paths or fragments survive; everything else falls back.
+   */
+  function safeUrl(u, fallback) {
+    var s = String(u == null ? '' : u).trim().replace(/[\u0000-\u001f\u007f]/g, '');
+    if (!s) return fallback || '';
+    if (/^(?:https?:|mailto:|tel:)/i.test(s)) return s;
+    if (/^#/.test(s)) return s;
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) return s; // no scheme at all → relative path
+    return fallback || '';
+  }
+
   function arr(v) { return Array.isArray(v) ? v : []; }
 
   function firstText(v, dflt) {
@@ -106,18 +121,18 @@
         (firstText(d.kicker) ? '<p class="pv-kicker">' + esc(d.kicker) + '</p>' : '') +
         '<h1 class="pv-title">' + esc(firstText(d.title, 'Headline')) + '</h1>' +
         (firstText(d.body) ? '<p class="pv-body">' + esc(d.body) + '</p>' : '') +
-        (d.cta ? '<a class="pv-cta" href="' + esc(d.cta.href || '#') + '">' + esc(firstText(d.cta.label, 'Get started')) + '</a>' : '') +
+        (d.cta ? '<a class="pv-cta" href="' + esc(safeUrl(d.cta.href, '#')) + '">' + esc(firstText(d.cta.label, 'Get started')) + '</a>' : '') +
         '</div></section>';
     },
     'hero:B': function (d, a) {
       var media = '<div class="pv-media pv-media--lead">' +
-        (d.image ? '<img src="' + esc(d.image) + '" alt="' + esc(firstText(d.imageAlt, d.title || 'Hero image')) + '" width="1280" height="960" loading="eager">' : '<div class="pv-media-fallback" role="img" aria-label="' + esc(firstText(d.imageAlt, 'Hero visual')) + '"></div>') +
+        (d.image ? '<img src="' + esc(safeUrl(d.image)) + '" alt="' + esc(firstText(d.imageAlt, d.title || 'Hero image')) + '" width="1280" height="960" loading="eager">' : '<div class="pv-media-fallback" role="img" aria-label="' + esc(firstText(d.imageAlt, 'Hero visual')) + '"></div>') +
         '</div>';
       var copy = '<div class="pv-copy">' +
         (firstText(d.kicker) ? '<p class="pv-kicker">' + esc(d.kicker) + '</p>' : '') +
         '<h1 class="pv-title">' + esc(firstText(d.title, 'Headline')) + '</h1>' +
         (firstText(d.body) ? '<p class="pv-body">' + esc(d.body) + '</p>' : '') +
-        (d.cta ? '<a class="pv-cta" href="' + esc(d.cta.href || '#') + '">' + esc(firstText(d.cta.label, 'Get started')) + '</a>' : '') +
+        (d.cta ? '<a class="pv-cta" href="' + esc(safeUrl(d.cta.href, '#')) + '">' + esc(firstText(d.cta.label, 'Get started')) + '</a>' : '') +
         '</div>';
       // Asymmetry: the archetype's lead column gets the wider track.
       return a.side === 'left'
@@ -136,7 +151,7 @@
         '<div class="pv-card pv-card--head pv-span-2">' +
         '<h1 class="pv-title">' + esc(firstText(d.title, 'Headline')) + '</h1>' +
         (firstText(d.body) ? '<p class="pv-body">' + esc(d.body) + '</p>' : '') +
-        (d.cta ? '<a class="pv-cta" href="' + esc(d.cta.href || '#') + '">' + esc(firstText(d.cta.label, 'Get started')) + '</a>' : '') +
+        (d.cta ? '<a class="pv-cta" href="' + esc(safeUrl(d.cta.href, '#')) + '">' + esc(firstText(d.cta.label, 'Get started')) + '</a>' : '') +
         '</div>' + cards + '</div></section>';
     },
 
@@ -158,7 +173,7 @@
           (firstText(it.body) ? '<p class="pv-body">' + esc(it.body) + '</p>' : '') + '</li>';
       }).join('');
       var media = '<div class="pv-media pv-media--lead">' +
-        (d.image ? '<img src="' + esc(d.image) + '" alt="' + esc(firstText(d.imageAlt, d.title || 'Feature visual')) + '" width="1024" height="768" loading="lazy">' : '<div class="pv-media-fallback" role="img" aria-label="' + esc(firstText(d.imageAlt, 'Feature visual')) + '"></div>') +
+        (d.image ? '<img src="' + esc(safeUrl(d.image)) + '" alt="' + esc(firstText(d.imageAlt, d.title || 'Feature visual')) + '" width="1024" height="768" loading="lazy">' : '<div class="pv-media-fallback" role="img" aria-label="' + esc(firstText(d.imageAlt, 'Feature visual')) + '"></div>') +
         '</div>';
       var copy = '<div class="pv-copy"><h2 class="pv-title">' + esc(firstText(d.title, 'What you get')) + '</h2>' +
         (firstText(lead.body) ? '<p class="pv-body">' + esc(lead.body) + '</p>' : '') +
@@ -200,7 +215,7 @@
         '<figcaption class="pv-caption">' + esc(firstText(lead.body || lead.name, '')) + '</figcaption></figure>' +
         quotes + '</div>';
       var media = '<div class="pv-media pv-media--lead">' +
-        (d.image ? '<img src="' + esc(d.image) + '" alt="' + esc(firstText(d.imageAlt, 'Client portrait')) + '" width="800" height="1000" loading="lazy">' : '<div class="pv-media-fallback" role="img" aria-label="' + esc(firstText(d.imageAlt, 'Client visual')) + '"></div>') +
+        (d.image ? '<img src="' + esc(safeUrl(d.image)) + '" alt="' + esc(firstText(d.imageAlt, 'Client portrait')) + '" width="800" height="1000" loading="lazy">' : '<div class="pv-media-fallback" role="img" aria-label="' + esc(firstText(d.imageAlt, 'Client visual')) + '"></div>') +
         '</div>';
       return a.side === 'left'
         ? '<section class="pv-testimonials pv-testimonials--b">' + media + copy + '</section>'
@@ -223,7 +238,7 @@
           '<h3 class="pv-card-title">' + esc(firstText(p.title, 'Plan')) + '</h3>' +
           '<p class="pv-price">' + esc(firstText(p.price, '')) + '</p>' +
           (firstText(p.body) ? '<p class="pv-body">' + esc(p.body) + '</p>' : '') +
-          (p.cta ? '<a class="pv-cta" href="' + esc(p.cta.href || '#') + '">' + esc(firstText(p.cta.label, 'Choose')) + '</a>' : '') +
+          (p.cta ? '<a class="pv-cta" href="' + esc(safeUrl(p.cta.href, '#')) + '">' + esc(firstText(p.cta.label, 'Choose')) + '</a>' : '') +
           '</article>';
       }).join('');
       return '<section class="pv-pricing pv-pricing--a"><div class="pv-inner pv-centered">' +
@@ -239,13 +254,13 @@
         '<h3 class="pv-card-title">' + esc(firstText(lead.title, 'Plan')) + '</h3>' +
         '<p class="pv-price">' + esc(firstText(lead.price, '')) + '</p>' +
         (firstText(lead.body) ? '<p class="pv-body">' + esc(lead.body) + '</p>' : '') +
-        (lead.cta ? '<a class="pv-cta" href="' + esc(lead.cta.href || '#') + '">' + esc(firstText(lead.cta.label, 'Choose')) + '</a>' : '') +
+        (lead.cta ? '<a class="pv-cta" href="' + esc(safeUrl(lead.cta.href, '#')) + '">' + esc(firstText(lead.cta.label, 'Choose')) + '</a>' : '') +
         '</article></div>';
       var side = '<div class="pv-stack pv-stack--tight">' + plans.slice(1, 4).map(function (p) {
         return '<article class="pv-plan pv-plan--mini"><h3 class="pv-card-title">' + esc(firstText(p.title, 'Plan')) + '</h3>' +
           '<p class="pv-price">' + esc(firstText(p.price, '')) + '</p></article>';
       }).join('') + '</div>';
-      var media = d.image ? '<div class="pv-media"><img src="' + esc(d.image) + '" alt="' + esc(firstText(d.imageAlt, 'Product context')) + '" width="800" height="600" loading="lazy"></div>' : side;
+      var media = d.image ? '<div class="pv-media"><img src="' + esc(safeUrl(d.image)) + '" alt="' + esc(firstText(d.imageAlt, 'Product context')) + '" width="800" height="600" loading="lazy"></div>' : side;
       return a.side === 'left'
         ? '<section class="pv-pricing pv-pricing--b">' + media + copy + '</section>'
         : '<section class="pv-pricing pv-pricing--b pv-split--flip">' + copy + media + '</section>';
@@ -256,7 +271,7 @@
           '<h3 class="pv-card-title">' + esc(firstText(p.title, 'Plan')) + '</h3>' +
           '<p class="pv-price">' + esc(firstText(p.price, '')) + '</p>' +
           (firstText(p.body) ? '<p class="pv-body">' + esc(p.body) + '</p>' : '') +
-          (p.cta ? '<a class="pv-cta" href="' + esc(p.cta.href || '#') + '">' + esc(firstText(p.cta.label, 'Choose')) + '</a>' : '') +
+          (p.cta ? '<a class="pv-cta" href="' + esc(safeUrl(p.cta.href, '#')) + '">' + esc(firstText(p.cta.label, 'Choose')) + '</a>' : '') +
           '</article>';
       }).join('');
       return '<section class="pv-pricing pv-pricing--c"><div class="pv-inner">' +
@@ -277,7 +292,7 @@
       var items = arr(d.items).slice(0, 8);
       var copy = '<div class="pv-copy"><h2 class="pv-title">' + esc(firstText(d.title, 'FAQ')) + '</h2>' +
         (firstText(d.body) ? '<p class="pv-body">' + esc(d.body) + '</p>' : '') +
-        (d.cta ? '<a class="pv-cta" href="' + esc(d.cta.href || '#') + '">' + esc(firstText(d.cta.label, 'Ask us')) + '</a>' : '') +
+        (d.cta ? '<a class="pv-cta" href="' + esc(safeUrl(d.cta.href, '#')) + '">' + esc(firstText(d.cta.label, 'Ask us')) + '</a>' : '') +
         '</div>';
       var list = '<div class="pv-stack">' + items.map(function (it) {
         return '<details class="pv-faq"><summary class="pv-card-title">' + esc(firstText(it.title || it.q, 'Question')) + '</summary>' +
@@ -304,7 +319,7 @@
         (firstText(d.body) ? '<p class="pv-caption">' + esc(d.body) + '</p>' : '') +
         '<nav class="pv-nav" aria-label="Footer">' +
         arr(d.links).slice(0, 6).map(function (l) {
-          return '<a href="' + esc(l.href || '#') + '">' + esc(firstText(l.label || l.title, 'Link')) + '</a>';
+          return '<a href="' + esc(safeUrl(l.href, '#')) + '">' + esc(firstText(l.label || l.title, 'Link')) + '</a>';
         }).join('') +
         '</nav></div></footer>';
     },
@@ -313,7 +328,7 @@
         (firstText(d.body) ? '<p class="pv-caption">' + esc(d.body) + '</p>' : '') + '</div>';
       var nav = '<nav class="pv-nav pv-nav--cols" aria-label="Footer">' +
         arr(d.links).slice(0, 8).map(function (l) {
-          return '<a href="' + esc(l.href || '#') + '">' + esc(firstText(l.label || l.title, 'Link')) + '</a>';
+          return '<a href="' + esc(safeUrl(l.href, '#')) + '">' + esc(firstText(l.label || l.title, 'Link')) + '</a>';
         }).join('') + '</nav>';
       return a.side === 'left'
         ? '<footer class="pv-footer pv-footer--b">' + nav + copy + '</footer>'
@@ -324,7 +339,7 @@
         '<div class="pv-card pv-card--head pv-span-2"><p class="pv-title">' + esc(firstText(d.title, 'Studio')) + '</p>' +
         (firstText(d.body) ? '<p class="pv-caption">' + esc(d.body) + '</p>' : '') + '</div>' +
         arr(d.links).slice(0, 4).map(function (l) {
-          return '<div class="pv-card"><a href="' + esc(l.href || '#') + '">' + esc(firstText(l.label || l.title, 'Link')) + '</a></div>';
+          return '<div class="pv-card"><a href="' + esc(safeUrl(l.href, '#')) + '">' + esc(firstText(l.label || l.title, 'Link')) + '</a></div>';
         }).join('') +
         '</div></footer>';
     }

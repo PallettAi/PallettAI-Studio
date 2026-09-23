@@ -5353,6 +5353,21 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
     // palette, and an unprompted CTA layout is a change they did not ask for.
     [['gradient splash', 'splash layout', 'splash cta', 'cta splash'], 'cta', 'splash', 'gradient splash']
   ];
+
+  /*
+    The catalog layouts that belong to ONE section type.
+
+    The planner reads a variant phrase as naming its own kind — "make the second
+    section bento" resolves to the *features* section, because the word bento is
+    defined for features and a named kind outranks a position. That is correct
+    when a client types it and wrong when the UI offers it: a button that says
+    "change this section's layout" must not edit a different section. So the
+    section toolbar only ever offers the variants of the section it has selected,
+    and this is where it gets them.
+  */
+  const layoutOptions = (type) => LAYOUT_WORDS
+    .filter((entry) => entry[1] === type)
+    .map((entry) => ({ phrase: entry[0][0], layout: entry[2], name: entry[3] }));
   const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // find which section types a message mentions, earliest first
   function mentionedSections(msg) {
@@ -5504,6 +5519,28 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
     const sec = site.sections[idx];
     if (!sec) return null;
     return { type: sec.type, idx: idx, word: ord.word, at: ord.at, positional: true };
+  }
+
+  /*
+    A position a layout variant should land on, or -1 for "wherever that kind
+    is", which is what the layout op means when nothing was pointed at.
+
+    A position in a sentence is a point on the page — "the second section" — and
+    it only pins the layout when the section standing there is of the layout's
+    own kind. "The third section bento" on a page whose third section is a
+    gallery says nothing about the features section the word bento belongs to, so
+    the old answer (the last of that kind) stands rather than moving the edit.
+
+    Without this, the layout op resolved to the last section of its kind, which
+    is invisible on a site with one of them and edits the wrong section on a site
+    with two.
+  */
+  function positionedIdxFor(site, raw, type) {
+    const ord = sectionOrdinal(raw);
+    if (!ord || !site || !Array.isArray(site.sections)) return -1;
+    const idx = ord.index === -1 ? site.sections.length - 1 : ord.index;
+    const sec = site.sections[idx];
+    return sec && sec.type === type ? idx : -1;
   }
 
   /*
@@ -6092,7 +6129,11 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
     if (designOk) {
       for (const [words, lType, lLayout, lName] of LAYOUT_WORDS) {
         if (words.some((w) => n.indexOf(' ' + w + ' ') !== -1)) {
-          acts.push({ op: 'layout', type: lType, layout: lLayout, label: 'Applied the ' + lName + ' layout to the ' + lType + ' section' });
+          // The position, when the client pointed at one and a section of that
+          // kind is standing there, so a toolbar on the second gallery cannot
+          // change the last one.
+          const pinned = positionedIdxFor(site, raw, lType);
+          acts.push({ op: 'layout', type: lType, layout: lLayout, idx: pinned, label: 'Applied the ' + lName + ' layout to the ' + lType + ' section' });
           break;
         }
       }
@@ -6684,7 +6725,7 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
   };
 
   return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, studySite, isPublicFetchUrl, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, shuffleLook, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatPlanOne, copilotRoute, originalityReport, splitCompound, chatHelp, sampleSection, copyOptions, imageBase, photoPicks, polarity, designMention, designAlternatives, designDNA: DESIGN_DNA,
-    nthSecOfType, sectionOrdinal, resolveTarget, positionalMention, followMiss, repeatMiss, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES, templateCatalog: templateCatalogLib(), applyNicheExtras, addServicesPage, matchNiche,
+    nthSecOfType, sectionOrdinal, resolveTarget, positionalMention, followMiss, repeatMiss, layoutOptions, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES, templateCatalog: templateCatalogLib(), applyNicheExtras, addServicesPage, matchNiche,
     critiquePass, brandKernel: kernelLib };
 })();
 

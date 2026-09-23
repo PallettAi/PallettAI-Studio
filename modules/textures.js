@@ -94,6 +94,22 @@
     return { hex: '#7c5cff', css: '#7c5cff' };
   }
 
+  // Option values are caller-supplied and get interpolated into the
+  // generated CSS/SVG. Numeric knobs are already coerced; these two are
+  // strings, so they are shape-checked instead of trusted.
+  var SAFE_BG_SIZE_RE = /^(?:auto|cover|contain|[\d.]+(?:px|rem|em|%)(?:\s+[\d.]+(?:px|rem|em|%))?)$/;
+  var SAFE_COLOR_RE = /^(?:#[\da-fA-F]{3,8}|(?:oklch|rgb|rgba|hsl|hsla|lab|lch|hwb|color-mix)\((?:[^()]|\([^()]*\))*\)|var\(--[\w-]+\))$/;
+
+  function safeBgSize(v) {
+    var s = String(v == null ? 'auto' : v).trim();
+    return SAFE_BG_SIZE_RE.test(s) ? s : 'auto';
+  }
+
+  function safeSurface(v) {
+    var s = String(v == null ? '' : v).trim();
+    return SAFE_COLOR_RE.test(s) ? s : null;
+  }
+
   function b64Utf8(s) {
     if (typeof Buffer !== 'undefined' && Buffer.from) {
       try { return Buffer.from(s, 'utf8').toString('base64'); } catch (e) { /* fall through */ }
@@ -231,7 +247,7 @@
     var col = parseColor(primaryColorOKLCH);
     // Surfaces: a neutral, dark or light, derived from the input's
     // lightness so the texture works on both themes.
-    var surface = opts.surface || (function () {
+    var surface = safeSurface(opts.surface) || (function () {
       var m = /^oklch\(\s*([\d.]+)%?\s/.exec(String(primaryColorOKLCH || ''));
       var L = m ? parseFloat(m[1]) : 0.5;
       if (L > 1) L = L / 100;
@@ -246,7 +262,7 @@
     var dataUri = b64 ? 'data:image/svg+xml;base64,' + b64 : '';
 
     var cssVars = ':root{' + Object.keys(vars).map(function (k) { return k + ':' + vars[k]; }).join(';') + '}';
-    var css = '.pv-tex--' + key + '{background-image:url("' + dataUri + '");background-size:' + (opts.bgSize || 'auto') + '}';
+    var css = '.pv-tex--' + key + '{background-image:url("' + dataUri + '");background-size:' + safeBgSize(opts.bgSize) + '}';
 
     return {
       ok: true,

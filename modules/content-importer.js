@@ -13,6 +13,40 @@ const path = require('path');
 
 const FRONTMATTER_REGEX = /^---\s*\n([\s\S]*?)\n---\s*\n/;
 
+// Keys that would rewrite an object's prototype instead of adding a property.
+// Frontmatter is untrusted input — an imported .md can come from anywhere — so
+// a `__proto__:` line must never be able to reach Object.prototype. Without
+// this guard, `result['__proto__']` read back as Object.prototype and the
+// nested branch wrote straight into it, polluting every object in the process.
+const UNSAFE_YAML_KEYS = ['__proto__', 'constructor', 'prototype'];
+
+function isUnsafeYamlKey(key) {
+  return UNSAFE_YAML_KEYS.indexOf(String(key).trim().toLowerCase()) !== -1;
+}
+
+/** Add an own property to a plain object without ever touching a prototype. */
+function safeAssign(target, key, value) {
+  const name = String(key).trim();
+  if (!name || !target || isUnsafeYamlKey(name)) return target;
+  Object.defineProperty(target, name, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true
+  });
+  return target;
+}
+
+/**
+ * Read an own property that holds a plain object. A value inherited from the
+ * prototype chain is never a valid container to write into.
+ */
+function ownObject(target, key) {
+  if (!target || !Object.prototype.hasOwnProperty.call(target, key)) return null;
+  const value = target[key];
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+}
+
 /**
  * Parse YAML frontmatter from a string (basic implementation)
  * Supports simple key: value pairs and arrays
@@ -74,15 +108,14 @@ function parseYamlFrontmatter(yamlStr) {
     }
 
     // Handle nested objects (indented key: value)
-    if (indent > 0 && currentKey && trimmed.includes(':')) {
+    if (indent > 0 && currentKey && !isUnsafeYamlKey(currentKey) && trimmed.includes(':')) {
       const [key, ...valueParts] = trimmed.split(':');
       const value = valueParts.join(':').trim();
 
-      if (!result[currentKey]) {
-        result[currentKey] = {};
-      }
-
-      result[currentKey][key.trim()] = parseYamlValue(value);
+      // currentKey is guaranteed safe by the guard below, and safeAssign
+      // refuses a dangerous inner key, so neither step can reach a prototype.
+      if (!ownObject(result, currentKey)) safeAssign(result, currentKey, {});
+      safeAssign(result[currentKey], key, parseYamlValue(value));
       continue;
     }
 
@@ -122,6 +155,15 @@ function parseYamlFrontmatter(yamlStr) {
         if (value.endsWith('\n')) {
           value = value.slice(0, -1);
         }
+      }
+
+      // Drop prototype-rewriting keys outright and stop treating them as the
+      // container for the indented lines that follow.
+      if (isUnsafeYamlKey(key)) {
+        currentKey = null;
+        currentList = null;
+        inNestedObject = false;
+        continue;
       }
 
       result[key] = parseYamlValue(value);
@@ -568,29 +610,94 @@ function convertToPallettAISection(block, metadata, options = {}) {
 }
 
 /**
- * Format inline markdown (bold, italic, links, code)
+ * Escape text destined for HTML element content.
+ */
+function escapeMarkdownHtml(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Validate a URL taken from markdown before it becomes an href or src.
+ *
+ * Returns null for anything that is not a plain link, which matters most for
+ * `javascript:`, `vbscript:` and non-image `data:` URIs: an imported .md is
+ * untrusted input, and letting one of those through would turn a markdown file
+ * into stored XSS on the built site.
+ */
+function safeMarkdownUrl(rawUrl) {
+  const url = String(rawUrl === null || rawUrl === undefined ? '' : rawUrl).trim();
+  if (!url) return null;
+
+  // Browsers ignore control characters and whitespace when resolving a
+  // scheme, so "java\tscript:" must be normalised before the scheme check.
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url.replace(/[\u0000-\u0020\u007F]/g, ''));
+
+  if (scheme) {
+    const name = scheme[1].toLowerCase();
+    const allowed = ['http', 'https', 'mailto', 'tel', 'ftp'];
+
+    if (allowed.indexOf(name) === -1) {
+      const isInlineImage = name === 'data' &&
+        /^data:image\/(png|jpe?g|gif|webp|avif|bmp);/i.test(url);
+      if (!isInlineImage) return null;
+    }
+  }
+
+  return url;
+}
+
+/**
+ * Format inline markdown (bold, italic, code, links, images).
+ *
+ * Every captured fragment is escaped before it reaches the output, because
+ * markdown is text, not HTML.
  */
 function formatInlineMarkdown(text) {
   if (!text) return '';
 
-  // Bold
-  text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  text = text.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+  // Escape FIRST, then pattern-match.
+  //
+  // This is what makes the whole function safe rather than only the parts a
+  // pattern happens to catch. Every markdown metacharacter this parser cares
+  // about — [ ] ( ) * _ ` — survives HTML escaping untouched, so the patterns
+  // still match, but raw HTML anywhere in the source is now inert. Escaping
+  // per-match afterwards left anything the patterns did NOT match (and any
+  // remainder after a URL like `](a)b)` stopped early) passing through raw.
+  let out = escapeMarkdownHtml(text);
 
-  // Italic
-  text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  text = text.replace(/_([^_]+)_/g, '<em>$1</em>');
-
-  // Inline code
-  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Images first: the link pattern below also matches the [alt](src) half of
+  // ![alt](src), so running links first left a stray "!" and no <img> at all.
+  out = out.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, url) => {
+    const safe = safeMarkdownUrl(url);
+    if (!safe) return alt;
+    return '<img src="' + safe + '" alt="' + alt + '" loading="lazy">';
+  });
 
   // Links
-  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, url) => {
+    const safe = safeMarkdownUrl(url);
+    // A rejected URL degrades to plain text rather than a dead or hostile link.
+    if (!safe) return label + ' (' + url + ')';
+    return '<a href="' + safe + '" target="_blank" rel="noopener noreferrer">' + label + '</a>';
+  });
 
-  // Images (inline)
-  text = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" loading="lazy">');
+  // Bold
+  out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  out = out.replace(/__([^_]+)__/g, '<strong>$1</strong>');
 
-  return text;
+  // Italic
+  out = out.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  out = out.replace(/_([^_]+)_/g, '<em>$1</em>');
+
+  // Inline code
+  out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  return out;
 }
 
 /**

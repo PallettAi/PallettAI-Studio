@@ -176,6 +176,62 @@ function parseHtmlHead(html) {
 /**
  * Inject hreflang alternate links into HTML head
  */
+// ============================================================
+// Locale + value hardening
+// ============================================================
+
+/** A well-formed language or language-region tag, e.g. `en`, `en-US`, `zh-Hant-TW`. */
+const LOCALE_PATTERN = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
+
+function isValidLocaleTag(locale) {
+  return typeof locale === 'string' && LOCALE_PATTERN.test(locale.trim());
+}
+
+/**
+ * Keep only well-formed locale tags.
+ *
+ * Every consumer here interpolates a locale into a URL, an HTML attribute or
+ * a directory name, so an unvalidated code is an injection and traversal
+ * vector rather than a cosmetic problem.
+ */
+function normaliseLocaleList(locales) {
+  const list = Array.isArray(locales) ? locales : [];
+  return list
+    .map((locale) => (typeof locale === 'string' ? locale.trim() : ''))
+    .filter((locale) => isValidLocaleTag(locale));
+}
+
+/**
+ * Serialise a value for embedding inside an inline <script> block.
+ * JSON.stringify leaves `<`, `>`, `&` and the U+2028/U+2029 line separators
+ * intact, and any of them can terminate the script element early.
+ */
+function serializeForInlineScript(value) {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
+/**
+ * Return a URL that is safe inside a quoted href, or '' to drop it.
+ *
+ * Sanitised by rejection rather than entity escaping: the value may end up in
+ * a hand-rolled serializer that concatenates attributes raw, where escaped
+ * entities would be doubly escaped by a real serializer instead.
+ */
+function sanitiseHref(value) {
+  const url = String(value === null || value === undefined ? '' : value).trim();
+  if (!url) return '';
+  if (/["'<>`\\\u0000-\u001F\u007F]/.test(url)) return '';
+  // Control characters and whitespace are ignored by browsers when resolving
+  // a scheme, so "java\tscript:" has to be normalised before the check.
+  if (/^(javascript|vbscript|data|blob):/i.test(url.replace(/[\u0000-\u0020\u007F]/g, ''))) return '';
+  return url;
+}
+
 function injectHreflangLinks(html, locales, currentLocale, baseUrl) {
   const parser = DOMParserLib || createSimpleDomParser();
 
@@ -197,23 +253,29 @@ function injectHreflangLinks(html, locales, currentLocale, baseUrl) {
       }
     });
 
-    // Add new hreflang links
-    for (const locale of locales) {
+    // Add new hreflang links. Only well-formed locale tags are emitted, and a
+    // URL that could close the attribute early is dropped rather than escaped.
+    for (const locale of normaliseLocaleList(locales)) {
       if (locale === currentLocale) continue;
+
+      const url = sanitiseHref(buildLocaleUrl(baseUrl, locale));
+      if (!url) continue;
 
       const link = doc.createElement('link');
       link.setAttribute('rel', 'alternate');
       link.setAttribute('hreflang', locale);
-      const url = buildLocaleUrl(baseUrl, locale);
       link.setAttribute('href', url);
       head.appendChild(link);
     }
 
     // Add self-referencing canonical
-    const canonical = doc.createElement('link');
-    canonical.setAttribute('rel', 'canonical');
-    canonical.setAttribute('href', buildLocaleUrl(baseUrl, currentLocale));
-    head.appendChild(canonical);
+    const canonicalHref = sanitiseHref(buildLocaleUrl(baseUrl, currentLocale));
+    if (canonicalHref) {
+      const canonical = doc.createElement('link');
+      canonical.setAttribute('rel', 'canonical');
+      canonical.setAttribute('href', canonicalHref);
+      head.appendChild(canonical);
+    }
 
     // Serialize back to HTML
     const serializer = new (require('@xmldom/xmldom').XMLSerializer)();
@@ -245,17 +307,22 @@ function injectHreflangLinksFallback(html, locales, currentLocale, baseUrl) {
 
   const insertionPoint = headEnd;
 
-  // Build hreflang link tags
+  // Build hreflang link tags. Values are validated and hrefs are sanitised
+  // before interpolation — this branch is pure string concatenation, so an
+  // unvalidated locale or URL here lands in the exported markup verbatim.
   const links = [];
-  for (const locale of locales) {
+  for (const locale of normaliseLocaleList(locales)) {
     if (locale === currentLocale) continue;
-    const url = buildLocaleUrl(baseUrl, locale);
+    const url = sanitiseHref(buildLocaleUrl(baseUrl, locale));
+    if (!url) continue;
     links.push(`<link rel="alternate" hreflang="${locale}" href="${url}">`);
   }
 
   // Add canonical for current locale
-  const canonicalUrl = buildLocaleUrl(baseUrl, currentLocale);
-  links.push(`<link rel="canonical" href="${canonicalUrl}">`);
+  const canonicalUrl = sanitiseHref(buildLocaleUrl(baseUrl, currentLocale));
+  if (canonicalUrl) {
+    links.push(`<link rel="canonical" href="${canonicalUrl}">`);
+  }
 
   const insertion = links.join('\n    ');
   result = result.slice(0, insertionPoint) + '\n    ' + insertion + result.slice(insertionPoint);
@@ -356,9 +423,18 @@ function createSimpleDomParser() {
  * and persists choice in localStorage
  */
 function generateLanguageSwitcherScript(locales, defaultLocale = 'en') {
-  const localeNames = JSON.stringify(
+  // Only well-formed locale tags reach the script, and every injected value is
+  // serialised with the characters that can close an inline <script> block
+  // escaped. Without this, a locale code of `</script><script>\u2026` in the
+  // project config broke out of the switcher built into every exported page.
+  const safeLocales = normaliseLocaleList(locales);
+  const localeList = safeLocales.length ? safeLocales : ['en'];
+  const requested = typeof defaultLocale === 'string' ? defaultLocale.trim() : '';
+  const safeDefault = localeList.indexOf(requested) !== -1 ? requested : localeList[0];
+
+  const localeNames = serializeForInlineScript(
     Object.fromEntries(
-      locales.map(l => [l, LANGUAGE_NAMES[l] || l])
+      localeList.map(l => [l, LANGUAGE_NAMES[l] || l])
     )
   );
 
@@ -371,9 +447,9 @@ function generateLanguageSwitcherScript(locales, defaultLocale = 'en') {
   'use strict';
 
   // Configuration — injected by build system
-  var SUPPORTED_LOCALES = ${JSON.stringify(locales)};
+  var SUPPORTED_LOCALES = ${serializeForInlineScript(localeList)};
   var LOCALE_NAMES = ${localeNames};
-  var DEFAULT_LOCALE = '${defaultLocale}';
+  var DEFAULT_LOCALE = ${serializeForInlineScript(safeDefault)};
   var BASE_URL = window.location.origin;
 
   // Try to detect locale from URL path first
@@ -581,6 +657,15 @@ async function compileMultilingualSite(project, options = {}) {
 
   // Process each locale
   for (const locale of locales) {
+    // Each locale becomes a literal directory name below, so a code such as
+    // '../../etc' would write outside the export root. Refuse anything that is
+    // not a well-formed locale tag before any path is built from it.
+    if (!isValidLocaleTag(locale)) {
+      report.success = false;
+      report.errors.push(`Invalid locale code ignored: ${JSON.stringify(locale)}`);
+      continue;
+    }
+
     const localeOutputDir = path.join(outputPath, locale);
 
     try {

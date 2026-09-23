@@ -412,10 +412,27 @@ function convertTimestampedTranscript(transcriptText, options) {
       : startMs + Math.max(2000, entry.text.split(/\s+/).length * 400);
 
     vtt += `${formatVttTimestamp(startMs)} --> ${formatVttTimestamp(endMs)}\n`;
-    vtt += `<v Speaker${index + 1}>${entry.text}</v>\n\n`;
+    vtt += `<v Speaker${index + 1}>${escapeVttText(entry.text)}</v>\n\n`;
   });
 
   return vtt;
+}
+
+/**
+ * Escape cue text for WebVTT.
+ *
+ * A cue body is parsed for inline tags (`<b>`, `<v>`, `<c>`, …) and for cue
+ * timestamps, so a raw `<` in a transcript is markup rather than literal text —
+ * including in something innocuous like "the <div> element". `&` is escaped
+ * with it because these are character references, and line breaks are folded
+ * because a cue body is a single line.
+ */
+function escapeVttText(text) {
+  return String(text === null || text === undefined ? '' : text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/[\r\n]+/g, ' ');
 }
 
 /**
@@ -453,7 +470,7 @@ function convertPlainTextTranscript(transcriptText, options) {
 
     // WebVTT requires the timestamp line first, then the cue text
     vtt += `${formatVttTimestamp(currentTime)} --> ${formatVttTimestamp(endTime)}\n`;
-    vtt += `<v Speaker${index + 1}>${line.trim()}</v>\n\n`;
+    vtt += `<v Speaker${index + 1}>${escapeVttText(line.trim())}</v>\n\n`;
 
     currentTime = endTime;
   });

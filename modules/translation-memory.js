@@ -411,9 +411,12 @@ function exportXLIFF(translationMap, targetLocale, sourceLocale = 'en', projectN
   const now = new Date().toISOString();
   const keys = Object.entries(translationMap).filter(([_, v]) => v && typeof v === 'string');
 
+  // The prologue attributes carry caller-supplied strings just like the unit
+  // bodies do, so they need the same escaping. Unescaped, a locale or project
+  // name containing a quote or `<` corrupts the document or injects elements.
   let xliff = '<?xml version="1.0" encoding="UTF-8"?>\n';
   xliff += `<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">\n`;
-  xliff += `  <file source-language="${sourceLocale}" target-language="${targetLocale}" original="${projectName}" datatype="plaintext" original-encoding="UTF-8">\n`;
+  xliff += `  <file source-language="${escapeXml(String(sourceLocale))}" target-language="${escapeXml(String(targetLocale))}" original="${escapeXml(String(projectName))}" datatype="plaintext" original-encoding="UTF-8">\n`;
   xliff += `    <header>\n`;
   xliff += `      <tool tool-id="pallettai-studio" tool-name="PallettAI Studio" tool-version="1.0" />\n`;
   xliff += `      <timestamp>${now}</timestamp>\n`;

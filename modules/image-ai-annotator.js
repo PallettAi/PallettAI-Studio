@@ -78,6 +78,21 @@ function extractContextKeywords(contextText) {
  * @param {Object} options - Generation options
  * @returns {string} Generated alt text
  */
+/**
+ * Alt text lands inside an `alt="..."` attribute, so a quote or angle bracket
+ * in the generated string would end the attribute early and let the rest of
+ * the text become markup. Filenames and surrounding copy are untrusted, so the
+ * characters are stripped rather than escaped: an alt attribute has no use for
+ * them anyway.
+ */
+function sanitiseAltText(text) {
+  return String(text === null || text === undefined ? '' : text)
+    .replace(/[<>"']/g, ' ')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function generateAltText(imagePath, surroundingContextText = '', options = {}) {
   const {
     maxLength = 125,
@@ -87,7 +102,7 @@ function generateAltText(imagePath, surroundingContextText = '', options = {}) {
   } = options;
 
   if (!imagePath) {
-    return `${prefix} content`;
+    return sanitiseAltText(`${prefix} content`);
   }
 
   const filenameKeywords = extractFilenameKeywords(imagePath);
@@ -138,9 +153,7 @@ function generateAltText(imagePath, surroundingContextText = '', options = {}) {
   }
 
   // Clean up the text
-  altText = altText
-    .replace(/\s+/g, ' ')
-    .trim();
+  altText = sanitiseAltText(altText);
 
   return altText;
 }

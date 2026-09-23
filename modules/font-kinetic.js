@@ -53,9 +53,14 @@
   }
 
   // CSS-ident escape for a font family name inside quotes.
+  // The family name is interpolated inside a quoted CSS string. Quotes
+  // and backslashes are removed so the string cannot be closed early;
+  // control characters (esp. newline, which terminates a CSS string) and
+  // block delimiters are removed too so it cannot escape the declaration.
   function fam(name) {
     var s = String(name || '').trim();
-    return s.replace(/\\/g, '').replace(/"/g, '') || 'sans-serif';
+    s = s.replace(/[\\"'{};]/g, '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+    return s || 'sans-serif';
   }
 
   // Axis tags are exactly 4 characters per the OpenType spec.

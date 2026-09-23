@@ -134,15 +134,41 @@
   // --- PNG ---
   var PNG_SIG = [137, 80, 78, 71, 13, 10, 26, 10];
 
-  function pngInflate(data) {
+  // Decode budgets. Header-declared dimensions and compressed streams
+  // are attacker-controlled on an uploaded file, so neither may drive an
+  // unbounded allocation: a 30-byte BMP or a small PNG can otherwise
+  // declare/expand to gigabytes and OOM the app.
+  var MAX_DIMENSION_PX = 20000;                 // per axis
+  var MAX_PIXELS = 40000000;                    // 40 megapixels total
+
+  function assertPixelBudget(w, h) {
+    if (!isFinite(w) || !isFinite(h) || w <= 0 || h <= 0) {
+      throw new Error('color-extractor: image has invalid dimensions (' + w + 'x' + h + ').');
+    }
+    if (w > MAX_DIMENSION_PX || h > MAX_DIMENSION_PX || w * h > MAX_PIXELS) {
+      throw new Error('color-extractor: image is too large (' + w + 'x' + h + ') - limit ' +
+        MAX_DIMENSION_PX + 'px per side / ' + (MAX_PIXELS / 1000000) + ' megapixels.');
+    }
+  }
+
+  function pngInflate(data, maxBytes) {
     // Node: real zlib. Browser/classic-script: store-only fallback
     // (deflate with BTYPE=00 blocks — what synthetic fixtures and
     // many optimised PNG writers emit).
+    var zlib = null;
     if (typeof require === 'function') {
+      try { zlib = require('zlib'); } catch (e) { zlib = null; }
+    }
+    if (zlib && zlib.inflateSync) {
       try {
-        var zlib = require('zlib');
-        if (zlib && zlib.inflateSync) return zlib.inflateSync(data);
-      } catch (e) { /* fall through to raw */ }
+        return zlib.inflateSync(data, maxBytes ? { maxOutputLength: maxBytes } : undefined);
+      } catch (inflateErr) {
+        // A budget breach is a rejection — never a silent fallback.
+        if (inflateErr && (inflateErr.code === 'ERR_BUFFER_TOO_LARGE' || /maxOutputLength/i.test(String(inflateErr.message)))) {
+          throw new Error('color-extractor: PNG data expands beyond the decode budget (' + maxBytes + ' bytes) - refusing to decode.');
+        }
+        // Otherwise the stream is not zlib-framed: try stored blocks.
+      }
     }
     // Minimal stored-block inflater.
     var out = [];
@@ -153,7 +179,12 @@
       if (btype !== 0) throw new Error('color-extractor: PNG uses compressed deflate without zlib (Node required).');
       var len = data[p + 1] | (data[p + 2] << 8);
       p += 5;
-      for (var i = 0; i < len && p < data.length; i++) out.push(data[p++]);
+      for (var i = 0; i < len && p < data.length; i++) {
+        if (maxBytes && out.length >= maxBytes) {
+          throw new Error('color-extractor: PNG data expands beyond the decode budget (' + maxBytes + ' bytes) - refusing to decode.');
+        }
+        out.push(data[p++]);
+      }
       if (bfinal) break;
     }
     return Buffer.isBuffer(out[0]) ? out[0] : Uint8Array.from(out);
@@ -181,6 +212,7 @@
         depth = buf[dataStart + 8];
         colorType = buf[dataStart + 9];
         interlace = buf[dataStart + 12];
+        assertPixelBudget(w, h);
         if (interlace !== 0) throw new Error('color-extractor: interlaced PNG unsupported — re-export non-interlaced.');
         if ([0, 2, 3, 4, 6].indexOf(colorType) === -1) throw new Error('color-extractor: PNG colour type ' + colorType + ' unsupported.');
       } else if (type === 'PLTE') {
@@ -198,10 +230,13 @@
       p = dataStart + len + 4; // skip CRC
     }
     if (!w || !h) throw new Error('color-extractor: PNG missing IHDR.');
+    assertPixelBudget(w, h);
     var channels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colorType];
-    var raw = pngInflate(Buffer.concat(idat));
     var bpp = Math.max(1, Math.ceil(channels * depth / 8));
     var stride = Math.ceil(w * channels * depth / 8);
+    // Inflate budget: exactly what this image needs (one filter byte per
+    // row) plus slack — a decompression bomb can never exceed it.
+    var raw = pngInflate(Buffer.concat(idat), h * (stride + 1) + 64);
     var out = new Uint8Array(w * h * 4);
 
     // Unfilter (non-interlaced: one pass).
@@ -281,6 +316,10 @@
     var compression = buf[30] | (buf[31] << 8);
     if (compression !== 0 && !(dibSize >= 108 && compression === 3)) {
       throw new Error('color-extractor: compressed BMP unsupported.');
+    }
+    assertPixelBudget(w, h);
+    if (dataOffset < 14 || dataOffset > buf.length) {
+      throw new Error('color-extractor: BMP pixel data offset is out of range.');
     }
     var palette = [];
     if (bpp <= 8) {

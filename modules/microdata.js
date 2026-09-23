@@ -140,6 +140,18 @@ function injectMicrodataAttributes(htmlContent, pageType, metadata = {}) {
 /**
  * Add itemscope and itemtype to the main container element
  */
+/**
+ * Rebuild an opening tag with extra attributes, guaranteeing the separating
+ * space. A bare `<article>` has an empty attribute string, and concatenating
+ * it directly produced `<articleitemscope ...>`, which is not an article
+ * element at all — the tag name simply absorbed the attribute.
+ */
+function withAttributes(tagName, existingAttrs, addedAttrs) {
+  const existing = String(existingAttrs === null || existingAttrs === undefined ? '' : existingAttrs).trim();
+  const joined = existing ? existing + ' ' + addedAttrs : addedAttrs;
+  return '<' + tagName + ' ' + joined + '>';
+}
+
 function addItemscopeToContainer(html, itemtype) {
   // Try to find article first, then main, then create wrapper
   const articleRegex = /<article([^>]*)>/i;
@@ -153,13 +165,11 @@ function addItemscopeToContainer(html, itemtype) {
         return match; // Already has correct itemtype
       }
 
-      let newAttrs = attrs;
-      if (!existingItemscope) {
-        newAttrs = newAttrs ? `${attrs} itemscope` : 'itemscope';
-      }
-      newAttrs = newAttrs ? `${newAttrs} itemtype="${escapeHtmlAttribute(itemtype)}"` : `itemscope itemtype="${escapeHtmlAttribute(itemtype)}"`;
+      const parts = [];
+      if (!existingItemscope) parts.push('itemscope');
+      parts.push(`itemtype="${escapeHtmlAttribute(itemtype)}"`);
 
-      return `<article${newAttrs}>`;
+      return withAttributes('article', attrs, parts.join(' '));
     });
   }
 
@@ -167,8 +177,7 @@ function addItemscopeToContainer(html, itemtype) {
   const mainRegex = /<main([^>]*)>/i;
   if (mainRegex.test(html)) {
     return html.replace(mainRegex, (match, attrs) => {
-      let newAttrs = attrs ? `${attrs} itemscope itemtype="${escapeHtmlAttribute(itemtype)}"` : `itemscope itemtype="${escapeHtmlAttribute(itemtype)}"`;
-      return `<main${newAttrs}>`;
+      return withAttributes('main', attrs, `itemscope itemtype="${escapeHtmlAttribute(itemtype)}"`);
     });
   }
 

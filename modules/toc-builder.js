@@ -244,7 +244,7 @@ function generateTocHtml(tree, options = {}) {
 function generateListHtml(node, listType, depth, showNumbers, listClass) {
   if (!node || !node.children || node.children.length === 0) {
     if (node.level > 0) {
-      return `<li><a href="#${node.id}">${node.label}</a></li>\n`;
+      return `<li><a href="#${escapeHtml(String(node.id))}">${escapeHtml(node.label)}</a></li>\n`;
     }
     return '';
   }
@@ -267,7 +267,9 @@ function generateListHtml(node, listType, depth, showNumbers, listClass) {
 
     itemNumber++;
     const itemNumberHtml = showNumbers ? `<span class="toc-number">${itemNumber}.</span> ` : '';
-    const linkHtml = `<a href="#${child.id}">${itemNumberHtml}${escapeHtml(child.label)}</a>`;
+    // The id goes into an href attribute, so it is escaped too — a tree built
+    // by hand (rather than by slugify) can otherwise close the attribute.
+    const linkHtml = `<a href="#${escapeHtml(String(child.id))}">${itemNumberHtml}${escapeHtml(child.label)}</a>`;
 
     if (child.children && child.children.length > 0) {
       html += `<li>${linkHtml}\n`;

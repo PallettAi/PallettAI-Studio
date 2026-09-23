@@ -41,11 +41,24 @@
   // data-theme, so the snippet never touches styles. ≈0.3KB.
   var HEAD_SNIPPET = '(function(){try{var k="pallettai.theme",L=localStorage,s=L.getItem(k)||"system",d=matchMedia("(prefers-color-scheme: dark)"),t=s=="system"?d.matches?"dark":"light":s;document.documentElement.dataset.theme=t;window.__pt={mode:()=>s,sys:d}}catch(_){}})();';
 
+  /**
+   * The toggle snippet is inlined into the exported <head>, so its
+   * literals must be safe inside an HTML <script> element. JSON.stringify
+   * alone leaves `<` intact — a storageKey containing `</script>` would
+   * close the element early and let the rest parse as markup.
+   */
+  function jsLiteral(value) {
+    return JSON.stringify(String(value))
+      .replace(/</g, '\\u003c')
+      .replace(/>/g, '\\u003e')
+      .replace(/&/g, '\\u0026');
+  }
+
   ThemeEngine.generateThemeToggleScript = function (options) {
     var opts = options || {};
     if (opts.storageKey && opts.storageKey !== 'pallettai.theme') {
       // Same logic, custom key — still one pass, still tiny.
-      var k = JSON.stringify(String(opts.storageKey));
+      var k = jsLiteral(opts.storageKey);
       return '(function(){try{var k=' + k + ',L=localStorage,s=L.getItem(k)||"system",d=matchMedia("(prefers-color-scheme: dark)"),t=s=="system"?d.matches?"dark":"light":s;document.documentElement.dataset.theme=t;window.__pt={mode:()=>s,sys:d}}catch(_){}})();';
     }
     return HEAD_SNIPPET;
@@ -57,8 +70,8 @@
 
   ThemeEngine.buildThemeRuntimeScript = function (options) {
     var opts = options || {};
-    var key = JSON.stringify(String(opts.storageKey || 'pallettai.theme'));
-    var cycle = JSON.stringify(String(opts.cycle || 'light,dark,system'));
+    var key = jsLiteral(opts.storageKey || 'pallettai.theme');
+    var cycle = jsLiteral(opts.cycle || 'light,dark,system');
     return [
       '(function(){',
       '"use strict";',

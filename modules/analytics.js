@@ -123,6 +123,27 @@ function isValidProvider(provider) {
  * @param {string} customDomain - Optional custom domain for self-hosted or custom endpoints
  * @returns {string} HTML snippet to inject into <head>
  */
+// Conservative charsets for provider IDs and beacon hosts.
+//
+// Every provider template below interpolates these values into an HTML
+// attribute or an inline JavaScript string, so a quote, angle bracket,
+// backtick or semicolon in either one escapes its context and injects script
+// into every exported page. They are rejected outright rather than escaped:
+// no real provider ID or beacon URL contains those characters, and silently
+// rewriting a site ID would break tracking in a way that is hard to notice.
+const SAFE_SITE_ID = /^[A-Za-z0-9._~:/%=+-]+$/;
+const SAFE_BEACON_URL = /^https?:\/\/[A-Za-z0-9._~:/%=+&?#@!*(),;-]+$/;
+
+function assertSafeValue(label, value, pattern) {
+  if (typeof value !== 'string' || !pattern.test(value)) {
+    throw new Error(
+      'Invalid ' + label + ' for an injected analytics snippet (contains characters that ' +
+      'can break out of an HTML attribute or script string).'
+    );
+  }
+  return value;
+}
+
 function injectAnalyticsScript(provider, siteId, customDomain) {
   if (!isValidProvider(provider)) {
     throw new Error(`Unknown analytics provider: "${provider}". Supported: ${getSupportedProviders().join(', ')}`);
@@ -130,6 +151,12 @@ function injectAnalyticsScript(provider, siteId, customDomain) {
 
   if (!siteId || typeof siteId !== 'string') {
     throw new Error('siteId is required and must be a non-empty string');
+  }
+
+  assertSafeValue('siteId', siteId, SAFE_SITE_ID);
+
+  if (customDomain !== undefined && customDomain !== null && customDomain !== '') {
+    assertSafeValue('customDomain', customDomain, SAFE_BEACON_URL);
   }
 
   const config = PROVIDER_CONFIGS[provider];

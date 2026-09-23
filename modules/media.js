@@ -4,13 +4,19 @@
 //
 // optimizeLocalImage(buffer, options)
 //   Takes a raw uploaded image (Uint8Array/Buffer/base64/data URL),
-//   strips container metadata (EXIF, GPS, IPTC, XMP — anything the
-//   container can carry) with a byte-level container walk, produces
-//   a WebP primary + fallback variant across a responsive width
-//   ladder, and returns a self-contained srcset definition.
-//   The metadata guarantee comes from the container walk, not from
-//   a re-encode promise: it applies to PNG too, where browser
-//   canvases have no EXIF to drop.
+//   strips container metadata (EXIF, GPS, IPTC, XMP) with a byte-level
+//   container walk, produces a WebP primary + fallback variant across
+//   a responsive width ladder, and returns a self-contained srcset
+//   definition.
+//   Coverage per container: JPEG (APPn/COM segments), PNG (unsafe
+//   chunks dropped from a safe list), WebP (RIFF EXIF/'XMP ' chunks).
+//   SVG is XML text, so it is script-sanitized instead: <script>,
+//   event handlers, javascript: URLs and <foreignObject>/<iframe>/
+//   <embed>/<object> are stripped and reported. That pass is
+//   regex-based and therefore best-effort — rasterize untrusted SVGs
+//   if you need a guarantee. GIF carries no standard EXIF and is
+//   passed through; a re-encode (when a canvas is available) drops
+//   any remaining container metadata.
 //
 // generateArchetypePattern(patternType, primaryColor, options)
 //   Procedural, self-contained inline SVG backgrounds keyed to
@@ -196,11 +202,78 @@
     return { bytes: concatBytes(parts), removed: removed };
   }
 
+  // WebP is RIFF: 'RIFF' <u32 LE size> 'WEBP', then chunks of
+  // (4-byte id, u32 LE size, payload, pad to even). GPS EXIF and XMP
+  // ride in dedicated EXIF / 'XMP ' chunks, so the metadata promise
+  // holds only if they are walked out — exactly like JPEG's APP1.
+  const DROP_WEBP_CHUNKS = ['EXIF', 'XMP '];
+
+  function stripWebp(u8) {
+    if (u8.length < 16) return { bytes: u8, removed: [] };
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    if (latin(dv, 0, 4) !== 'RIFF' || latin(dv, 8, 4) !== 'WEBP') return { bytes: u8, removed: [] };
+    const parts = [u8.slice(0, 12)];
+    const removed = [];
+    let pos = 12;
+    while (pos + 8 <= u8.length) {
+      const id = latin(dv, pos, 4);
+      const size = dv.getUint32(pos + 4, true);
+      const end = pos + 8 + size + (size % 2);
+      if (end > u8.length) { parts.push(u8.slice(pos)); break; } // corrupt tail — keep verbatim
+      if (DROP_WEBP_CHUNKS.indexOf(id) !== -1) removed.push('WebP:' + id.trim());
+      else parts.push(u8.slice(pos, end));
+      pos = end;
+    }
+    if (!removed.length) return { bytes: u8, removed: [] };
+    const out = concatBytes(parts);
+    const riffSize = out.length - 8; // RIFF size field = file size - 8
+    out[4] = riffSize & 0xff;
+    out[5] = (riffSize >>> 8) & 0xff;
+    out[6] = (riffSize >>> 16) & 0xff;
+    out[7] = (riffSize >>> 24) & 0xff;
+    return { bytes: out, removed: removed };
+  }
+
+  // SVG uploads are executable documents: served from the site origin,
+  // an embedded <script> or on*= handler runs with that origin's
+  // privileges. Strip the canonical vectors and report them.
+  const SVG_PATTERNS = [
+    [/<script[\s\S]*?<\/script\s*>/gi, 'script'],
+    [/<script[^>]*\/>/gi, 'script(self-closed)'],
+    [/<foreignObject[\s\S]*?<\/foreignObject\s*>/gi, 'foreignObject'],
+    [/<iframe[\s\S]*?<\/iframe\s*>/gi, 'iframe'],
+    [/<embed[^>]*>/gi, 'embed'],
+    [/<object[\s\S]*?<\/object\s*>/gi, 'object'],
+    [/\son[a-z]+\s*=\s*"[^"]*"/gi, 'event-handler'],
+    [/\son[a-z]+\s*=\s*'[^']*'/gi, 'event-handler'],
+    [/\son[a-z]+\s*=\s*[^\s>]+/gi, 'event-handler'],
+    [/javascript\s*:/gi, 'javascript-url']
+  ];
+
+  function sanitizeSvg(u8, dv) {
+    const head = latin(dv, 0, Math.min(256, u8.length)).toLowerCase();
+    if (head.indexOf('<svg') === -1 && head.indexOf('<?xml') === -1) return { bytes: u8, removed: [] };
+    let text;
+    try { text = new TextDecoder('utf-8').decode(u8); } catch (e) { return { bytes: u8, removed: [], unsafe: true }; }
+    const removed = [];
+    let out = text;
+    for (let i = 0; i < SVG_PATTERNS.length; i++) {
+      if (SVG_PATTERNS[i][0].test(out)) {
+        out = out.replace(SVG_PATTERNS[i][0], '');
+        removed.push('svg:' + SVG_PATTERNS[i][1]);
+      }
+    }
+    if (!removed.length) return { bytes: u8, removed: [] };
+    return { bytes: new TextEncoder().encode(out), removed: removed };
+  }
+
   function stripContainer(u8) {
     if (isJpeg(u8)) return stripJpeg(u8);
     if (isPng(u8)) return stripPng(u8);
-    // GIF/WebP/SVG carry no EXIF; a browser re-encode handles the rest.
-    return { bytes: u8, removed: [] };
+    const webp = stripWebp(u8);
+    if (webp.removed.length) return webp;
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    return sanitizeSvg(u8, dv);
   }
 
   /* ---------------- browser decode + re-encode ---------------- */
