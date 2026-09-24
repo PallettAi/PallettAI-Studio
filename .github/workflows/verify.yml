@@ -5,15 +5,17 @@ name: Verify
 # shipped in 0.4.14, and was found by a user. This workflow runs the same gate
 # on every push, so a tag cannot be cut against a red build.
 
+# One `on:` block only. A second `push:` key would silently replace the first
+# rather than merging with it, which is how the first version of this file
+# ended up matching no branches at all and failed in 0 seconds.
 on:
   push:
     branches: [main]
+    # A tag is the moment a build becomes public, so the gate runs again at the
+    # exact commit being published rather than trusting an earlier run.
+    tags: ['v*']
   pull_request:
     branches: [main]
-  # A tag is the moment a build becomes public, so the gate runs again at the
-  # exact commit being published rather than trusting an earlier run.
-  push:
-    tags: ['v*']
 
 # Never let two runs write the same cache key, and never let a superseded run
 # cancel the verification of a commit that is still the tip.
