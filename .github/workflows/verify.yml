@@ -60,12 +60,22 @@ jobs:
           echo "Electron binary: $BIN"
 
       # The real-app smoke launches Electron, which needs a display server.
-      # xvfb gives it one. This is the step that distinguishes CI from the
-      # developer's Mac: headless, software-rendered, and nobody watching.
-      - name: Install the virtual display the app smoke needs
+      # This is the step that distinguishes CI from the developer's Mac:
+      # headless, software-rendered, and nobody watching.
+      #
+      # The library list is installed one package at a time because Ubuntu
+      # renames these between releases — libasound2 became libasound2t64 on
+      # 24.04, and a single apt-get line naming the old one fails the whole
+      # step. Each is optional: the smoke reports a real launch error if one
+      # is genuinely required, which is more useful than a package-name
+      # mismatch masquerading as an app fault.
+      - name: Install the virtual display and Electron's shared libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2
+          sudo apt-get install -y xvfb
+          for pkg in libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2 libasound2t64 libxss1 libxtst6; do
+            sudo apt-get install -y "$pkg" || echo "optional: $pkg not available on this image"
+          done
 
       - name: Release gate
         run: xvfb-run --auto-servernum npm run release:check
