@@ -55,16 +55,36 @@ function run() {
     // detects it is being required as a module — which it cannot do from a
     // plain Node process, and attempting it installs Electron's own shims into
     // this process and silently breaks the harness.
-    let electronBin;
+    //
+    // path.txt is written by Electron's postinstall, which npm skips when it
+    // is told not to run scripts. CI environments sometimes set that, and
+    // electron-builder downloads the binary on demand instead. So: try the
+    // documented locations, and if none exists, say precisely what is missing
+    // rather than failing with an opaque ENOENT.
+    const candidates = [];
+    const distDir = path.join(ROOT, 'node_modules', 'electron', 'dist');
     try {
-      const pathTxt = fs.readFileSync(path.join(ROOT, 'node_modules', 'electron', 'path.txt'), 'utf8').trim();
-      electronBin = path.join(ROOT, 'node_modules', 'electron', 'dist', pathTxt);
-    } catch (e) {
-      resolve({ code: null, out: '', timedOut: false, error: 'could not locate the Electron binary: ' + e.message });
-      return;
+      const rel = fs.readFileSync(path.join(ROOT, 'node_modules', 'electron', 'path.txt'), 'utf8').trim();
+      if (rel) candidates.push(path.join(distDir, rel));
+    } catch (e) { /* no path.txt — fall through to the known layouts */ }
+    if (process.platform === 'darwin') {
+      candidates.push(path.join(distDir, 'Electron.app', 'Contents', 'MacOS', 'Electron'));
+    } else if (process.platform === 'win32') {
+      candidates.push(path.join(distDir, 'electron.exe'));
+    } else {
+      candidates.push(path.join(distDir, 'electron'));
     }
-    if (!fs.existsSync(electronBin)) {
-      resolve({ code: null, out: '', timedOut: false, error: 'Electron binary is missing — run npm install' });
+
+    const electronBin = candidates.find((p) => fs.existsSync(p));
+    if (!electronBin) {
+      resolve({
+        code: null,
+        out: '',
+        timedOut: false,
+        error: 'the Electron binary is not installed at any of: ' + candidates.join(', ')
+          + '\n     Electron downloads its binary in a postinstall script. If npm was'
+          + ' told to skip scripts, run: node node_modules/electron/install.js'
+      });
       return;
     }
 

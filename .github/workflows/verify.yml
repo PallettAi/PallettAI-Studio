@@ -42,13 +42,30 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Electron downloads its binary in a postinstall script. npm skips that
+      # whenever it is told not to run scripts — and CI images sometimes set
+      # that — so the smoke would find no binary and fail for a reason that has
+      # nothing to do with the app. Make the binary explicit and verifiable.
+      - name: Ensure the Electron binary is present
+        run: |
+          if [ ! -f node_modules/electron/path.txt ]; then
+            echo "Electron's postinstall did not run; installing its binary now."
+            node node_modules/electron/install.js
+          fi
+          BIN="node_modules/electron/dist/$(cat node_modules/electron/path.txt)"
+          if [ ! -x "$BIN" ]; then
+            echo "::error::Electron binary is still missing at $BIN"
+            exit 1
+          fi
+          echo "Electron binary: $BIN"
+
       # The real-app smoke launches Electron, which needs a display server.
       # xvfb gives it one. This is the step that distinguishes CI from the
       # developer's Mac: headless, software-rendered, and nobody watching.
       - name: Install the virtual display the app smoke needs
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb
+          sudo apt-get install -y xvfb libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2
 
       - name: Release gate
         run: xvfb-run --auto-servernum npm run release:check
