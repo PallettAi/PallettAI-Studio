@@ -265,7 +265,12 @@ const SMOKES = [
   // Two claims made to a visitor, so the suite is mostly negative: a consent
   // gate that is not really a gate, and a policy that names a service the site
   // does not use, both look correct in a browser and are false in writing.
-  ['scripts/legal-pages-smoke.js', 'Legal pages & consent smoke (accurate policy, real cookie gate)']
+  ['scripts/legal-pages-smoke.js', 'Legal pages & consent smoke (accurate policy, real cookie gate)'],
+  // Every other suite runs in Node, where `process`, `require` and `Buffer` all
+  // exist. The renderer has none of them, so a single unguarded read is invisible
+  // to the whole suite and fatal in the app — which is how one debug line made
+  // the generator throw on every run and refund the user's credit.
+  ['scripts/renderer-globals-smoke.js', 'Renderer-global safety (no Node-only globals in renderer scripts)']
 ];
 
 function runScript(args, label) {
@@ -511,6 +516,9 @@ function checkBuilder() {
   // the contrast badge is measured, because both failures look identical to a
   // working panel until someone presses something.
   runScript(['scripts/ui-dom-smoke.js'], 'UI behaviour smoke (toolbar clicks, contrast badge)');
+  // Runs before the AI suites deliberately: this is the check that can see a
+  // fault the AI suites are structurally unable to.
+  runScript(['scripts/renderer-globals-smoke.js'], 'Renderer-global safety');
   runScript(['scripts/release-guard-smoke.js'], 'Release guard smoke');
   runScript(['scripts/review-reward-smoke.js'], 'Review reward smoke');
   runScript(['scripts/ai-studio-upgrade-smoke.js'], 'AI Studio upgrade smoke');

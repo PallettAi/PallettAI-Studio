@@ -2692,7 +2692,22 @@ const AI = (() => {
         cap: opts.tier === 'free' ? 6 : 0
       })
       : null;
-    if (process.env.PAI_RHYTHM_DEBUG) console.error('[rhythm]', !!Rhythm, rhythmPlan && rhythmPlan.id, rhythmPlan && rhythmPlan.order.join('>'), '| before:', sections.map((x) => x.type).join('>'));
+    /*
+      Debug trace for the rhythm pass, read from the query string.
+
+      This used to read `process.env.PAI_RHYTHM_DEBUG`. modules/ai.js is a
+      plain <script> in a renderer with contextIsolation on and Node integration
+      off, so `process` does not exist there — the read threw a ReferenceError on
+      every single generation, before any site was built, and the failure path
+      refunded the credit the user had just spent. It worked in Node (the smoke
+      suite has `process`) and in the browser it never worked at all.
+
+      The guard is the lesson: a debug flag must be read defensively, because
+      the file it lives in is loaded in two very different runtimes.
+    */
+    if (typeof process !== 'undefined' && process.env && process.env.PAI_RHYTHM_DEBUG) {
+      console.error('[rhythm]', !!Rhythm, rhythmPlan && rhythmPlan.id, rhythmPlan && rhythmPlan.order.join('>'), '| before:', sections.map((x) => x.type).join('>'));
+    }
     if (rhythmPlan && rhythmPlan.order.length >= 4) {
       const byType = {};
       sections.forEach((row) => { if (row && !byType[row.type]) byType[row.type] = row; });
