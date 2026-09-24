@@ -115,7 +115,23 @@ function run() {
       ''
     ].join('\n'));
 
-    const child = spawn(electronBin, [ENTRY, '--user-data-dir=' + profile], {
+    /*
+      --no-sandbox, for the TEST PROCESS ONLY.
+
+      Chromium's Linux SUID sandbox helper must be root-owned with mode 4755.
+      A CI checkout cannot arrange that, and without either it or this flag
+      Electron aborts before a window exists. The flag is added here, in the
+      smoke's own spawn, and is never added to the app — a shipped build keeps
+      the sandbox, which is a security boundary and not something to switch
+      off for convenience.
+
+      The alternative, chowning chrome-sandbox, needs sudo in the workflow and
+      leaves a setuid binary in a checkout; this is the smaller hammer.
+    */
+    const launchArgs = [ENTRY, '--user-data-dir=' + profile];
+    if (process.platform === 'linux') launchArgs.push('--no-sandbox', '--disable-dev-shm-usage');
+
+    const child = spawn(electronBin, launchArgs, {
       cwd: ROOT,
       env: env,
       stdio: ['ignore', 'pipe', 'pipe']
@@ -126,7 +142,12 @@ function run() {
       const text = String(buf);
       out += text;
       text.split('\n').forEach((line) => {
-        if (line.trim() && !NOISE.test(line)) process.stdout.write('    ' + line + '\n');
+        // A Chromium FATAL aborts the process before any window exists. Keep
+        // it: it is the single most useful line when the smoke fails on a
+        // machine that differs from the developer's.
+        if (line.trim() && (!NOISE.test(line) || /FATAL/.test(line))) {
+          process.stdout.write('    ' + line + '\n');
+        }
       });
     };
     child.stdout.on('data', collect);
