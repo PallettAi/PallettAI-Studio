@@ -81,7 +81,12 @@
 */
 
 let nodeCrypto = null;
-try { nodeCrypto = require('crypto'); } catch (e) { nodeCrypto = null; }
+// Guarded rather than try/catch on purpose: this file also loads as a plain
+// renderer <script>, where `require` does not exist at all, and a bare call
+// would throw a ReferenceError before the catch could ever run.
+if (typeof require === 'function') {
+  try { nodeCrypto = require('crypto'); } catch (e) { nodeCrypto = null; }
+}
 
 const SecuritySRI = (() => {
 
@@ -113,26 +118,152 @@ const SecuritySRI = (() => {
     UTF-8 gives a different answer for any file with a multi-byte
     character.
   */
+  /*
+    Portable SHA-256, for the renderer.
+
+    The export pass runs in the page, where Node's crypto does not exist and
+    crypto.subtle is asynchronous while every caller here is synchronous — so
+    sha256 is implemented directly. That is the algorithm the product needs
+    there: it is what a CSP script-src hash is, and the strict export pass asks
+    for exactly that.
+
+    sha384 and sha512 are NOT implemented here, on purpose. They are the
+    64-bit SHA-2 family with a different state, different block size and
+    different constants, and a 32-bit imitation of them produces a digest that
+    looks right and is wrong — which for an integrity attribute is worse than no
+    attribute at all. Those two are used for SRI on EXTERNAL subresources, which
+    a self-contained export does not have and the Node CLI build already hashes
+    with the real thing. A caller that asks for one of them without Node crypto
+    is told so, rather than handed a plausible lie.
+
+    The round constants are derived from the primes rather than pasted as hex
+    literals: they are the fractional parts of the cube roots (K) and the square
+    roots (the initial hash) scaled by 2^32, which is exact in a double at this
+    magnitude. scripts/strict-export-smoke.js pins the table against Node crypto
+    across lengths and scripts, so a drift here fails the gate.
+  */
+  const PORTABLE_ALGOS = { sha256: { outBytes: 32, k: 64, rotr: [2, 13, 22], s1: [6, 11, 25] } };
+
+  function firstPrimes(count) {
+    const out = [];
+    for (let n = 2; out.length < count; n++) {
+      let prime = true;
+      for (let i = 0; i < out.length && out[i] * out[i] <= n; i++) if (n % out[i] === 0) { prime = false; break; }
+      if (prime) out.push(n);
+    }
+    return out;
+  }
+
+  const SHA_PRIMES = firstPrimes(64);
+  const SHA_TABLES = {};
+  Object.keys(PORTABLE_ALGOS).forEach((name) => {
+    const spec = PORTABLE_ALGOS[name];
+    const k = new Uint32Array(spec.k);
+    for (let i = 0; i < spec.k; i++) k[i] = Math.floor(Math.cbrt(SHA_PRIMES[i]) * 4294967296) >>> 0;
+    const h = new Uint32Array(8);
+    for (let i = 0; i < 8; i++) h[i] = Math.floor(Math.sqrt(SHA_PRIMES[i]) * 4294967296) >>> 0;
+    SHA_TABLES[name] = { k, h, spec };
+  });
+
+  const rotr32 = (x, n) => ((x >>> n) | (x << (32 - n))) >>> 0;
+
+  function sha2(bytes, algo) {
+    const table = SHA_TABLES[algo];
+    if (!table) return null;
+    const k = table.k;
+    const spec = table.spec;
+    // A COPY of the initial hash: the round adds into this array, so sharing the
+    // table's own array would carry the previous message's state into this one.
+    const h = Uint32Array.from(table.h);
+    const block = 64;
+    const padded = new Uint8Array((((bytes.length + 9 + block - 1) / block) | 0) * block);
+    padded.set(bytes);
+    padded[bytes.length] = 0x80;
+    const view = new DataView(padded.buffer);
+    const hi = Math.floor(bytes.length / 536870912); // high word of the bit length
+    const lo = (bytes.length << 3) >>> 0;
+    view.setUint32(padded.length - 8, hi, false);
+    view.setUint32(padded.length - 4, lo, false);
+    const w = new Uint32Array(64);
+    for (let off = 0; off < padded.length; off += block) {
+      for (let i = 0; i < 16; i++) w[i] = view.getUint32(off + i * 4, false);
+      for (let i = 16; i < 64; i++) {
+        const s0 = (rotr32(w[i - 15], 7) ^ rotr32(w[i - 15], 18) ^ (w[i - 15] >>> 3)) >>> 0;
+        const s1 = (rotr32(w[i - 2], 17) ^ rotr32(w[i - 2], 19) ^ (w[i - 2] >>> 10)) >>> 0;
+        w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+      }
+      let a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+      for (let i = 0; i < spec.k; i++) {
+        const S1 = (rotr32(e, spec.s1[0]) ^ rotr32(e, spec.s1[1]) ^ rotr32(e, spec.s1[2])) >>> 0;
+        const ch = ((e & f) ^ (~e & g)) >>> 0;
+        const t1 = (hh + S1 + ch + k[i] + w[i]) >>> 0;
+        const S0 = (rotr32(a, spec.rotr[0]) ^ rotr32(a, spec.rotr[1]) ^ rotr32(a, spec.rotr[2])) >>> 0;
+        const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0;
+        const t2 = (S0 + maj) >>> 0;
+        hh = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+      }
+      h[0] = (h[0] + a) >>> 0; h[1] = (h[1] + b) >>> 0; h[2] = (h[2] + c) >>> 0; h[3] = (h[3] + d) >>> 0;
+      h[4] = (h[4] + e) >>> 0; h[5] = (h[5] + f) >>> 0; h[6] = (h[6] + g) >>> 0; h[7] = (h[7] + hh) >>> 0;
+    }
+    const out = new Uint8Array(spec.outBytes);
+    const outView = new DataView(out.buffer);
+    for (let i = 0; i < spec.outBytes / 4; i++) outView.setUint32(i * 4, h[i], false);
+    return out;
+  }
+
+  // One byte view for both worlds: Node's createHash accepts a typed array, so
+  // the portable path and the Node path hash exactly the same bytes.
+  function toBytes(input) {
+    if (input == null) return new Uint8Array(0);
+    if (typeof Uint8Array !== 'undefined' && input instanceof Uint8Array) return input;
+    if (typeof ArrayBuffer !== 'undefined' && input instanceof ArrayBuffer) return new Uint8Array(input);
+    if (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView && ArrayBuffer.isView(input)) {
+      return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+    }
+    if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(String(input));
+    const str = String(input);
+    const bytes = new Uint8Array(str.length);
+    for (let i = 0; i < str.length; i++) bytes[i] = str.charCodeAt(i) & 0xff;
+    return bytes;
+  }
+
+  const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  function bytesToBase64(bytes) {
+    if (typeof btoa === 'function') {
+      let bin = '';
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      return btoa(bin);
+    }
+    // No btoa and no Node: encode it here rather than return a wrong digest.
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 3) {
+      const b0 = bytes[i];
+      const b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+      const b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+      out += B64[b0 >> 2];
+      out += B64[((b0 & 3) << 4) | (b1 >> 4)];
+      out += i + 1 < bytes.length ? B64[((b1 & 15) << 2) | (b2 >> 6)] : '=';
+      out += i + 2 < bytes.length ? B64[b2 & 63] : '=';
+    }
+    return out;
+  }
+
   function generateSRIHash(fileBufferOrString, algorithm) {
     const algo = ALGORITHMS[String(algorithm || 'sha384').toLowerCase()];
     if (!algo) {
       return { ok: false, algorithm: String(algorithm), error: 'unsupported algorithm (use sha256, sha384 or sha512)' };
     }
-    if (!nodeCrypto) {
-      return { ok: false, algorithm: algo, error: 'no Node crypto available to hash with' };
+    const bytes = toBytes(fileBufferOrString);
+    if (nodeCrypto) {
+      const base64 = nodeCrypto.createHash(algo).update(bytes).digest('base64');
+      return { ok: true, algorithm: algo, base64, digest: algo + '-' + base64, bytes: bytes.length, hasher: 'node' };
     }
-    const input = fileBufferOrString == null ? '' : fileBufferOrString;
-    const buffer = Buffer.isBuffer(input)
-      ? input
-      : (input instanceof Uint8Array ? Buffer.from(input) : Buffer.from(String(input), 'utf8'));
-    const base64 = nodeCrypto.createHash(algo).update(buffer).digest('base64');
-    return {
-      ok: true,
-      algorithm: algo,
-      base64,
-      digest: algo + '-' + base64,
-      bytes: buffer.length
-    };
+    const digest = sha2(bytes, algo);
+    if (!digest) {
+      return { ok: false, algorithm: algo, error: algo + ' needs Node crypto; the page-side hasher covers sha256' };
+    }
+    const base64 = bytesToBase64(digest);
+    return { ok: true, algorithm: algo, base64, digest: algo + '-' + base64, bytes: bytes.length, hasher: 'portable' };
   }
 
   /*
@@ -311,7 +442,11 @@ const SecuritySRI = (() => {
       'frame-src ' + [].concat(asList(src.frame), ["'self'"]).join(' '),
       "object-src 'none'",
       "base-uri 'self'",
-      "form-action 'self'",
+      // A static export usually posts its form to a third-party endpoint
+      // (FormSubmit, Web3Forms, a client's own handler). Left at 'self' that
+      // policy breaks the contact form on the site it was meant to protect, so
+      // the endpoint's own origin has to be nameable.
+      'form-action ' + (asList(src.formAction).length ? asList(src.formAction).concat(["'self'"]).join(' ') : "'self'"),
       'frame-ancestors ' + (o.frameAncestors ? asList(o.frameAncestors).join(' ') : "'none'")
     ];
 

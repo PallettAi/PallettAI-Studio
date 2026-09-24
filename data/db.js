@@ -132,7 +132,8 @@ const DB = {
     github:       { name: 'GitHub Stats', icon: '🐙', desc: 'Live profile + repos for a GitHub username (“extra”) — Pro', defaultItems: 0 },
     fx:           { name: 'FX Rates',     icon: '💱', desc: 'Live exchange rates (base currency in “extra”, e.g. GBP) — Pro', defaultItems: 0 },
     table:        { name: 'Table',       icon: '📋', desc: 'Clean data tables — comparisons, menus, schedules, specs. Headings in “cols”, one row per line', defaultItems: 0 },
-    collection:   { name: 'Collection',  icon: '🗂️', desc: 'Your own dynamic card gallery — category chips, live search & sort. Works on any static host, no server', defaultItems: 6 }
+    collection:   { name: 'Collection',  icon: '🗂️', desc: 'Your own dynamic card gallery — category chips, live search & sort. Works on any static host, no server', defaultItems: 6 },
+    widget:       { name: 'Interactive widget', icon: '🧮', desc: 'A generated lead-generation tool — quote estimator, calculator, booking step. Build it in the Widget Studio; the widget id lives in “extra”', defaultItems: 0 }
   },
 
   // ---------- Integrations (free & keyless-first) ----------
@@ -807,6 +808,25 @@ const DB = {
 // ---------- Helpers ----------
 DB.getPalette = (id) => DB.palettes.find((p) => p.id === id) || DB.palettes[0];
 DB.getFont = (id) => DB.fonts.find((f) => f.id === id) || DB.fonts[0];
+
+// ---------- one-click design rotation (designer toggles) ----------
+// Cycle to the next entry, wrapping around. Deterministic on purpose:
+// pressing Rotate n times from a known id always lands on the same
+// result, so undo/redo and saved projects stay meaningful. An unknown
+// or empty id (a custom font, a deleted entry) starts at the first
+// entry, so the button always does something visible.
+DB.nextFont = (id) => {
+  const list = DB.fonts;
+  if (!list.length) return id;
+  const i = list.findIndex((f) => f.id === id);
+  return list[(i + 1 + list.length) % list.length].id;
+};
+DB.nextPalette = (id) => {
+  const list = DB.palettes;
+  if (!list.length) return id;
+  const i = list.findIndex((p) => p.id === id);
+  return list[(i + 1 + list.length) % list.length].id;
+};
 DB.getTemplate = (id) => DB.templates.find((t) => t.id === id) || DB.templates[0];
 DB.getSuite = (id) => DB.suites.find((s) => s.id === id) || null;
 DB.getAnimation = (id) => DB.animations.find((a) => a.id === id) || DB.animations[0];

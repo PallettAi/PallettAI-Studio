@@ -30,7 +30,7 @@ console.log('\n== Brief + translate controls ==');
 assert(/aiName/.test(app) && /aiArea/.test(app) && /aiPrompt/.test(app), 'existing name/area/prompt stay');
 assert(/Regenerate this section/.test(app), 'section editor can regenerate one section');
 assert(/Studied/.test(app), 'result card can say Studied N sites');
-assert(/Translations powered by/.test(app), 'translate control shows powered-by');
+assert(/poweredByLabel\(/.test(app) && /Translation included in your plan/.test(app), 'translate control names the real provider, and says translation is included by default');
 assert(/chatLastEdit|rememberEdit/.test(app), 'Copilot remembers the last edit');
 assert(/Fix the weak CTA/.test(app), 'quality-gate chip for a weak CTA');
 assert(/Add a map for/.test(app), 'quality-gate chip to add a map');
@@ -42,18 +42,20 @@ assert(!/openPicker:\s*photoMode === 'real'/.test(app), 'generate does not auto-
 assert(/includedInGenerate/.test(app), 'generate bundles the photo pass');
 assert(/photo-drop-overlay/.test(css), 'photo drop overlay styles exist');
 
-console.log('\n== Keys & services copy (no secrets in the client) ==');
-assert(/Once a DeepL API key is set on the registry/.test(app), 'translate copy says DeepL starts after the registry key is set');
-assert(/Until then, MyMemory runs with no key/.test(app), 'translate copy names MyMemory as the no-key fallback');
-assert(/href="https:\/\/www\.deepl\.com\/pro-api"/.test(app), 'DeepL get-a-key link is present');
+console.log('\n== Keys & services copy (included, and no secrets in the client) ==');
+assert(/Translation is included/.test(app), 'translate copy says translation is included in the plan');
+assert(/MyMemory, which is free and keyless/.test(app), 'translate copy names the keyless fallback');
+assert(!/deepl\.com\/pro-api/.test(app), 'the DeepL get-a-key link is gone — that key is ours to hold');
 assert(!/id="(aiDeepl|setDeepl|deeplKey|DEEPL_API_KEY)"/.test(app), 'no DeepL key paste field in the client');
-assert(/Keys &amp; services|Keys & services/.test(app), 'Settings has a Keys & services card');
-assert(/Get a DeepL API key/.test(app) && /Get a Netlify token/.test(app) && /Create a Neocities site/.test(app) && /Get a Pixabay API key/.test(app), 'Settings lists get-key links for DeepL, Netlify, Neocities and Pixabay');
-assert(/href="https:\/\/app\.netlify\.com\/user\/applications#personal-access-tokens"/.test(app), 'Netlify token link is a real URL');
-assert(/Once that token is entered/.test(app), 'Netlify copy says publish works once the token is entered');
+assert(/What(?:'|&#39;)s included/.test(app), 'Settings has a What’s included card');
+assert(/There is nothing to sign up for and no AI key to enter/.test(app), 'Settings states no AI key is needed');
+assert(/AI generation, copy, photos, alt text, logos, vision QA/.test(app), 'Settings names the AI features that are included');
+assert(/Netlify tokens/.test(app) && /href="https:\/\/app\.netlify\.com\/user\/applications#personal-access-tokens"/.test(app), 'Netlify link is a real URL, framed as optional');
 assert(/href="https:\/\/neocities\.org"/.test(app), 'Neocities signup is a real URL');
-assert(/Once you sign in from Publish/.test(app) || /Once signed in/.test(app), 'Neocities copy says publish works once signed in');
-assert(/Once your free API key is entered/.test(app) && /href="https:\/\/pixabay\.com\/api\/docs\/"/.test(app), 'Pixabay copy says search works once the key is entered');
+assert(/Netlify publish <span class="muted">\(optional\)<\/span>/.test(app) && /Neocities publish <span class="muted">\(optional\)<\/span>/.test(app), 'publish destinations are marked optional');
+assert(/Pixabay API key <span class="muted">\(optional\)<\/span>/.test(app) && /href="https:\/\/pixabay\.com\/api\/docs\/"/.test(app), 'Pixabay key is optional and the link is real');
+assert(/Companies House API key <span class="muted">\(optional\)<\/span>/.test(app), 'Companies House key is optional');
+assert(/keyless|without a key/i.test(app), 'the UI still names a keyless path for users without any keys');
 assert(!/DEEPL_API_KEY/.test(app), 'app.js never names the DeepL secret');
 
 if (failed) {

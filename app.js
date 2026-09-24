@@ -3129,7 +3129,7 @@ const App = (() => {
     $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
     $$('.view').forEach((v) => v.classList.remove('active'));
     $('#view-' + name).classList.add('active');
-    const titles = { dashboard: 'Dashboard', templates: 'Templates', designer: 'Designer', ai: 'AI Studio', suites: 'Upgrade Suites', database: 'Database', settings: 'Settings', qr: 'QR Codes', tools: 'Toolkit', care: 'Site Care', tokens: 'Design Tokens', guides: 'Studio Guides' };
+    const titles = { dashboard: 'Dashboard', templates: 'Templates', designer: 'Designer', widgets: 'Widget Studio', ai: 'AI Studio', suites: 'Upgrade Suites', database: 'Database', settings: 'Settings', qr: 'QR Codes', tools: 'Toolkit', care: 'Site Care', tokens: 'Design Tokens', guides: 'Studio Guides' };
     $('#viewTitle').textContent = chromeTitle(name) || titles[name] || name;
     if (name === 'dashboard') renderDashboard();
     if (name === 'templates') renderTemplates();
@@ -3142,6 +3142,7 @@ const App = (() => {
     if (name === 'tools' && window.PallettAITools) window.PallettAITools.init();
     if (name === 'tokens' && window.PallettAITokens) { window.PallettAITokens.sync(tokenSnapshot()); window.PallettAITokens.open(); }
     if (name === 'guides' && window.PallettAIGuides) window.PallettAIGuides.open();
+    if (name === 'widgets' && window.PallettAIWidgetStudio) window.PallettAIWidgetStudio.open();
     if (name === 'care') renderCare();
     $('#projectChip').hidden = !(name === 'designer' || name === 'suites' || name === 'database') || !current();
     if (current() && ['designer', 'suites', 'database'].includes(name)) {
@@ -4283,14 +4284,33 @@ const App = (() => {
           ${DB.palettes.map((p) => `<span title="${esc(p.name)}" style="width:22px;height:22px;border-radius:7px;background:${p.primary};cursor:pointer;border:2px solid ${p.id === c.site.palette ? 'var(--accent)' : 'transparent'}" data-pal="${p.id}"></span>`).join('')}
         </div>
         <div class="set-desc" id="palA11y" style="margin-top:2px"></div>
+        <div style="margin-top:6px"><button class="btn ghost small" id="btnRotatePalette">${uiIcon('history')} Rotate palette</button></div>
         <div class="field"><label>Font ${customF.length ? `· <span style="color:var(--accent)">${customF.length} custom</span>` : ''}</label>
           <select id="siteFont">${customF.map((f) => `<option value="${esc(f.name)}" ${f.name === c.site.font ? 'selected' : ''}>${esc(f.name)} · custom</option>`).join('')}${DB.fonts.map((f) => `<option value="${f.id}" ${f.id === c.site.font ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</select>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <input type="file" id="fontFile" accept=".woff2,.woff,.ttf,application/font-woff2,application/font-woff,font/ttf" hidden>
+          <button class="btn ghost small" id="btnRotateFont">${uiIcon('history')} Rotate font</button>
           <button class="btn ghost small" id="btnUploadFont">${uiIcon('upload')} Upload font</button>
           ${customF.map((f) => `<span class="chip">${esc(f.name)} <b data-rmfont="${esc(f.name)}" style="cursor:pointer;color:var(--danger)">✕</b></span>`).join('')}
         </div>
+      </div>
+
+      <div class="panel">
+        <h3>Client experience</h3>
+        <p class="set-desc" style="margin:0 0 8px">Offline extras the exported site carries on its own — no services, no accounts, no tracking.</p>
+        <div class="set-row" style="padding:8px 0"><div>
+          <label><input type="checkbox" id="siteDarkMode" ${s.darkMode ? 'checked' : ''}> Visitor theme toggle (light &amp; dark)</label>
+          <div class="set-desc">A floating switch that follows each visitor's system preference and remembers their choice.</div>
+        </div></div>
+        <div class="set-row" style="padding:8px 0"><div>
+          <label><input type="checkbox" id="sitePrintStyles" ${s.printStyles ? 'checked' : ''}> Print-friendly pages</label>
+          <div class="set-desc">Clean printing: chrome and buttons drop away, link addresses print after the text.</div>
+        </div></div>
+        <div class="set-row" style="padding:8px 0"><div>
+          <label><input type="checkbox" id="siteLaunchKit" ${s.launchKit ? 'checked' : ''}> Launch kit</label>
+          <div class="set-desc">Branded 404 page, installable web manifest and theme colour — understood by every static host.</div>
+        </div></div>
       </div>
 
       <div class="panel">
@@ -4645,6 +4665,37 @@ const App = (() => {
     $('#siteFont').onchange = (e) => { c.site.font = e.target.value; touch(c); };
     $$('[data-pal]').forEach((sw) => sw.onclick = () => { c.site.palette = sw.dataset.pal; touch(c); paintSwatches(c.site.palette); });
     paintSwatches(c.site.palette);
+    // One-click design rotation: deterministic wrap-around through the
+    // built-in lists (DB.nextFont / DB.nextPalette), undoable like every
+    // other designer change, with the new name toasted so the creator
+    // sees what they landed on. Every binding is guarded — the panel is
+    // markup the editor renders, and a missing button must never break
+    // the designer.
+    const rotPal = $('#btnRotatePalette');
+    if (rotPal) rotPal.onclick = () => {
+      histCapture();
+      c.site.palette = DB.nextPalette(c.site.palette);
+      const sel = $('#sitePalette'); if (sel) sel.value = c.site.palette;
+      touch(c); paintSwatches(c.site.palette);
+      try { toast('Palette \u2192 ' + DB.getPalette(c.site.palette).name, true); } catch (e) {}
+    };
+    const rotFont = $('#btnRotateFont');
+    if (rotFont) rotFont.onclick = () => {
+      histCapture();
+      c.site.font = DB.nextFont(c.site.font);
+      if (c.site.fontBody) c.site.fontBody = DB.nextFont(c.site.fontBody);
+      const sel = $('#siteFont'); if (sel) sel.value = c.site.font;
+      touch(c);
+      try { toast('Font \u2192 ' + DB.getFont(c.site.font).name, true); } catch (e) {}
+    };
+    // Client experience toggles — saved with the project, read by the
+    // builder at export time.
+    const dmT = $('#siteDarkMode');
+    if (dmT) dmT.onchange = (e) => { c.site.darkMode = e.target.checked === true; touch(c); };
+    const psT = $('#sitePrintStyles');
+    if (psT) psT.onchange = (e) => { c.site.printStyles = e.target.checked === true; touch(c); };
+    const lkT = $('#siteLaunchKit');
+    if (lkT) lkT.onchange = (e) => { c.site.launchKit = e.target.checked === true; touch(c); };
     $('#addSecBtn').onclick = () => {
       if (!canAddSection()) return;
       histCapture();
@@ -5432,6 +5483,68 @@ const App = (() => {
     });
   }
 
+  // ---------------- generated widgets (Widget Studio) ----------------
+  // A widget is stored ONCE on the project and placed as a `widget` section
+  // whose "extra" field holds the widget id. The definition is injected at
+  // render time by the builder, so storing it here is the whole of "making it
+  // ship" — the export, the preview, publish and the handoff ZIP all go
+  // through that one render path.
+  function addWidgetToProject(widget) {
+    const c = current();
+    if (!c) return { ok: false, error: 'Open a project first.' };
+    if (!widget || !widget.id) return { ok: false, error: 'That widget has no id.' };
+    if (typeof widget.definition !== 'string' || !widget.definition) return { ok: false, error: 'That widget has nothing to ship.' };
+    if (!Array.isArray(c.widgets)) c.widgets = [];
+    const existing = c.widgets.find((w) => w && w.id === widget.id);
+    const record = {
+      id: String(widget.id),
+      title: String(widget.title || widget.id).slice(0, 120),
+      prompt: String(widget.prompt || '').slice(0, 400),
+      definition: widget.definition,
+      addedAt: Date.now()
+    };
+    if (existing) Object.assign(existing, record);
+    else c.widgets.push(record);
+    const placed = placeWidgetOnPage(widget.id, { silent: true });
+    touch(c);
+    return { ok: true, placed: !!(placed && placed.ok), replaced: !!existing };
+  }
+
+  function placeWidgetOnPage(id, options) {
+    const c = current();
+    if (!c) return { ok: false, error: 'Open a project first.' };
+    const widget = (Array.isArray(c.widgets) ? c.widgets : []).find((w) => w && w.id === id);
+    if (!widget) return { ok: false, error: 'Add the widget to the project first.' };
+    const pages = (typeof Builder !== 'undefined' && Builder.pages) ? Builder.pages(c) : [];
+    const page = pages.find((pg) => pg.id === c.site.activePageId) || pages[0] || null;
+    const sections = page ? page.sections : c.site.sections;
+    if (!Array.isArray(sections)) return { ok: false, error: 'This project has no page to place the widget on.' };
+    // One placeholder per widget per page. A second would render the same tool
+    // twice, which reads as a bug rather than a feature.
+    if (sections.some((s) => s && s.type === 'widget' && String(s.extra || '') === id)) {
+      if (!(options && options.silent)) toast('That widget is already on this page.', false);
+      return { ok: false, error: 'That widget is already on this page.' };
+    }
+    const ns = DB.newSection('widget', { extra: id, title: String(widget.title || 'Interactive tool').slice(0, 80) });
+    // Placed above a trailing contact/footer when there is one, like every
+    // other added section — a lead-generation tool wants to sit before the
+    // closing call to action, not after it.
+    const tail = sections.findIndex((s) => s && (s.type === 'contact' || s.type === 'footer'));
+    sections.splice(tail === -1 ? sections.length : tail, 0, ns);
+    selectedSec = sections.indexOf(ns);
+    touch(c);
+    if (!(options && options.silent)) toast('Widget section added — find it in the Designer 🧮', true);
+    return { ok: true };
+  }
+
+  function removeWidgetFromProject(id) {
+    const c = current();
+    if (!c) return { ok: false, error: 'Open a project first.' };
+    c.widgets = (Array.isArray(c.widgets) ? c.widgets : []).filter((w) => !(w && w.id === id));
+    touch(c);
+    return { ok: true };
+  }
+
   // ---------------- export / handoff / publish ----------------
   function siteSlug(c) {
     return (c.site.name || 'site').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'site';
@@ -5508,6 +5621,47 @@ const App = (() => {
     toast(`Site exported — ${pages.length} page${pages.length === 1 ? '' : 's'} + ${extras} supporting file${extras === 1 ? '' : 's'} in ${name} ⬇`, true);
     showExportReport(c, files, name);
   }
+  // ---------------- desktop folder export ----------------
+  // The same delivery files, written straight into a folder the user
+  // picks instead of downloaded as a ZIP — with a sha256 manifest.json
+  // for integrity validation. The write happens in the main process
+  // (main/index.js) on async fs.promises, so neither the renderer thread
+  // nor the window blocks on it. Desktop only: the web build has no main
+  // process to write files, and the button is not offered there.
+  async function exportSiteToFolder(options) {
+    const c = current();
+    if (!c) return toast('Open a project first');
+    const bridge = (typeof window !== 'undefined' && window.pallettai
+      && typeof window.pallettai.compileStatic === 'function') ? window.pallettai : null;
+    if (!bridge) return toast('Folder export is available in the desktop app', false);
+    const skipQuality = !!(options && options.skipQuality);
+    const go = async () => {
+      let files;
+      try { files = await deliveryFiles(c); }
+      catch (e) { files = exportFileList(c); }
+      let res = null;
+      try {
+        res = await bridge.compileStatic({
+          files: files.map((f) => ({ path: f.name, data: f.content })),
+          pickDirectory: true,
+          verify: true
+        });
+      } catch (e) { res = null; }
+      if (res && res.ok) {
+        toast(`Site exported to ${res.value.outDir} — ${res.value.files} files \ud83d\udcc1`, true);
+        showExportReport(c, files, res.value.outDir);
+      } else if (res && res.code === 'cancelled') {
+        toast('Folder export cancelled.', false);
+      } else {
+        toast('The folder could not be exported — ' + ((res && res.error) || 'unknown error'), false);
+      }
+    };
+    const audit = qualityReport(c);
+    const deliver = () => whiteLabelGate(c, go, audit);
+    if (!skipQuality && audit && audit.issues && audit.issues.some((issue) => issue.level !== 'info')) return openQualityGate(deliver, c);
+    deliver();
+  }
+
   function copyHtml() {
     const c = current();
     if (!c) return toast('Open a project first');
@@ -5520,8 +5674,131 @@ const App = (() => {
   // Page file list including robots.txt / sitemap.xml (the latter needs a live URL)
   // and llms.txt — the AI-answer summary, which ships unconditionally because
   // answer engines read the site root first and the file is a few KB at most.
+  // The exported page is the only code we hand to a third party's server, and
+  // until the strict-security pass existed it carried no Content-Security-Policy
+  // at all — the builder only emitted a commented template for a host to copy.
+  // With the setting on, every page goes through modules/security-sri.js: a hash
+  // for each inline script, integrity attributes on the external assets it can
+  // hash, and a meta-carried policy.
+  //
+  // It runs at export time, AFTER minification inside the builder, because a
+  // policy computed from pre-minify bytes describes code that no longer exists
+  // and blocks the site it was meant to protect.
+  //
+  // Off by default, deliberately: a policy is only as good as its allowlist. The
+  // origins are discovered from the finished page and the fixed list covers the
+  // services the builder itself injects, so a site nobody has configured for a
+  // strict policy keeps exporting byte-for-byte what it exported before.
+  function strictSecurityPages(c, notes) {
+    return sitePageFiles(c).map((f) => ({ name: f.slug + '.html', content: strictSecurityPage(f.html, f.slug + '.html', notes) }));
+  }
+
   function exportFileList(c) {
-    return [...sitePageFiles(c).map((f) => ({ name: f.slug + '.html', content: f.html })), ...Builder.seoExtras(c, exportSettings()), { name: 'llms.txt', content: Builder.llmsText(c, Builder.pages(c), String(c.site.url || '').trim().replace(/\/+$/, '')) }];
+    const notes = [];
+    const pages = settings.strictSecurity ? strictSecurityPages(c, notes) : sitePageFiles(c).map((f) => ({ name: f.slug + '.html', content: f.html }));
+    if (settings.strictSecurity && notes.length) { try { console.warn('Strict security: ' + notes.join(' · ')); } catch (e) {} }
+    return [...pages, ...Builder.seoExtras(c, exportSettings()), { name: 'llms.txt', content: Builder.llmsText(c, Builder.pages(c), String(c.site.url || '').trim().replace(/\/+$/, '')) }];
+  }
+
+  // Every external origin the finished page already references, per directive.
+  // One flat list would be wrong in both directions: an <img> host has no
+  // business in script-src, and the chat widget the builder injects does not
+  // appear in any src="" attribute at all (it is created from inline script), so
+  // a src-scan alone would block the chat. The service origins the builder can
+  // emit are therefore named explicitly, and the rest is discovered per use.
+  function strictSecurityOrigins(html, attrPattern) {
+    const src = String(html || '');
+    const found = new Set();
+    const re = new RegExp(attrPattern || '\\b(?:src|href|data-src|poster)\\s*=\\s*["\'](https?://[^"\']+)["\']', 'gi');
+    let m = re.exec(src);
+    while (m) {
+      try {
+        const u = new URL(m[1]);
+        if (u.protocol === 'https:') found.add(u.origin);
+      } catch (e) { /* an unusable URL is the page's problem, not the policy's */ }
+      if (found.size >= 40) break;
+      m = re.exec(src);
+    }
+    return [...found];
+  }
+
+  function strictCspSources(html) {
+    const s = settings || {};
+    const all = strictSecurityOrigins(html);
+    const scripts = strictSecurityOrigins(html, '<script[^>]*\\ssrc\\s*=\\s*["\'](https?://[^"\']+)["\']');
+    const frames = strictSecurityOrigins(html, '<iframe[^>]*\\ssrc\\s*=\\s*["\'](https?://[^"\']+)["\']');
+    const media = strictSecurityOrigins(html, '<(?:img|video|audio|source)[^>]*\\ssrc\\s*=\\s*["\'](https?://[^"\']+)["\']');
+
+    const analytics = s.analyticsId
+      ? (s.analyticsProvider === 'plausible' ? ['https://plausible.io'] : ['https://www.googletagmanager.com'])
+      : [];
+    // The chat widget is injected from inline script, so its origin can only be
+    // recognised by looking for it in the finished page.
+    const chat = /embed\.tawk\.to/.test(String(html || '')) ? ['https://embed.tawk.to'] : [];
+    const connect = analytics.concat(chat);
+    const formAction = [];
+    // The contact form is posted by the page's own script, so the endpoint that
+    // matters is the one the builder RESOLVED — a bare email address becomes a
+    // formsubmit.co URL, and a key becomes api.web3forms.com. Reading the raw
+    // setting instead would allow nothing and silently break every contact form.
+    try {
+      const c = current();
+      const site = (c && c.site) || {};
+      const delivery = (typeof Builder !== 'undefined' && typeof Builder.deliveryFor === 'function') ? Builder.deliveryFor(site) : null;
+      const endpoint = String((delivery && delivery.endpoint) || '').trim();
+      if (/^https:\/\//i.test(endpoint)) {
+        const origin = new URL(endpoint).origin;
+        connect.push(origin);
+        formAction.push(origin);
+      }
+    } catch (e) { /* the form audit reports an unusable endpoint on its own */ }
+
+    const has = (h) => all.indexOf(h) !== -1;
+    return {
+      script: analytics.concat(chat, scripts),
+      // The font pair is only allow-listed when the page references it: a policy
+      // without fonts.gstatic.com renders the site in fallback type, which
+      // reads as a design bug rather than a security setting.
+      style: has('https://fonts.googleapis.com') ? ['https://fonts.googleapis.com'] : [],
+      font: has('https://fonts.gstatic.com') ? ['https://fonts.gstatic.com'] : [],
+      connect,
+      frame: frames.length ? frames : ['https://www.google.com', 'https://maps.google.com', 'https://www.youtube.com',
+        'https://player.vimeo.com', 'https://open.spotify.com', 'https://calendly.com', 'https://coverr.co'],
+      media: media.length ? media : all,
+      img: all,
+      formAction
+    };
+  }
+
+  // One page in, one page out. A document the policy cannot honestly describe
+  // is returned untouched with the reason attached — a site that half-works
+  // because hardening half-applied is worse than one that was never hardened.
+  function strictSecurityPage(html, label, notes) {
+    const say = (msg) => { if (notes && notes.indexOf(msg) === -1) notes.push(msg); };
+    if (typeof SecuritySRI === 'undefined' || !SecuritySRI || typeof SecuritySRI.hardenDocument !== 'function') {
+      say('the integrity module was not loaded, so ' + label + ' was exported as it was');
+      return html;
+    }
+    try {
+      const res = SecuritySRI.hardenDocument(html, {}, {
+        inlineAlgorithm: 'sha256',
+        allowedSources: strictCspSources(html)
+      });
+      if (!res || !res.ok) {
+        say(label + ' was left unhardened: ' + ((res && res.errors && res.errors[0]) || 'the integrity pass refused the document'));
+        return html;
+      }
+      const meta = typeof SecuritySRI.injectCSPMeta === 'function' ? SecuritySRI.injectCSPMeta(res.html, res.csp, {}) : { ok: false, reason: 'no meta carrier' };
+      if (!meta || !meta.ok) {
+        say(label + ' got its hashes but no policy: ' + ((meta && meta.reason) || 'unknown reason'));
+        return html;
+      }
+      (res.warnings || []).forEach((w) => say(label + ': ' + w));
+      return meta.html;
+    } catch (e) {
+      say(label + ' could not be hardened: ' + (e && e.message ? e.message : e));
+      return html;
+    }
   }
 
   function appVersion() {
@@ -6128,14 +6405,23 @@ const App = (() => {
     if (!c) return toast('Open a project first');
     const skipQuality = !!(options && options.skipQuality);
     const pages = Builder.pages(c);
+    // The folder export needs the desktop bridge (the main process does
+    // the writing); the web build simply does not offer the card.
+    const folderCard = (typeof window !== 'undefined' && window.pallettai
+      && typeof window.pallettai.compileStatic === 'function')
+      ? `<button class="export-card" id="exFolder"><span class="export-ico">${uiIcon('save')}</span><b>Export to folder</b><small>Write the site into a folder you choose, with an integrity manifest</small></button>`
+      : '';
     openModal('Export & hand off', `
       <p style="color:var(--muted);margin-bottom:14px">${esc(c.name)} — ${pages.length} page${pages.length === 1 ? '' : 's'}. These are files, not tenants: plain HTML/CSS/JS you own, hostable anywhere without a PallettAI account.</p>
       <div class="export-cards">
         <button class="export-card" id="exDownload"><span class="export-ico">${uiIcon('download')}</span><b>Download site</b><small>${pages.length === 1 ? 'Single self-contained .html file' : pages.length + ' pages as a .zip folder (index.html + more)'}</small></button>
+        ${folderCard}
         <button class="export-card" id="exHandoff"><span class="export-ico">${uiIcon('gift')}</span><b>Client handoff ZIP</b><small>Site, hosting guide, brand kit, optional invoice</small></button>
         <button class="export-card" id="exPublish"><span class="export-ico">${uiIcon('globe')}</span><b>Publish online</b><small>Netlify or Neocities, then a live link</small></button>
       </div>`);
     $('#exDownload').onclick = () => { closeModal(); exportSite({ skipQuality }); };
+    const exFolder = $('#exFolder');
+    if (exFolder) exFolder.onclick = () => { closeModal(); exportSiteToFolder({ skipQuality }); };
     $('#exHandoff').onclick = () => { closeModal(); openHandoff({ skipQuality }); };
     $('#exPublish').onclick = () => { closeModal(); openPublish({ skipQuality }); };
   }
@@ -7068,8 +7354,8 @@ const App = (() => {
             <select id="aiLang" title="Translate the open site">${(typeof AiTranslate !== 'undefined' ? AiTranslate.LANGS : [{ id: 'en', name: 'English' }, { id: 'es', name: 'Spanish' }, { id: 'fr', name: 'French' }, { id: 'de', name: 'German' }, { id: 'it', name: 'Italian' }, { id: 'pt', name: 'Portuguese' }, { id: 'nl', name: 'Dutch' }, { id: 'pl', name: 'Polish' }]).map((l) => `<option value="${l.id}">${l.name}</option>`).join('')}</select>
             <label class="ai-onepager"><input type="checkbox" id="aiTranslateName"> Translate the name</label>
             <button class="btn ghost" id="btnTranslate" ${c ? '' : 'disabled'}>Translate site <small>(1 credit)</small></button>
-            <span class="ai-powered">${esc((c && c.site && c.site.translation && typeof AiTranslate !== 'undefined' && AiTranslate.poweredByLabel(c.site.translation.provider)) || 'Translations powered by DeepL')}</span>
-            <p class="ai-key-note">Once a DeepL API key is set on the registry, signed-in translates use DeepL. Until then, MyMemory runs with no key. <a href="https://www.deepl.com/pro-api" target="_blank" rel="noopener">Get a DeepL API key</a></p>
+            <span class="ai-powered">${esc((c && c.site && c.site.translation && typeof AiTranslate !== 'undefined' && AiTranslate.poweredByLabel(c.site.translation.provider)) || 'Translation included in your plan')}</span>
+            <p class="ai-key-note">Translation is included — no API key, no extra account, nothing to sign up for. Signed-in sites translate on our servers; anything else falls back to MyMemory, which is free and keyless.</p>
           </div>
         </div>
         <div class="ai-quick"${c ? '' : ' hidden'}>
@@ -8895,14 +9181,14 @@ const App = (() => {
           ? `<input class="src-input" id="inp-pixabay" placeholder="e.g. coffee, architecture, food" spellcheck="false" autocomplete="off" style="width:150px">
             <button class="btn ghost small" data-fetch="pixabay">Search photos</button>
             <button class="btn ghost small" data-fetch="pixabay-wide">Wide shots</button>${needProject}`
-          : `<span style="font-size:.72rem;color:var(--muted)">Pixabay photos need your free API key. </span><button class="btn ghost small" data-go-pixkey>Add in Settings</button>` },
+          : `<span style="font-size:.72rem;color:var(--muted)">Optional — the keyless Openverse &amp; Wikimedia image search is on the cards below. </span><button class="btn ghost small" data-go-pixkey>Add a Pixabay key (optional)</button>` },
       // Companies House has a purpose-built lookup panel (number entry, the full
       // register record, and both apply paths), reached from the library tools and
       // from here. The card routes to it rather than reimplementing the record in
       // a second renderer that would drift from the first.
       companieshouse: { acts: ONLINE.companiesHouseKey
           ? '<button class="btn ghost small" data-open-tool="ch">Look up a UK company</button>'
-          : `<span style="font-size:.72rem;color:var(--muted)">UK company lookups need your free Companies House key. </span><button class="btn ghost small" data-go-chkey>Add in Settings</button>` },
+          : `<span style="font-size:.72rem;color:var(--muted)">Optional — UK register lookups are the one source that needs a free key. </span><button class="btn ghost small" data-go-chkey>Add a Companies House key (optional)</button>` },
       randomuser: { acts: `<button class="btn ghost small" data-fetch="people">Fetch 6 people</button>${needProject}` },
       quotable: { acts: `<button class="btn ghost small" data-fetch="quotes">Fetch 5 quotes</button>${needProject}` },
       gfonts: { acts: `<button class="btn ghost small" data-fetch="fonts">Show all fonts</button>`, results: `<div class="src-results" id="res-gfonts" style="display:grid;grid-template-columns:1fr;gap:8px"></div>` },
@@ -8911,8 +9197,7 @@ const App = (() => {
       github: { pro: true, acts: `${inp('inp-gh', 'GitHub username')}<button class="btn ghost small" data-fetch="github">Fetch profile</button>` },
       frankfurter: { pro: true, acts: `${inp('inp-fx', 'Base currency, e.g. GBP')}<button class="btn ghost small" data-fetch="fx">Fetch rates</button>` },
       companieshouse: ONLINE.companiesHouseKey
-        ? { acts: `${inp('inp-ch', 'Company number, e.g. 09462154')}<button class="btn ghost small" data-fetch="ch">Look up company</button>` }
-        : { acts: `<span style="font-size:.72rem;color:var(--muted)">The UK company register needs a free registration key. </span><button class="btn ghost small" data-go-chkey>Add in Settings</button>` },
+        ? { acts: `${inp('inp-ch', 'Company number, e.g. 09462154')}<button class="btn ghost small" data-fetch="ch">Look up company</button>` }          : { acts: `<span style="font-size:.72rem;color:var(--muted)">Optional — the UK company register is the one source that needs a free key. </span><button class="btn ghost small" data-go-chkey>Add a Companies House key (optional)</button>` },
       coverr: { acts: `<input class="src-input" id="inp-coverr" placeholder="e.g. hero, drone, city" spellcheck="false" autocomplete="off" style="width:150px">
         <button class="btn ghost small" data-fetch="coverr">Fetch videos</button>
         <span style="font-size:.72rem;color:var(--muted)">Free CC0 stock video for hero backgrounds.</span>` },
@@ -8938,7 +9223,7 @@ const App = (() => {
     // what is actually live and free right now (Pixabay photos only once a key is
     // added, Coverr clips, FormSubmit forms) rather than only reading the card copy.
     const liveHint = `<p style="font-size:.78rem;color:var(--muted);margin:-4px 0 14px"><b>Live &amp; free right now:</b>
-        ${ONLINE.pixabayKey ? 'Pixabay photos — topic search (CC0, no attribution) · ' : ''}Coverr stock video clips — CC0, no attribution ·
+        ${ONLINE.pixabayKey ? 'Pixabay photos — topic search (CC0, no attribution) · ' : 'Openverse &amp; Wikimedia images — no key, no account · '}Coverr stock video clips — CC0, no attribution ·
         FormSubmit forms — just paste your email, no account needed.</p>`;
     wrap.innerHTML = liveHint + ONLINE.sources.map((s) => {
       const ui = UI[s.id] || {};
@@ -10623,17 +10908,19 @@ const App = (() => {
         <div class="set-row"><div><label>Analytics ID</label><div class="set-desc">e.g. G-XXXXXXXXXX or your-plausible-domain</div></div><input type="text" id="setAnalyticsId" value="${esc(s.analyticsId || '')}" placeholder="leave empty to disable"></div>
         <div class="set-row"><div><label>Minify exported HTML</label><div class="set-desc">Smaller files, faster loads.</div></div>
           <label class="switch"><input type="checkbox" id="setMinify" ${s.minify ? 'checked' : ''}><span class="slider"></span></label></div>
+        <div class="set-row"><div><label>Strict security headers</label><div class="set-desc">Gives every exported page a real Content-Security-Policy — a hash for each script it runs, and nothing else allowed. Analytics, maps, booking and the contact form keep working; anything else you add yourself has to be allow-listed by your host. Recommended once a site is live.</div></div>
+          <label class="switch"><input type="checkbox" id="setStrictSecurity" ${s.strictSecurity ? 'checked' : ''}><span class="slider"></span></label></div>
       </div>
 `) +
       cards('online', `
       <div class="settings-card">
         <h3>Online databases</h3>
-        <p class="sub">Free sources: Picsum, RandomUser, Quotable, Google Fonts run keyless. Pixabay photo search uses your own free API key — stored only on this device.</p>
+        <p class="sub">Everything here works with no account at all — Picsum, Openverse, Wikimedia, Coverr, Google Fonts, quotes and people all run keyless. The two keys below are optional extras that simply widen search.</p>
         <div class="set-row"><div><label>Enabled</label></div>
           <label class="switch"><input type="checkbox" id="setOnline" ${s.onlineEnabled === false ? '' : 'checked'}><span class="slider"></span></label></div>
-        <div class="set-row"><div><label>Pixabay API key</label><div class="set-desc">Once your free API key is entered, topic photo search is enabled in Database ▸ Online sources. Stored only on this device. <a href="https://pixabay.com/api/docs/" target="_blank" rel="noopener">Get a Pixabay API key</a></div></div>
-          <input type="text" id="setPixabayKey" value="${esc(s.pixabayKey || '')}" placeholder="e.g. 12345678-abcdef…" spellcheck="false" autocomplete="off"></div>
-        <div class="set-row"><div><label>Companies House API key</label><div class="set-desc">Free one-time registration — enables UK company lookups in Database ▸ Online sources. Stored only on this device. <a href="https://find-and-update.company-information.service.gov.uk/register/api-key-application" target="_blank" rel="noopener">Register for a key</a></div></div>
+        <div class="set-row"><div><label>Pixabay API key <span class="muted">(optional)</span></label><div class="set-desc">Optional. Adds topic photo search on top of the keyless Openverse and Wikimedia search. Get a free key if you want it — <a href="https://pixabay.com/api/docs/" target="_blank" rel="noopener">Pixabay API keys</a> — stored only on this device.</div></div>
+          <input type="text" id="setPixabayKey" value="${esc(s.pixabayKey || '')}" placeholder="optional — leave empty" spellcheck="false" autocomplete="off"></div>
+        <div class="set-row"><div><label>Companies House API key <span class="muted">(optional)</span></label><div class="set-desc">Optional. Only needed for UK company-register lookups in Database ▸ Online sources; every other source works without it. <a href="https://find-and-update.company-information.service.gov.uk/register/api-key-application" target="_blank" rel="noopener">Companies House keys</a> — stored only on this device.</div></div>
           <input type="text" id="setCompaniesHouseKey" value="${esc(s.companiesHouseKey || '')}" placeholder="e.g. a1b2c3d4-e5f6-…" spellcheck="false" autocomplete="off"></div>
         <div class="set-row"><div><label>Request timeout (ms)</label></div><input type="number" id="setTimeout" value="${s.onlineTimeoutMs}" min="2000" max="30000" step="500"></div>
         <div class="set-row"><div><label>Clear fetched data cache</label><div class="set-desc">Forget previously fetched photos, people and quotes.</div></div>
@@ -10653,13 +10940,14 @@ const App = (() => {
 `) +
       cards('studio', `
       <div class="settings-card">
-        <h3>Keys & services</h3>
-        <p class="sub">Third-party keys never ship inside Studio. DeepL, Dodo Payments and the mail relay live on the registry. Netlify, Neocities and Pixabay are yours, stored on this device.</p>
-        <div class="set-row keys-note"><div><label>DeepL translations</label><div class="set-desc">Once a DeepL API key is set on the registry, signed-in translates use DeepL. Until then, MyMemory runs with no key. The key is not entered in this app. <a href="https://www.deepl.com/pro-api" target="_blank" rel="noopener">Get a DeepL API key</a></div></div></div>
+        <h3>What's included</h3>
+        <p class="sub">There is nothing to sign up for and no AI key to enter. Every AI feature runs on keys we hold — they never ship inside Studio and you never paste one. Dodo Payments and the mail relay live on the registry too.</p>
+        <div class="set-row keys-note"><div><label>AI generation, copy, photos, alt text, logos, vision QA</label><div class="set-desc">Included in your plan. No model account, no API key, no install — the credits you buy are all you need.</div></div></div>
+        <div class="set-row keys-note"><div><label>Translations</label><div class="set-desc">Included. Signed-in sites translate with DeepL on our servers, and anything else uses MyMemory, which is free and keyless. You never enter a translation key.</div></div></div>
         <div class="set-row keys-note"><div><label>Dodo Payments</label><div class="set-desc">Checkout sessions and subscription webhooks are handled entirely on the registry — the API key and signing secret never enter this app. Manage billing opens Dodo's customer portal for this signed-in account.</div></div></div>
-        <div class="set-row keys-note"><div><label>Netlify publish</label><div class="set-desc">Once a personal access token is entered in Publish, one-click Netlify deploys work. <a href="https://app.netlify.com/user/applications#personal-access-tokens" target="_blank" rel="noopener">Get a Netlify token</a></div></div></div>
-        <div class="set-row keys-note"><div><label>Neocities publish</label><div class="set-desc">Once you sign in from Publish, one-click Neocities deploys work. <a href="https://neocities.org" target="_blank" rel="noopener">Create a Neocities site</a></div></div></div>
-        <div class="set-row keys-note"><div><label>Pixabay photos</label><div class="set-desc">Once your free API key is entered under Online data, topic photo search is enabled. Stored only on this device. <a href="https://pixabay.com/api/docs/" target="_blank" rel="noopener">Get a Pixabay API key</a></div></div></div>
+        <div class="set-row keys-note"><div><label>Netlify publish <span class="muted">(optional)</span></label><div class="set-desc">Optional, and only if you want your site hosted on Netlify — exporting and every other part of Studio work without it. Your own account, stored on this device. <a href="https://app.netlify.com/user/applications#personal-access-tokens" target="_blank" rel="noopener">Netlify tokens</a></div></div></div>
+        <div class="set-row keys-note"><div><label>Neocities publish <span class="muted">(optional)</span></label><div class="set-desc">Optional free hosting with no ads — only needed to publish there. Your own account, stored on this device. <a href="https://neocities.org" target="_blank" rel="noopener">Neocities</a></div></div></div>
+        <div class="set-row keys-note"><div><label>Pixabay photos <span class="muted">(optional)</span></label><div class="set-desc">Optional extra search source. Openverse and Wikimedia image search need no key at all. <a href="https://pixabay.com/api/docs/" target="_blank" rel="noopener">Pixabay API keys</a> — stored only on this device.</div></div></div>
       </div>
       <div class="settings-card">
         <h3>Studio behaviour</h3>
@@ -10751,6 +11039,7 @@ const App = (() => {
     on('#setAnalyticsProvider', 'change', (e) => { settings.analyticsProvider = e.target.value; saveSettings(); schedulePreview(); });
     on('#setAnalyticsId', 'input', (e) => { settings.analyticsId = e.target.value.trim(); saveSettings(); schedulePreview(); });
     on('#setMinify', 'change', (e) => { settings.minify = e.target.checked; saveSettings(); schedulePreview(); });
+    on('#setStrictSecurity', 'change', (e) => { settings.strictSecurity = e.target.checked; saveSettings(); toast(e.target.checked ? 'Exports will carry a Content-Security-Policy' : 'Exports will ship without a policy', true); });
     on('#setOnline', 'change', (e) => { settings.onlineEnabled = e.target.checked; saveSettings(); renderDatabase(); });
     on('#setPixabayKey', 'input', (e) => {
       const k = e.target.value.trim();
@@ -13396,6 +13685,25 @@ const App = (() => {
     $('#chatInput').addEventListener('input', chatRenderSlash);
     if (window.PallettAISectionCopilot) window.PallettAISectionCopilot.onRequest = sectionCopilotRequest;
     if (window.PallettAITokens) window.PallettAITokens.onChange = applyTokenPatch;
+    // The Widget Studio view owns its own DOM; it needs exactly three things
+    // from the app — the open project, the site palette, and a way to edit and
+    // save the project — so the seam stays this small and stays one-way.
+    if (window.PallettAIWidgetStudio) {
+      window.PallettAIWidgetStudio.connect({
+        currentProject: () => current(),
+        tokens: () => {
+          const c = current();
+          if (!c) return null;
+          const pal = (typeof DB !== 'undefined' && DB.getPalette) ? DB.getPalette(c.site.palette) : null;
+          const design = (c.site && c.site.design && typeof c.site.design === 'object') ? c.site.design : {};
+          return { colors: pal || {}, radius: design.radius };
+        },
+        notify: (message, ok) => toast(message, ok),
+        addWidget: addWidgetToProject,
+        placeWidget: placeWidgetOnPage,
+        removeWidget: removeWidgetFromProject
+      });
+    }
     $('#chatList').addEventListener('click', (e) => {
       const b = e.target.closest('[data-chat-undo]');
       if (b) histUndo();

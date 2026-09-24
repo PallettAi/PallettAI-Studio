@@ -46,7 +46,170 @@ function retryAfterMsFrom(res, now) {
   return 0;
 }
 
+/*
+  Redirect-aware request guard — the shared boundary for every external call.
+
+  Checking only the URL a caller was handed leaves the guard bypassable with one
+  302: "study this site" would then read the user's router, a NAS, or cloud
+  instance metadata and feed the body into the app. fetch follows redirects on
+  its own, so the hops have to be dealt with here.
+
+  Two environments, two correct strategies:
+
+    Node (the headless CLI build): redirect:'manual' is honoured, so each hop is
+    validated BEFORE the request goes out and a hostile hop is never issued.
+    Renderer (Chromium): a manual cross-origin redirect comes back opaque
+    (status 0, no Location header), so the hop cannot be inspected at all.
+    There the request has to be followed and the FINAL url is checked, and the
+    response is refused if it landed anywhere private.
+
+  Every existing caller uses a fixed public host, so this is a no-op for them.
+  A deliberate LAN or self-hosted fetch opts out with { allowPrivate: true }.
+*/
+const MAX_REDIRECT_HOPS = 5;
+
+/*
+  IPv6 in full form. The URL parser canonicalises IPv4 shorthand (2130706433,
+  0x7f000001, 127.1 all arrive as 127.0.0.1), but it canonicalises an
+  IPv4-mapped address to HEX groups — [::ffff:127.0.0.1] arrives as
+  [::ffff:7f00:1] — so a dotted-quad string match misses it and a guard that
+  only looks for "::ffff:" plus digits lets loopback and 169.254.169.254
+  straight through. Expanding to bytes is the only way to see what it is.
+*/
+function expandIpv6(host) {
+  let h = String(host || '').trim().toLowerCase();
+  if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
+  if (!h.includes(':')) return null;
+  // An embedded dotted quad is legal in the last 32 bits. (The URL parser
+  // normally canonicalises it to hex groups before we ever see it, but this
+  // function is also called with bare host strings, so it handles the form
+  // itself — and it has to write four BYTES, not two 16-bit words.)
+  let tail = [];
+  const quad = /(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(h);
+  if (quad) {
+    const p = quad[1].split('.').map(Number);
+    if (p.some((x) => x > 255)) return null;
+    h = h.slice(0, h.length - quad[1].length);
+    tail = p;
+  }
+  const halves = h.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const rest = halves.length === 2 ? (halves[1] ? halves[1].split(':') : []) : null;
+  const groups = rest === null ? head : head.concat([null], rest);
+  if (rest === null && groups.length !== 8) return null;
+  if (groups.length > 8) return null;
+  const bytes = [];
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i];
+    if (g === null || g === '') continue;
+    if (!/^[0-9a-f]{1,4}$/.test(g)) return null;
+    const n = parseInt(g, 16);
+    bytes.push((n >> 8) & 0xff, n & 0xff);
+  }
+  // Expand the :: run back out to eight groups.
+  while (bytes.length < 16) bytes.splice(head.length * 2, 0, 0);
+  if (bytes.length > 16) return null;
+  for (let i = 0; i < tail.length; i++) bytes[12 + i] = tail[i];
+  return bytes;
+}
+
+function ipv4BytesToPrivate(n) {
+  const a = (n >>> 24) & 0xff;
+  const b = (n >>> 16) & 0xff;
+  if (a === 0 || a === 10 || a === 127) return true;                 // this network, private, loopback
+  if (a === 169 && b === 254) return true;                           // link-local, incl. cloud metadata
+  if (a === 172 && b >= 16 && b <= 31) return true;                  // RFC1918
+  if (a === 192 && b === 168) return true;                           // RFC1918
+  if (a === 100 && b >= 64 && b <= 127) return true;                 // CGNAT
+  if (a === 198 && (b === 18 || b === 19)) return true;              // benchmarking
+  if (a >= 224) return true;                                          // multicast, reserved, broadcast
+  return false;
+}
+
+function isPrivateTarget(raw) {
+  let u;
+  try { u = new URL(String(raw == null ? '' : raw).trim()); } catch (e) { return true; }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return true;
+  if (u.username || u.password) return true;
+  let h = String(u.hostname || '').trim().toLowerCase().replace(/\.$/, '');
+  if (h.startsWith('[')) h = h.slice(1, h.endsWith(']') ? -1 : undefined);
+  if (!h) return true;
+  if (h === 'localhost' || h.endsWith('.localhost') || /^(local|home)$/.test(h)) return true;
+  if (/\.(local|internal|localhost|home\.arpa|onion)$/i.test(h)) return true;
+  if (/^\d{1,3}(\.\d{1,3}){0,3}$/.test(h)) {
+    const p = h.split('.').map(Number);
+    // WHATWG IPv4 shorthand: a → a.0.0.0, a.b → a.b.0.0, a.b.c → a.b.c.0. The URL
+    // parser normally hands us four parts already, but the guard is also called
+    // with bare host strings, so the shorter forms are decoded here too.
+    let n = 0;
+    if (p.length === 1) n = p[0] >>> 0;
+    else if (p.length === 2) n = ((p[0] << 24) | p[1]) >>> 0;
+    else if (p.length === 3) n = ((p[0] << 24) | (p[1] << 16) | p[2]) >>> 0;
+    else n = ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
+    return ipv4BytesToPrivate(n);
+  }
+  // A DNS name is allowed: the guard classifies the address it was given, and
+  // resolving DNS here would be a second, racy answer (a name that answers with
+  // a private address is a rebinding problem the network stack owns, not
+  // something a string check can settle).
+  if (!h.includes(':')) return false;
+  const v6 = expandIpv6(h);
+  if (!v6) return true;                 // looks like IPv6 but does not parse: refuse
+  const allZero = v6.every((b) => b === 0);
+  if (allZero) return true;                                            // ::
+  if (v6.slice(0, 10).every((b) => b === 0) && v6[10] === 0xff && v6[11] === 0xff) {
+    return ipv4BytesToPrivate(((v6[12] << 24) | (v6[13] << 16) | (v6[14] << 8) | v6[15]) >>> 0);
+  }
+  if (v6.slice(0, 10).every((b) => b === 0) && v6[10] === 0 && v6[11] === 0) {
+    return ipv4BytesToPrivate(((v6[12] << 24) | (v6[13] << 16) | (v6[14] << 8) | v6[15]) >>> 0);
+  }
+  if ((v6[0] & 0xfe) === 0xfc) return true;                            // fc00::/7 unique-local
+  if (v6[0] === 0xfe && (v6[1] & 0xc0) === 0x80) return true;           // fe80::/10 link-local
+  if (v6[0] === 0xff) return true;                                     // ff00::/8 multicast
+  if (v6[0] === 0x20 && v6[1] === 0x01 && v6[2] === 0x0d && v6[3] === 0xb8) return true; // 2001:db8::/32
+  return false;
+}
+
+function blockedTargetError(where) {
+  const e = new Error('Refused ' + where + ' private or local address space.');
+  e.code = 'blocked_host';
+  return e;
+}
+
+async function guardedFetch(rawUrl, init, opts) {
+  const options = opts || {};
+  if (!options.allowPrivate && isPrivateTarget(rawUrl)) throw blockedTargetError('a request to');
+  const baseInit = Object.assign({}, init || {});
+  const method = String(baseInit.method || 'GET').toUpperCase();
+  const replayable = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
+  // Only a bodyless, idempotent request can be replayed by hand; anything else
+  // follows normally and is judged on where it ended up.
+  if (typeof window === 'undefined' && replayable && !options.allowPrivate) {
+    let current = String(rawUrl);
+    let hops = 0;
+    for (;;) {
+      const res = await fetch(current, Object.assign({}, baseInit, { redirect: 'manual' }));
+      const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+      if (!location || hops >= MAX_REDIRECT_HOPS) return res;
+      let next;
+      try { next = new URL(location, current).href; } catch (e) { return res; }
+      if (isPrivateTarget(next)) throw blockedTargetError('a redirect into');
+      current = next;
+      hops++;
+    }
+  }
+  const res = await fetch(rawUrl, baseInit);
+  const finalUrl = String((res && res.url) || rawUrl);
+  if (!options.allowPrivate && isPrivateTarget(finalUrl)) throw blockedTargetError('a response redirected into');
+  return res;
+}
+
 const ONLINE = {
+  // Exposed so the SSRF smoke — and modules/ai.js, which studies user sites —
+  // use this one implementation instead of a second copy that can drift.
+  isPrivateTarget,
+  guardedFetch,
   // Pixabay key is user-supplied. In Electron it lives encrypted via
   // safeStorage (main.js secrets store); in the browser/web build it is kept
   // in the settings blob. The getter prefers the encrypted store when present
@@ -282,7 +445,7 @@ const ONLINE = {
     try {
       const requestInit = { ...(init || {}) };
       if (controller) requestInit.signal = controller.signal;
-      const request = fetch(url, requestInit);
+      const request = guardedFetch(url, requestInit, { allowPrivate: !!opts.allowPrivate });
       const res = controller ? await request : await Promise.race([
         request,
         new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('Request timed out.'), { code: 'request_timeout' })), timeoutMs))

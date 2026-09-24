@@ -57,3 +57,8 @@ assets/og-image.*
 # so it cannot live in scripts/) and the receipt it leaves behind.
 .app-smoke-entry.js
 .app-smoke-receipt.json
+
+# The same two files for the widget suite, which boots the same app and writes
+# its own entry and receipt (scripts/widget-studio-smoke.js).
+.widget-studio-entry.js
+.widget-studio-receipt.json

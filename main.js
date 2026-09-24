@@ -120,13 +120,22 @@ function main() {
   function warnIfPlaintextStore(where) {
     if (!warnedNoEncryption && !encryptionAvailable()) {
       warnedNoEncryption = true;
-      console.warn(`[security] safeStorage unavailable — ${where} will be stored in plaintext on disk (mode 0600). OS keychain not accessible; secrets remain gated by file permissions (0600) but not OS-encrypted. Set PALLETTAI_FAIL_CLOSED=1 to refuse plaintext writes.`);
+      console.warn(`[security] safeStorage unavailable — ${where} is being stored in plaintext on disk (mode 0600) because PALLETTAI_ALLOW_PLAINTEXT=1 is set. OS keychain not accessible; the value is gated by file permissions but not OS-encrypted.`);
     }
   }
   function failClosedIfNoEncryption(where) {
-    if (!encryptionAvailable() && process.env.PALLETTAI_FAIL_CLOSED === '1') {
-      throw new Error(`${where}: safeStorage unavailable and PALLETTAI_FAIL_CLOSED=1 — refusing plaintext`);
+    // Storing a credential in plaintext is opt-in, never the default. Both
+    // shipped platforms (macOS, Windows) have a keychain, so the refusal cannot
+    // bite a real customer; what it removes is the quiet downgrade where a
+    // publish token or a session refresh token lands on disk unencrypted
+    // because an OS service happened to be unavailable. A headless build that
+    // genuinely has no keychain can still opt in explicitly.
+    if (encryptionAvailable()) return;
+    if (process.env.PALLETTAI_ALLOW_PLAINTEXT === '1') {
+      warnIfPlaintextStore(where);
+      return;
     }
+    throw new Error(`${where}: this system has no OS keychain available, so the value was not saved. Set PALLETTAI_ALLOW_PLAINTEXT=1 to store it unencrypted.`);
   }
   function writeFileAtomic(filePath, data, mode = 0o600) {
     const dir = path.dirname(filePath);
@@ -376,6 +385,12 @@ function main() {
     try {
       const cached = JSON.parse(fs.readFileSync(hotfixCachePath(), 'utf8'));
       if (cached && cached.savedAt && Date.now() - cached.savedAt < HOTFIX_TTL_MS) {
+        // The cache is a file on disk, so it is exactly as trustworthy as
+        // anything else that can write to the user's account — and sanitising is
+        // not verification. Without the signature check here, any local process
+        // could plant a manifest the network path would have rejected, and the
+        // first moment the network is unavailable is the moment it is read.
+        if (!hotfixVerify(cached.manifest)) return null;
         const Hotfix = require('./data/hotfix.js');
         const checked = Hotfix.sanitize(cached.manifest, app.getVersion());
         return checked.ok ? checked.value : null;
@@ -601,6 +616,87 @@ function main() {
         if (win && !win.isDestroyed()) win.webContents.send('accent-changed', osAccentHex());
       });
     } catch (_) { /* not supported on every platform */ }
+  }
+
+  // ---------------------------------------------------------------- dynamic widgets
+  // The Dynamic Widget Engine compiles a plain-English request into a
+  // zero-dependency web component for the static export
+  // (modules/widget-generator.js). The model call itself is a seam: the
+  // generator's documented best-effort default is used unless a deployment
+  // installs its own completer with WidgetGenerator.setCompleter(). Sender-
+  // validated like every other channel, and it never throws at the renderer
+  // — a failed generation resolves to a fallback widget so an export is not
+  // aborted by one bad sentence.
+  function registerWidgetIpc() {
+    ipcMain.handle('widget:generate', async (event, prompt, tokens) => {
+      if (!fromMainFrame(event, win)) return { ok: false, error: 'unauthorised' };
+      try {
+        const WidgetGenerator = require('./modules/widget-generator.js');
+        const text = String(prompt == null ? '' : prompt);
+        if (!text.trim()) return { ok: false, error: 'a widget prompt is required' };
+        const compiled = await WidgetGenerator.generateWidgetCompiled(text, tokens, {});
+        return {
+          ok: true,
+          id: compiled.id,
+          fallback: compiled.fallback,
+          warnings: compiled.warnings,
+          definition: compiled.script
+        };
+      } catch (error) {
+        return { ok: false, error: String(error && error.message ? error.message : error) };
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------- copy engine
+  // The copy engine (modules/copy-optimizer.js + modules/copy-ast-editor.js) is
+  // the local rewrite backend behind the Section Toolbar's Voice Lock controls:
+  // it strips AI clichés, reshapes the copy into a CRO framework, and writes the
+  // result back into the section's markup without disturbing classes, data
+  // attributes or icons. Both channels are sender-validated like every other
+  // channel here, both resolve to a result envelope ({ ok, ... }) rather than
+  // rejecting, and both are pure functions of their arguments — no filesystem,
+  // no network, nothing for a renderer to aim somewhere it should not.
+  function registerCopyIpc() {
+    ipcMain.handle('copy:optimize', async (event, text, options) => {
+      if (!fromMainFrame(event, win)) return { ok: false, error: 'unauthorised' };
+      try {
+        const CopyOptimizer = require('./modules/copy-optimizer.js');
+        const raw = String(text == null ? '' : text);
+        if (!raw.trim()) return { ok: false, error: 'a non-empty string of copy is required' };
+        return await CopyOptimizer.optimizeCopyAsync(raw, options || {});
+      } catch (error) {
+        return { ok: false, error: String(error && error.message ? error.message : error) };
+      }
+    });
+    ipcMain.handle('copy:apply-section', async (event, html, sectionId, payload) => {
+      if (!fromMainFrame(event, win)) return { ok: false, error: 'unauthorised' };
+      try {
+        const CopyAstEditor = require('./modules/copy-ast-editor.js');
+        return CopyAstEditor.applyOptimizedCopySection(String(html == null ? '' : html), sectionId, payload);
+      } catch (error) {
+        return { ok: false, error: String(error && error.message ? error.message : error) };
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------- static export build
+  // The offline static export (modules/static-compiler.js) compiles the
+  // project — OKLCH tokens as root variables, the structural DOM into a
+  // clean index.html, the widget bundle, and a sha256 integrity manifest
+  // — and writes the tree with async fs.promises to the directory the
+  // user selected, so neither this process nor the renderer blocks on
+  // the write phase. The compiler + channel live in main/index.js so the
+  // shell stays a shell; the sender check is the same one every
+  // privileged channel here uses, and the bridge fails closed without it.
+  function registerStaticCompileIpc() {
+    const { registerStaticCompileIpc: register } = require('./main/index.js');
+    register({
+      ipcMain,
+      dialog,
+      fromMainFrame: (event) => fromMainFrame(event, win),
+      defaultOutputDir: path.join(app.getPath('userData'), 'exports')
+    });
   }
 
   function screenBoundsContain(b) {
@@ -1276,6 +1372,9 @@ function main() {
     registerAccentIpc();
     registerThemeIpc();
     registerSplashIpc();
+    registerWidgetIpc();
+    registerCopyIpc();
+    registerStaticCompileIpc();
     app.on('activate', () => {
       if (startupUpdateRunning) {
         if (startupWindow && !startupWindow.isDestroyed()) startupWindow.focus();

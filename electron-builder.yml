@@ -33,6 +33,7 @@ files:
   - ui/inspector.js
   - ui/copilot.js
   - ui/guides.js
+  - ui/widget-studio.js
   - '!**/*.map'
   - '!**/*.md'
 

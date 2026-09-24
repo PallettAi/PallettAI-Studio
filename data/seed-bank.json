@@ -1,0 +1,80 @@
+{
+  "roofing": {
+    "heroHeadline": "Roofs that hold through ten winters",
+    "heroSubhead": "A leak never picks a convenient week, and the damage never stops at the roofline. We survey the whole roof, price it in writing, and fit it in two days.",
+    "primaryCTA": "Book a survey",
+    "secondaryCTA": "See recent roofs",
+    "valueProps": [
+      {
+        "title": "Fixed price, in writing",
+        "text": "You get the whole number before we touch a tile, and it does not move afterwards."
+      },
+      {
+        "title": "Most roofs fitted in two days",
+        "text": "A standard gable comes off and goes back on inside two working days, clear-up included."
+      },
+      {
+        "title": "Twenty-five year workmanship guarantee",
+        "text": "It covers the labour as well as the materials, and it stays with the house if you sell."
+      }
+    ],
+    "aboutUs": "Most homeowners ring us after a vague quote has already cost them a week. We climb the roof first, photograph the damage, and price it face by face so you can check every line before you sign. Same crew and same yard since 2009, which is why two thirds of our work comes from existing customers.",
+    "socialProof": {
+      "quote": "Two days on site, no mess left behind, and the scaffolding down before the weekend. The invoice matched the quote to the pound.",
+      "name": "[Client Name]",
+      "detail": "Full re-roof, [Town]"
+    }
+  },
+  "corporateLaw": {
+    "heroHeadline": "Corporate law, explained in plain English",
+    "heroSubhead": "A badly drafted clause costs more to argue about than it ever cost to write, and the argument arrives at the worst possible moment. We review, draft and negotiate commercial contracts with the same partner from first call to signature, so nothing sits in a queue.",
+    "primaryCTA": "Book a call",
+    "secondaryCTA": "Send us a draft",
+    "valueProps": [
+      {
+        "title": "Partner-led from the first call",
+        "text": "The lawyer you speak to on Monday is the one who signs off the final draft."
+      },
+      {
+        "title": "Fixed fees, agreed up front",
+        "text": "You approve the scope and the cost before we open the file, so no invoice surprises you later."
+      },
+      {
+        "title": "Drafts back inside a working day",
+        "text": "Send a contract before 4pm and a partner returns it marked up by the same time tomorrow."
+      }
+    ],
+    "aboutUs": "Most companies go looking for a lawyer the week something goes wrong, which is the most expensive week to start. We work the other way round: a named partner learns your business, keeps your contracts in one place, and flags what needs fixing before it costs you anything. We have advised founder-led companies in [City] since 2014, from the first shareholder agreement to exit.",
+    "socialProof": {
+      "quote": "They turned a forty-page shareholder agreement round in a day and walked us through the two clauses that actually mattered. Our previous firm took three weeks to send a first draft.",
+      "name": "[Client Name]",
+      "detail": "Founder, [Company]"
+    }
+  },
+  "landscaping": {
+    "heroHeadline": "Gardens built to be lived in",
+    "heroSubhead": "Most gardens get planted in a weekend and peak that same summer, then thin out for years. We survey the light and the soil, draw the plan, and build with semi-mature planting so year three looks better than year one.",
+    "primaryCTA": "Plan my garden",
+    "secondaryCTA": "See finished gardens",
+    "valueProps": [
+      {
+        "title": "Designed before anything is dug",
+        "text": "You see the plan, the planting list and the price before a spade touches the ground."
+      },
+      {
+        "title": "Mature planting, not plug plants",
+        "text": "We start with semi-mature trees and shrubs, so the garden reads as established in its first season."
+      },
+      {
+        "title": "One team from plan to final sweep",
+        "text": "The people who design the garden are the people who build it, and they clear the site when they leave."
+      }
+    ],
+    "aboutUs": "Plenty of gardens look their best the week the turf goes down. We design the soil, the drainage and the light first, then build with semi-mature planting, so the space improves every year instead of thinning out. We have designed and built gardens across [County] since 2011, and most of our work now comes from clients who have used us before.",
+    "socialProof": {
+      "quote": "They found a drainage problem two other firms missed, then planted it so well that visitors assume the garden is ten years older than it is.",
+      "name": "[Client Name]",
+      "detail": "Full garden rebuild, [Town]"
+    }
+  }
+}

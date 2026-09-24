@@ -417,5 +417,9 @@
     linearToSrgb: linearToSrgb
   };
 
+  // Browser global, as the header promises: the app loads this as a
+  // classic script where `module` does not exist, so the CommonJS export
+  // below would otherwise leave the engine unreachable in the renderer.
+  if (typeof window !== 'undefined') window.ThemeEngine = window.ThemeEngine || ThemeEngine;
   if (typeof module !== 'undefined' && module.exports) module.exports = ThemeEngine;
 })();

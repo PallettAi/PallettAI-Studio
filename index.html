@@ -104,6 +104,7 @@
       <button class="nav-item nav-home-btn active" data-view="dashboard" title="Home" aria-label="Home"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.4 9.2 10 3.6l6.6 5.6V16a1 1 0 0 1-1 1h-3.5v-4.3H7.9V17H4.4a1 1 0 0 1-1-1V9.2z"/></svg></span><span class="nav-label">Dashboard</span></button>
       <button class="nav-item" data-view="templates"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1"/><rect x="11.2" y="3.2" width="5.6" height="5.6" rx="1"/><rect x="3.2" y="11.2" width="5.6" height="5.6" rx="1"/><rect x="11.2" y="11.2" width="5.6" height="5.6" rx="1"/></svg></span><span class="nav-label">Templates</span></button>
       <button class="nav-item" data-view="designer"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.8 13.2 5.6a1.5 1.5 0 0 1 2.1 0l.1.1a1.5 1.5 0 0 1 0 2.1L6.2 17H4v-2.2z"/><path d="M12.2 6.6l2.2 2.2"/></svg></span><span class="nav-label">Designer</span></button>
+      <button class="nav-item" data-view="widgets"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.2" width="14" height="11.6" rx="2"/><path d="M6.4 8.4h7.2M6.4 11.6h4.2M13.6 14.4h.01"/></svg></span><span class="nav-label">Widget Studio</span></button>
       <button class="nav-item" data-view="ai"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.8l.85 3.7 3.7.85-3.7.85L10 11.9l-.85-3.7-3.7-.85 3.7-.85L10 2.8z"/></svg></span><span class="nav-label">AI Studio</span></button>
       <button class="nav-item" data-view="suites"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.6 3.6 16 6.2v5.2l-4.4 2.6L7.2 11.4V6.2L11.6 3.6z"/><path d="M7.2 6.2 4 8.1v5.1l4.3 2.6 3.3-1.9"/><path d="M16 6.2 12.8 8"/></svg></span><span class="nav-label">Upgrade Suites</span></button>
       <button class="nav-item" data-view="care" title="Site Care"><span class="nav-chip" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 10h3l1.5-3.4L9.6 14l1.6-4h5.2"/></svg></span><span class="nav-label">Site Care</span></button>
@@ -232,6 +233,16 @@
     <!-- Designer -->
     <section class="view" id="view-designer">
       <div class="designer" id="designerRoot"></div>
+    </section>
+
+    <!-- Widget Studio — prompt for an interactive lead-generation tool,
+         preview it running, and drop it into the project as a section. -->
+    <section class="view" id="view-widgets">
+      <div class="ws-intro">
+        <h2>Widget Studio</h2>
+        <p>Describe the tool you need — a roofing quote estimator, a mortgage calculator, a booking step — and Studio compiles it into a self-contained widget that ships inside your static export. No frameworks, no server, no dependencies.</p>
+      </div>
+      <div id="widgetStudioRoot"></div>
     </section>
 
     <!-- AI Studio -->
@@ -446,15 +457,34 @@
 <script src="modules/modal-focus.js"></script>
 <script src="modules/supabase.js"></script>
 <script src="modules/ai-prompts.js"></script>
+<!-- Dynamic Widget Engine. The generator runs in the main process (a model
+     call needs Node); the injector runs HERE, because every export and preview
+     is compiled in the renderer and the builder needs it to place a widget's
+     definition in the page it is finishing. Load order matters only in that
+     both exist before the first page is rendered. -->
+<script src="modules/widget-generator.js"></script>
+<script src="modules/widget-injector.js"></script>
+<!-- Copy engine. In Electron the Section Toolbar reaches it through the
+     preload bridge (copy:optimize / copy:apply-section); these load it as
+     window globals too, so the browser build and the sandboxed preview can
+     run the same rewrite locally. Both files are dependency-free. -->
+<script src="modules/copy-optimizer.js"></script>
+<script src="modules/copy-ast-editor.js"></script>
 <script src="ui/data-islands.js"></script>
 <script src="ui/inspector.js"></script>
 <script src="ui/copilot.js"></script>
 <script src="ui/guides.js"></script>
+<script src="ui/widget-studio.js"></script>
+<script src="modules/theme-engine.js"></script>
 <script src="modules/ai.js"></script>
 <script src="modules/builder.js"></script>
 <script src="modules/zip.js"></script>
 <script src="modules/gpuimage.js"></script>
 <script src="modules/store.js"></script>
+<!-- The export-time integrity/CSP pass. It is a renderer module on purpose: the
+     policy has to be computed from the page as it will be written, after
+     minification, which is where the export happens. -->
+<script src="modules/security-sri.js"></script>
 <script src="data/schema.js"></script>
 <script src="data/revs-policy.js"></script>
 <script src="data/library-merge.js"></script>

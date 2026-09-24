@@ -124,6 +124,26 @@ const SMOKES = [
   ['scripts/copy-edit-smoke.js', 'Copy-edit intent smoke'],
   ['scripts/intent-polarity-smoke.js', 'Intent polarity smoke'],
   ['scripts/ai-translate-smoke.js', 'AI translate smoke'],
+  // Customers buy credits, not API keys. This fails if a renderer script ever
+  // reaches a model vendor directly, if the UI asks for a key, or if the
+  // "included, no key" promise is quietly reworded away.
+  ['scripts/no-byok-smoke.js', 'No bring-your-own-key smoke'],
+  // Offline image generation is a delivery guarantee, not a cosmetic fallback:
+  // every builder image slot must contain local artwork with no remote URL left
+  // to fail after the project is moved or opened without a connection.
+  ['scripts/offline-artwork-smoke.js', 'Offline self-contained artwork smoke'],
+  // A guard that only checks the URL it was handed is bypassable with one 302.
+  // This proves the hop is checked too, and that the internal request is never
+  // issued at all in the path where that is knowable.
+  ['scripts/ssrf-redirect-smoke.js', 'SSRF redirect smoke'],
+  // The export hardening pass and the coverage rule that keeps security
+  // modules from being "covered" only by the suite that tests them.
+  ['scripts/strict-export-smoke.js', 'Strict export CSP smoke'],
+  // The same pass, on pages the BUILDER actually produces. A synthetic page hid
+  // the fact that the font stylesheet made the policy refuse for every default
+  // site — the setting looked green and did nothing.
+  ['scripts/export-policy-real-smoke.js', 'Strict export on real pages smoke'],
+  ['scripts/security-coverage-smoke.js', 'Security module coverage smoke'],
   ['scripts/translate-budget-smoke.js', 'Translation request-budget smoke'],
   ['scripts/outbound-pacing-smoke.js', 'Outbound retry pacing smoke'],
   ['scripts/ai-fingerprint-smoke.js', 'AI fingerprint smoke'],
@@ -276,7 +296,14 @@ const SMOKES = [
   // checks the user-visible outcome. Static scanning cannot catch a throw from
   // a source it cannot reason about; this does, in seconds — where the 0.4.14
   // defect was found by a person, after release.
-  ['scripts/app-smoke.js', 'Real-app smoke (boots Electron, generates a site, checks the credit)']
+  ['scripts/app-smoke.js', 'Real-app smoke (boots Electron, generates a site, checks the credit)'],
+  // The widget path crosses four boundaries no Node suite can see: the preload
+  // bridge, the compiler in the main process, the sandboxed preview frame, and a
+  // custom element mounting inside a shadow root on the EXPORTED page. It boots
+  // the application, compiles a tool, adds it, looks at what the Designer will
+  // ship, and then loads that export in a real browser to press the tool's own
+  // button.
+  ['scripts/widget-studio-smoke.js', 'Real-app widget smoke (prompt, preview, ship, remove)']
 ];
 
 function runScript(args, label) {
@@ -309,6 +336,31 @@ function checkAppSmokeReceipt() {
   if (r.creditsRefunded) { fail('a successful generation refunded the user\'s credit'); return; }
   if (!(r.previewBytes > 500)) { fail('the generated site rendered no preview'); return; }
   pass('real-app receipt: ' + r.passed + ' checks, ' + r.previewBytes + ' bytes rendered, credit kept');
+}
+
+/*
+  The same rule for the widget suite, and two extra facts it exists to certify:
+  a widget a creator added must MOUNT in the exported page and must QUOTE a
+  number for a visitor. The suite already asserts both; the receipt is what stops
+  a suite that never ran from reading as a pass.
+*/
+function checkWidgetStudioReceipt() {
+  const file = path.join(ROOT, '.widget-studio-receipt.json');
+  if (!fs.existsSync(file)) {
+    fail('the real-app widget smoke left no receipt — the gate cannot prove it ran');
+    return;
+  }
+  let r;
+  try { r = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {
+    fail('the widget smoke receipt is not readable: ' + e.message);
+    return;
+  }
+  if (!r.ran) { fail('the real-app widget smoke reports it did not run'); return; }
+  if (!(r.passed > 0)) { fail('the real-app widget smoke made no checks at all'); return; }
+  if (!r.mounted) { fail('the widget did not mount in the exported page'); return; }
+  if (!r.quoted) { fail('the widget did not quote anything for a visitor'); return; }
+  pass('widget receipt: ' + r.passed + ' checks, ' + (r.widgetId || 'a widget')
+    + ' mounted in a ' + r.exportBytes + '-byte export');
 }
 
 async function runSmokeSuites() {
@@ -475,6 +527,24 @@ function checkBuilder() {
 // ============================================================
 (async () => {
   runScript(['scripts/security-hardening-smoke.js'], 'Security hardening smoke');
+  // The copy engine, compiler and export extras each cross process/file/DOM
+  // boundaries. Their completed suites must be part of the tag gate, not left
+  // as tests that only a developer remembers to run by hand.
+  runScript(['scripts/backend-copy-smoke.js'], 'Offline copy optimiser & section editor smoke');
+  runScript(['scripts/static-compiler-smoke.js'], 'Static compiler & verified folder writer smoke');
+  runScript(['scripts/scroll-motion-classes-smoke.js'], 'Scroll-linked motion class smoke');
+  runScript(['scripts/site-extras-smoke.js'], 'Dark mode, print & launch-kit smoke');
+  runScript(['scripts/ipc-hardening-smoke.js'], 'Preload bridge & IPC sender smoke');
+  // The Dynamic Widget Engine compiles a plain-English request into a
+  // zero-dependency web component and injects it into a static export. Both
+  // halves fail in ways only a client would notice — a generated runtime that
+  // does not parse, or a definition that duplicates the class it shares — so
+  // the suite parses the emitted JavaScript and pins the one-class-per-page
+  // rule. Offline and registry-free: pure string work.
+  runScript(['scripts/backend-widget-smoke.js'], 'Dynamic widget engine smoke');
+  // Widget code is model-written and ships onto a client's public page, so the
+  // network/worker/navigation/state denylist is a customer-facing boundary.
+  runScript(['scripts/widget-safety-smoke.js'], 'Widget export safety smoke');
   // The Database panel's live sources span three files that cannot see each
   // other — the fetch URL (data/online.js), the CSP allowlist that decides
   // whether the renderer may make it (index.html), and the button that runs it
@@ -561,6 +631,8 @@ function checkBuilder() {
   runScript(['scripts/ai-preferences-smoke.js'], 'AI preferences smoke');
   runScript(['scripts/ai-render-compare-smoke.js'], 'AI rendered comparison smoke');
   await runSmokeSuites();
+  // Written by the widget smoke inside that loop, so it is checked after it.
+  checkWidgetStudioReceipt();
   checkZipLimits();
   checkBuilder();
   checkPackaging();

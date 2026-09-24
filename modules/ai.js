@@ -4253,6 +4253,39 @@ const AI = (() => {
     });
   }
 
+  // A self-contained fallback for a workspace with no network. It is an SVG
+  // data URL, not a remote placeholder: the exported file still renders its
+  // hero and gallery after the machine is offline or the project is moved to
+  // another computer. The copy is deliberately labelled as artwork so a
+  // creator can tell it apart from a real photograph and replace it later.
+  function offlineImageData(prompt, label, width, height, seed) {
+    const w = Math.max(320, Math.min(2400, Number(width) || 1200));
+    const h = Math.max(240, Math.min(1800, Number(height) || 800));
+    const hue = Math.abs(Number(seed) || 0) % 360;
+    const hue2 = (hue + 48) % 360;
+    const xml = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' };
+    const clean = (value, max) => String(value == null ? '' : value)
+      .replace(/[&<>"']/g, (c) => xml[c])
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, max);
+    const subject = clean(label || prompt || 'Your work', 74) || 'Your work';
+    const kicker = clean(prompt || 'OFFLINE STUDIO ARTWORK', 42) || 'OFFLINE STUDIO ARTWORK';
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + w + ' ' + h + '">' +
+      '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0" stop-color="hsl(' + hue + ',62%,42%)"/>' +
+      '<stop offset="1" stop-color="hsl(' + hue2 + ',68%,25%)"/>' +
+      '</linearGradient></defs>' +
+      '<rect width="100%" height="100%" fill="url(#g)"/>' +
+      '<circle cx="' + Math.round(w * 0.78) + '" cy="' + Math.round(h * 0.24) + '" r="' + Math.round(Math.min(w, h) * 0.28) + '" fill="hsl(' + hue2 + ',80%,72%)" opacity=".22"/>' +
+      '<circle cx="' + Math.round(w * 0.18) + '" cy="' + Math.round(h * 0.82) + '" r="' + Math.round(Math.min(w, h) * 0.42) + '" fill="hsl(' + hue + ',80%,12%)" opacity=".2"/>' +
+      '<path d="M0 ' + Math.round(h * 0.78) + ' Q ' + Math.round(w * 0.28) + ' ' + Math.round(h * 0.56) + ' ' + Math.round(w * 0.52) + ' ' + Math.round(h * 0.76) + ' T ' + w + ' ' + Math.round(h * 0.64) + ' V ' + h + ' H0Z" fill="hsl(' + hue2 + ',45%,12%)" opacity=".32"/>' +
+      '<text x="' + Math.round(w * 0.07) + '" y="' + Math.round(h * 0.57) + '" fill="white" font-family="Arial, sans-serif" font-size="' + Math.max(26, Math.round(Math.min(w, h) * 0.075)) + '" font-weight="700">' + subject + '</text>' +
+      '<text x="' + Math.round(w * 0.07) + '" y="' + Math.round(h * 0.66) + '" fill="white" opacity=".76" font-family="Arial, sans-serif" font-size="' + Math.max(13, Math.round(Math.min(w, h) * 0.032)) + '" letter-spacing="2">' + kicker.toUpperCase() + '</text>' +
+      '</svg>';
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  }
+
   async function generateImages(project, prompt, opts = {}) {
     // source: 'real' (topic-matched web photos — default) | 'ai' (Pollinations art) | 'none'
     // photos the creator uploaded themselves are always tried first, then
@@ -4308,7 +4341,10 @@ const AI = (() => {
 
     // validate remote pool images once, in parallel (data URLs are trusted)
     const poolReady = (await mapLimit(pool, 3, async (c) => {
-      if (c.url.slice(0, 5) === 'data:' || !online) return c;
+      if (c.url.slice(0, 5) === 'data:') return c;
+      // A remote image learned from a studied site is not offline-safe. Do not
+      // put it into an offline export just because validation is unavailable.
+      if (!online) return null;
       return (await loadImage(c.url, 7000)) ? c : null;
     })).filter(Boolean);
 
@@ -4322,6 +4358,34 @@ const AI = (() => {
         else if (slot.key === 'about') out.about = true;
         else out.gallery++;
       }
+    }
+
+    // Offline is a first-class image source. The old path fell through to
+    // LoremFlickr even when networking was disabled, producing a URL that only
+    // looked like a fallback and then failed in the exported file. Fill every
+    // remaining slot with deterministic, self-contained artwork instead.
+    if (!online) {
+      const offlineSeed = (s.fingerprint && s.fingerprint.seed) || hash(String(prompt || '') + ' ' + s.name);
+      slots.forEach((slot, index) => {
+        if (filled[slot.key]) return;
+        const label = slot.sec.title || slot.sec.text || (slot.key === 'hero' ? s.name : 'Featured work');
+        const url = offlineImageData(prompt, label, slot.w, slot.h, offlineSeed + index * 17);
+        if (put(slot.sec, url, 'Offline artwork', null)) {
+          if (!slot.sec.alt) slot.sec.alt = 'Offline placeholder for ' + (s.name || label);
+          filled[slot.key] = true;
+          if (slot.key === 'hero') out.hero = true;
+          else if (slot.key === 'about') out.about = true;
+          else out.gallery++;
+          out.source = 'offline';
+        }
+      });
+      // A creator upload can reach an output slot too, so alt text is filled
+      // for every image this pass placed rather than only for generated art.
+      altText(project);
+      if (s.photoPass) {
+        s.photoPass = { status: (out.hero || out.about || out.gallery) ? 'done' : 'failed', placed: { hero: out.hero, about: out.about, gallery: out.gallery } };
+      }
+      return out;
     }
 
     // fall back to the chosen source only for slots the creator didn't fill
@@ -4529,6 +4593,14 @@ const AI = (() => {
     return false;
   }
   function isPublicFetchUrl(raw) {
+    // One implementation, in the shared request boundary (data/online.js). It
+    // knows the same ranges this function does and additionally expands IPv6, so
+    // an IPv4-mapped address in hex form — [::ffff:7f00:1] — is recognised
+    // instead of falling through as "public". The body below stays as the
+    // standalone fallback for a context where online.js never loaded.
+    if (typeof ONLINE !== 'undefined' && ONLINE && typeof ONLINE.isPrivateTarget === 'function') {
+      return !ONLINE.isPrivateTarget(raw);
+    }
     let u;
     try { u = new URL(String(raw || '').trim()); } catch (e) { return false; }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
@@ -4605,7 +4677,12 @@ const AI = (() => {
         timer = setTimeout(() => ctrl.abort(), remaining);
       }
       try {
-        const r = await fetch(u, ctrl ? { signal: ctrl.signal } : undefined);
+        // The URL was checked above; the hops it redirects through were not, so
+        // the fetch itself goes through the guarded boundary.
+        const guarded = (typeof ONLINE !== 'undefined' && ONLINE && typeof ONLINE.guardedFetch === 'function') ? ONLINE.guardedFetch : null;
+        const r = guarded
+          ? await guarded(u, ctrl ? { signal: ctrl.signal } : undefined)
+          : await fetch(u, ctrl ? { signal: ctrl.signal } : undefined);
         if (!r.ok) throw new Error('HTTP ' + r.status);
         let txt = await r.text();
         if (!/<(?:html|!doctype|title|body|h[1-6]|p\b|div\b)/i.test(txt.slice(0, 300))) {
@@ -6739,7 +6816,7 @@ body.theme-light .card,body.theme-light .faq-item,body.theme-light .cd-cell,body
     return Originality && Originality.audit ? Originality.audit(project, peers, references) : null;
   };
 
-  return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, studySite, isPublicFetchUrl, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, shuffleLook, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatPlanOne, copilotRoute, originalityReport, splitCompound, chatHelp, sampleSection, copyOptions, imageBase, photoPicks, polarity, designMention, designAlternatives, designDNA: DESIGN_DNA,
+  return { generateSite, generateDirections, remixDirection, qualityGate, repairQuality, generateImages, offlineImageData, studySite, isPublicFetchUrl, enhanceCopy, imageUrl, loadImage, detectType, brandName, focusPhrase, restyle, shuffleLook, enhanceSection, logo, logoPreview, randomLogoSpec, altText, COST, stylePacks, applyStylePack, clearStylePack, chatPlan, chatPlanOne, copilotRoute, originalityReport, splitCompound, chatHelp, sampleSection, copyOptions, imageBase, photoPicks, polarity, designMention, designAlternatives, designDNA: DESIGN_DNA,
     nthSecOfType, sectionOrdinal, resolveTarget, positionalMention, followMiss, repeatMiss, layoutOptions, LOGO_STYLES, LOGO_SHAPES, LOGO_DUOTONES, STYLE_GLYPHS, DIRECTION_PROFILES, templateCatalog: templateCatalogLib(), applyNicheExtras, addServicesPage, matchNiche,
     critiquePass, brandKernel: kernelLib };
 })();

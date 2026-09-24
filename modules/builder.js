@@ -1408,8 +1408,38 @@ body.photo-grade{
       </div>`);
   }
 
+  // ---------------- generated interactive widgets ----------------
+  // The Widget Studio compiles a plain-English request into a zero-dependency
+  // custom element. This section contributes ONLY the placeholder; the element
+  // definition is injected once, immediately before </body>, by withWidgets()
+  // below — so one widget used on three pages is one class definition, not
+  // three. The widget id lives in the section's "extra" field, which is the
+  // field the section editor already edits, so no new editor was needed.
+  function renderWidget(p, s, i) {
+    const id = String(s.extra || '').trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id)) {
+      return sectionShell(s, i, `${head(s)}
+        <p class="sub" style="text-align:center">Generate a tool in the Widget Studio and choose \u201cAdd to project\u201d \u2014 its id lands in this section\u2019s \u201cextra\u201d field.</p>`);
+    }
+    // A placeholder whose widget is no longer stored on the project must not be
+    // shipped as a silent gap. The injector only emits the widget engine when it
+    // has a definition to register, so an unresolved placeholder upgrades to
+    // nothing and the visitor would see an empty space where the tool used to
+    // be — which is exactly what removing a widget from the Widget Studio left
+    // behind. The note is rendered in the section itself, so the export explains
+    // itself instead of showing a hole in the client's page.
+    const widgets = Array.isArray(p && p.widgets) ? p.widgets : [];
+    if (!widgets.some((w) => w && String(w.id || '') === id)) {
+      return sectionShell(s, i, `${head(s)}
+        <p class="sub" style="text-align:center">This tool is no longer in the project. Compile it again in the Widget Studio and choose \u201cAdd to project\u201d, or delete this section.</p>`);
+    }
+    return sectionShell(s, i, `${head(s)}
+      <pallet-widget id="${esc(id)}"></pallet-widget>`);
+  }
+
   const renderers = {
     hero: renderHero, features: renderFeatures, stats: renderStats, about: renderAbout,
+    widget: renderWidget,
     gallery: renderGallery, pricing: renderPricing, testimonials: renderTestimonials,
     faq: renderFaq, blog: renderBlog, shop: renderShop, logos: renderLogos,
     video: renderVideo, countdown: renderCountdown, contact: renderContact, cta: renderCta,
@@ -3551,6 +3581,50 @@ ${motionCSS(p)}
     return `\n    <script type="application/ld+json">${json}</script>`;
   }
 
+  /*
+    Generated widgets — the one place a finished page exists.
+
+    Every export route (single HTML, ZIP, publish, client handoff) and every
+    preview goes through pageRender(), so injecting here means a widget ships
+    wherever the page does, including the Designer preview. Doing it in the app
+    instead would have meant five call sites and a sixth added later.
+
+    The injector is resolved lazily because the builder runs in two places: in
+    Node (the CLI and these smoke suites) where it arrives through require(),
+    and in the renderer (every export and preview) where it arrives as a
+    <script> global. It is only ever resolved when a project actually has
+    widgets, so a site without them pays nothing.
+
+    Failure is never fatal: a project with no widgets returns the HTML
+    untouched, and an injection error returns the original page. A broken
+    widget must not cost a client their whole site.
+  */
+  function widgetInjector() {
+    if (typeof window !== 'undefined' && window.WidgetInjector) return window.WidgetInjector;
+    if (typeof require === 'function') {
+      try { return require('./widget-injector.js'); } catch (e) { return null; }
+    }
+    return null;
+  }
+
+  function withWidgets(html, project) {
+    const list = Array.isArray(project && project.widgets) ? project.widgets : [];
+    if (!list.length || !html) return html;
+    const registry = {};
+    list.forEach((w) => {
+      if (w && typeof w.id === 'string' && typeof w.definition === 'string' && w.definition) registry[w.id] = w.definition;
+    });
+    if (!Object.keys(registry).length) return html;
+    const Injector = widgetInjector();
+    if (!Injector || typeof Injector.injectWidgetsIntoAST !== 'function') return html;
+    try {
+      const out = Injector.injectWidgetsIntoAST(html, registry);
+      return (out && out.ok && typeof out.html === 'string') ? out.html : html;
+    } catch (e) {
+      return html;
+    }
+  }
+
   function pageRender(project, settings, targetPage) {
     const pages = normalizePages(project);
     const page = targetPage || pages.find((pg) => pg.id === project.site.activePageId) || pages[0];
@@ -3563,7 +3637,7 @@ ${motionCSS(p)}
       studioUrl: String(settings.studioUrl || '')
     };
     try {
-      return pageHTML(project, settings, page, pages);
+      return withWidgets(pageHTML(project, settings, page, pages), project);
     } finally {
       _ctx = { pages: [], page: null };
       _plan = prior;
@@ -3578,6 +3652,7 @@ ${motionCSS(p)}
     const dispFont = (p.site.fontDisplay && p.site.fontDisplay !== p.site.font) ? siteFont(p.site, p.site.fontDisplay) : null;
     const metaDesc = p.site.metaDescription || p.site.tagline || '';
     const favicon = faviconLink(p);
+    const siteExtras = siteExtrasParts(p);
     const liveUrl = String(p.site.url || '').trim().replace(/\/+$/, '');
 
     // A share image for every page. A chosen ogImage still wins, but the
@@ -3627,10 +3702,21 @@ ${motionCSS(p)}
       .filter((x) => x && x.id)
       .map((fo) => ONLINE.fontCssUrl(fo.id))
       .filter(Boolean);
+    // A hash-bearing Content-Security-Policy makes a browser ignore
+    // 'unsafe-inline' for SCRIPT, which is what the async font trick depends on:
+    // with media="print" plus onload="this.media='all'" the handler is blocked,
+    // the sheet stays inert, and the site silently renders in fallback fonts.
+    // Under strict security the sheet is imported from the document's own CSS
+    // instead — style-src allows inline styles, so it loads with no handler at
+    // all and the policy can be enforced for real.
+    const cssUrl = (u) => String(u == null ? '' : u).replace(/["'\\<>\u0000-\u001F]/g, '');
+    const strictFonts = !!settings.strictSecurity;
     const fontLink = settings.onlineEnabled !== false && fontUrls.length
       ? '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
-        + fontUrls.map((u) => `<link rel="stylesheet" href="${esc(u)}" media="print" onload="this.media='all'">`).join('')
-        + `<noscript>${fontUrls.map((u) => `<link rel="stylesheet" href="${esc(u)}">`).join('')}</noscript>`
+        + (strictFonts
+          ? `<style>${fontUrls.map((u) => `@import url("${cssUrl(u)}");`).join('')}</style>`
+          : fontUrls.map((u) => `<link rel="stylesheet" href="${esc(u)}" media="print" onload="this.media='all'">`).join('')
+            + `<noscript>${fontUrls.map((u) => `<link rel="stylesheet" href="${esc(u)}">`).join('')}</noscript>`)
       : '';
 
     const renderedBody = p.site.sections.map((s, i) => {
@@ -3788,6 +3874,7 @@ ${customCss}
 ${scheduleCss}
 ${conciergeCss}
 ${cspStarter}
+${siteExtras.head}
 </head>
 <body id="top"${bodyClass ? ' class="' + bodyClass + '"' : ''}>
 ${scheduleStrip}
@@ -3802,6 +3889,7 @@ ${conciergeHtml}
 <script>(${siteIntegrations.toString()})();</script>
 ${conciergeScript}
 ${customJs}
+${siteExtras.body}
 </body>
 </html>`;
     // Performance diet, applied once at the end so it can see whole tags:
@@ -3907,6 +3995,158 @@ ${customJs}
     return pages.map((pg) => ({ page: pg, html: pageRender(built, settings, pg) }));
   }
 
+  /* ---------------- visitor experience extras (offline) ----------------
+     Three opt-in features the exported site carries entirely on its own —
+     no services, no accounts, no tracking, all decided at build time:
+
+       site.darkMode    — a visitor theme toggle (light / dark / system).
+                          The authored palette stays the default theme; the
+                          alternate is derived with theme-engine's OKLCH
+                          inversion, and for an already-dark palette the
+                          alternate is LIGHT, so the toggle always gives a
+                          genuine second choice.
+       site.printStyles — a print stylesheet: ink-friendly output, nav and
+                          chrome dropped, link targets printed after the
+                          link text, no mid-card page breaks.
+       site.launchKit   — launch files static hosts understand for free:
+                          a branded 404.html (Netlify and Vercel serve it
+                          as the 404 automatically), site.webmanifest, and
+                          the manifest link + theme-color meta.
+
+     All three default OFF: a project that never opted in exports
+     byte-for-byte what it exported before. */
+
+  // The colour engine resolves like widgetInjector(): a global when the
+  // app loaded it as a classic script, require() in Node (the CLI and the
+  // smoke suites), null otherwise — and a missing engine degrades to the
+  // toggle not shipping, never to a broken page.
+  function themeEngineLib() {
+    if (typeof window !== 'undefined' && window.ThemeEngine) return window.ThemeEngine;
+    try { if (typeof require === 'function') return require('./theme-engine.js'); } catch (e) { /* classic script */ }
+    return null;
+  }
+
+  // The alternate theme mapped onto the builder's OWN token names (the
+  // light block at :root in siteCSS). --surface is derived rather than
+  // inverted: mixing the new background toward the new ink gives a card
+  // that sits slightly off the page in BOTH directions — lighter than the
+  // background in dark, darker in light. The derived tokens (--grad,
+  // --brand-tint, --valid …) recompute themselves because they reference
+  // these variables, so this block stays small.
+  function altThemeCSS(p) {
+    const Engine = themeEngineLib();
+    if (!Engine || typeof Engine.invertOKLCHPalette !== 'function') return '';
+    const pal = DB.getPalette(p.site && p.site.palette);
+    const baseDark = !!pal.dark;
+    const alt = Engine.invertOKLCHPalette({
+      primary: pal.primary, surface: pal.bg, text: pal.text,
+      accent: pal.accent, muted: pal.muted
+    }, { target: baseDark ? 'light' : 'dark' });
+    const t = alt.tokens;
+    const mode = baseDark ? 'light' : 'dark';
+    return ':root[data-theme="' + mode + '"]{'
+      + '--bg:' + t.surface + ';'
+      + '--surface:color-mix(in oklab,var(--bg) 93%,var(--text));'
+      + '--primary:' + t.primary + ';--accent:' + t.accent + ';'
+      + '--primary-text:' + t.onPrimary + ';--accent-text:' + t.onAccent + ';'
+      + '--text:' + t.text + ';--muted:' + t.muted + ';'
+      + '--shadow:0 20px 60px rgba(0,0,0,' + (baseDark ? '0.10' : '0.45') + ');'
+      + '--grad:linear-gradient(135deg,var(--primary),var(--accent));'
+      + 'color-scheme:' + mode + ';'
+      + '}';
+  }
+
+  const THEME_TOGGLE_CSS = '.pai-theme-toggle{position:fixed;right:16px;bottom:16px;z-index:60;'
+    + 'width:44px;height:44px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;'
+    + 'border:1px solid color-mix(in srgb,var(--text) 18%,transparent);'
+    + 'background:var(--surface);color:var(--text);font-size:18px;line-height:1;'
+    + 'box-shadow:0 10px 30px rgba(0,0,0,.18)}'
+    + '.pai-theme-toggle:focus-visible{outline:2px solid var(--primary);outline-offset:2px}'
+    + '@media print{.pai-theme-toggle{display:none!important}}';
+
+  // Ink, paper and page breaks: what prints is the content, not the chrome.
+  const PRINT_CSS = '/* print output — ink-friendly, chrome-free */'
+    + '@media print{'
+    + '.nav,.footer,.pai-theme-toggle,[data-theme-toggle],.btn,.skip-link,iframe,video{display:none!important}'
+    + 'body{background:#fff!important;color:#000!important}'
+    + 'body *{background:transparent!important;box-shadow:none!important;text-shadow:none!important}'
+    + 'a{color:#000!important;text-decoration:underline}'
+    + 'a[href^="http"]::after{content:" (" attr(href) ")";font-size:.78em;color:#444;word-break:break-all}'
+    + 'section,figure{break-inside:avoid;page-break-inside:avoid}'
+    + 'h1,h2,h3{break-after:avoid;page-break-after:avoid}'
+    + 'img{max-width:100%!important}'
+    + '}';
+
+  // site.webmanifest — the install/pin metadata static hosts serve for
+  // free. Colours come straight from the palette so a pinned tab matches
+  // the site.
+  function webManifest(p) {
+    const s = (p && p.site) || {};
+    const pal = DB.getPalette(s.palette);
+    const name = String(s.name || 'My Site').replace(/\s+/g, ' ').trim();
+    return JSON.stringify({
+      name: name,
+      short_name: name.slice(0, 28),
+      description: String(s.description || s.tagline || '').replace(/\s+/g, ' ').trim().slice(0, 160),
+      start_url: './index.html',
+      display: 'standalone',
+      background_color: pal.bg,
+      theme_color: pal.primary
+    }, null, 2) + '\n';
+  }
+
+  // 404.html — branded and self-contained (no external CSS: a 404 must
+  // render even when assets fail). Netlify and Vercel serve 404.html as
+  // the not-found page with no configuration.
+  function notFoundPage(p) {
+    const s = (p && p.site) || {};
+    const pal = DB.getPalette(s.palette);
+    const name = esc(String(s.name || 'My Site').trim());
+    return '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n'
+      + '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+      + '<title>Page not found — ' + name + '</title>\n'
+      + '<style>body{margin:0;min-height:100vh;display:grid;place-items:center;text-align:center;'
+      + 'padding:24px;background:' + pal.bg + ';color:' + pal.text + ';font-family:system-ui,sans-serif}'
+      + 'h1{font-size:clamp(3rem,12vw,5.5rem);margin:0;color:' + pal.primary + '}'
+      + 'p{margin:.6rem 0 1.6rem;color:' + pal.muted + '}'
+      + 'a{display:inline-block;padding:.8rem 1.6rem;border-radius:999px;text-decoration:none;'
+      + 'background:' + pal.primary + ';color:' + pal.bg + ';font-weight:600}</style>\n'
+      + '</head>\n<body>\n<main>\n'
+      + '<h1>404</h1>\n<p>This page has moved or never existed.</p>\n'
+      + '<a href="./index.html">Back to ' + name + '</a>\n'
+      + '</main>\n</body>\n</html>\n';
+  }
+
+  // The page-level halves of the extras: head additions (theme boot,
+  // styles, manifest link) and body additions (toggle button + runtime).
+  // Returned as parts so pageRender's template keeps one insertion point
+  // per end of the document.
+  function siteExtrasParts(p) {
+    const s = (p && p.site) || {};
+    const head = [];
+    const body = [];
+    if (s.darkMode) {
+      const Engine = themeEngineLib();
+      const alt = altThemeCSS(p);
+      if (Engine && alt) {
+        // The boot snippet runs before first paint (no flash of the wrong
+        // theme); the runtime gives [data-theme-toggle] its cycle.
+        head.push('<script>' + Engine.generateThemeToggleScript({}) + '</scr' + 'ipt>');
+        head.push('<style>' + THEME_TOGGLE_CSS + '</style>');
+        head.push('<style>' + alt + '</style>');
+        body.push('<button class="pai-theme-toggle" data-theme-toggle type="button"'
+          + ' aria-label="Switch color theme" title="Switch color theme">&#9680;</button>');
+        body.push('<script>' + Engine.buildThemeRuntimeScript({}) + '</scr' + 'ipt>');
+      }
+    }
+    if (s.printStyles) head.push('<style>' + PRINT_CSS + '</style>');
+    if (s.launchKit) {
+      head.push('<link rel="manifest" href="site.webmanifest">');
+      head.push('<meta name="theme-color" content="' + esc(DB.getPalette(s.palette).primary) + '">');
+    }
+    return { head: head.join('\n'), body: body.join('\n') };
+  }
+
   // robots.txt + sitemap.xml — added to folder / zip / publish exports.
   // robots.txt ships always; sitemap needs the live URL set in the designer.
   function seoExtras(project, settings = {}) {
@@ -3931,6 +4171,10 @@ ${customJs}
       files.push({ name: 'sitemap.xml', content: '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + urls + '\n</urlset>\n' });
     }
     files.push({ name: 'llms.txt', content: buildLlmsText(project, pages, base) });
+    if (project.site && project.site.launchKit) {
+      files.push({ name: 'site.webmanifest', content: webManifest(project) });
+      files.push({ name: '404.html', content: notFoundPage(project) });
+    }
     return files;
   }
 
@@ -4322,7 +4566,7 @@ ${customJs}
     return true;
   }
 
-  return { buildSiteHTML, buildSitePages, seoExtras, llmsText: buildLlmsText, geoFaqs, geoAudit, contactLines, applySuite, removeSuite, esc, picsum, pages: pagesOf, slugify, pageHref, safeHref, safeEmbedUrl, safeBookingUrl, injectClientEditor, manageGuideHtml, badgeHref };
+  return { buildSiteHTML, buildSitePages, seoExtras, llmsText: buildLlmsText, geoFaqs, geoAudit, contactLines, applySuite, removeSuite, esc, picsum, pages: pagesOf, slugify, pageHref, safeHref, safeEmbedUrl, safeBookingUrl, injectClientEditor, manageGuideHtml, badgeHref, withWidgets, deliveryFor };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = Builder;

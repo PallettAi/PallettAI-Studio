@@ -118,8 +118,9 @@ const harness = `
   ok(out.hero && hero.image === tiny && hero.imageSource === 'Your photo', 'first upload → hero');
   ok(out.about && about.image === tiny && about.imageSource === 'Your photo', 'second upload → about');
   if (gal && gal.items && gal.items.length) {
-    ok(gal.items[0].image == null || gal.items[0].image === '', 'no uploads left over for gallery (source none)');
-    ok(gal.items.every((it) => !it.image), 'gallery untouched by later web fetch');
+    ok(out.source === 'offline', 'unused slots report the offline source');
+    ok(gal.items.every((it) => String(it.image || '').startsWith('data:image/svg+xml;')), 'remaining gallery slots use self-contained offline artwork');
+    ok(gal.items.every((it) => it.imageSource === 'Offline artwork'), 'offline artwork is labelled in every gallery slot');
   }
 
   // ---- 4. deep niche content packs override the generic copy bank ----

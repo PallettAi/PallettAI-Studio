@@ -9,13 +9,14 @@
 //
 // This brief asked for `main/index.js` and a `pallettaiAPI` bridge
 // on `preload.js`. That work is already done and is load-bearing:
-// `main.js` is a 60KB shell with 12 sender-validated channels, and
-// `app.js` reads `window.pallettai.*` in 22 places. So instead of
-// rewriting a working boundary, this suite PINS it — every
-// invariant the brief asked to enforce, asserted against the real
-// source, so a future change that breaks isolation, forgets a
-// sender check, or renames the exposed object fails here rather
-// than in a shipped build.
+// `main.js` is a 60KB shell with 12 sender-validated channels (plus
+// `main/index.js`'s static-compile channel — registrations live in
+// both files and BOTH are scanned here), and `app.js` reads
+// `window.pallettai.*` in 22 places. So instead of rewriting a
+// working boundary, this suite PINS it — every invariant the brief
+// asked to enforce, asserted against the real source, so a future
+// change that breaks isolation, forgets a sender check, or renames
+// the exposed object fails here rather than in a shipped build.
 //
 //   node scripts/ipc-hardening-smoke.js
 // ============================================================
@@ -26,6 +27,7 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const mainSrc = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+const bridgeSrc = fs.readFileSync(path.join(ROOT, 'main', 'index.js'), 'utf8');
 const preloadSrc = fs.readFileSync(path.join(ROOT, 'preload.js'), 'utf8');
 const appSrc = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
 
@@ -68,24 +70,29 @@ section('the renderer is isolated from Node');
 section('every IPC channel validates its sender');
 
 /*
-  The convention in this file is `fromMainFrame(event, win)` as the first
-  statement of a handler body, because `event.senderFrame` is filled in by
-  Electron from the frame that really sent the message rather than from
-  anything the renderer can claim. A channel that forgets it is reachable
-  from any frame the window loads, which is the whole threat model.
+  The convention is `fromMainFrame(event, win)` as the first statement of a
+  handler body, because `event.senderFrame` is filled in by Electron from
+  the frame that really sent the message rather than from anything the
+  renderer can claim. A channel that forgets it is reachable from any frame
+  the window loads, which is the whole threat model.
 
   The check is source-level and deliberately so: there is no way to invoke
   `ipcMain` outside Electron, so the source IS the artefact worth pinning.
+  Registrations live in two files — main.js's shell channels and
+  main/index.js's static-compile channel — and a channel gets no exemption
+  from the convention for having moved into a module, so both are scanned.
 */
 const channels = (() => {
   const out = [];
-  const rx = /ipcMain\.(handle|on)\(\s*['"]([^'"]+)['"]/g;
-  const marks = [];
-  let m;
-  while ((m = rx.exec(mainSrc))) marks.push({ index: m.index, method: m[1], channel: m[2] });
-  marks.forEach((mark, i) => {
-    const end = i + 1 < marks.length ? marks[i + 1].index : mainSrc.length;
-    out.push(Object.assign({}, mark, { body: mainSrc.slice(mark.index, end) }));
+  [mainSrc, bridgeSrc].forEach((src) => {
+    const rx = /ipcMain\.(handle|on)\(\s*['"]([^'"]+)['"]/g;
+    const marks = [];
+    let m;
+    while ((m = rx.exec(src))) marks.push({ index: m.index, method: m[1], channel: m[2] });
+    marks.forEach((mark, i) => {
+      const end = i + 1 < marks.length ? marks[i + 1].index : src.length;
+      out.push(Object.assign({}, mark, { body: src.slice(mark.index, end) }));
+    });
   });
   return out;
 })();
