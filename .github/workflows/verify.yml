@@ -1,0 +1,72 @@
+name: Verify
+
+# The release gate has always run on one person's machine and nowhere else.
+# That is how a one-line defect broke the generator, passed all 135 suites,
+# shipped in 0.4.14, and was found by a user. This workflow runs the same gate
+# on every push, so a tag cannot be cut against a red build.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # A tag is the moment a build becomes public, so the gate runs again at the
+  # exact commit being published rather than trusting an earlier run.
+  push:
+    tags: ['v*']
+
+# Never let two runs write the same cache key, and never let a superseded run
+# cancel the verification of a commit that is still the tip.
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-gate:
+    name: Full release gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The real-app smoke launches Electron, which needs a display server.
+      # xvfb gives it one. This is the step that distinguishes CI from the
+      # developer's Mac: headless, software-rendered, and nobody watching.
+      - name: Install the virtual display the app smoke needs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: Release gate
+        run: xvfb-run --auto-servernum npm run release:check
+
+      # A suite that passes because it silently tested nothing is worse than no
+      # suite at all — it manufactures false confidence. The real-app smoke
+      # writes a receipt; a missing or empty one means the gate skipped the
+      # only check that runs the real application.
+      - name: The real-app smoke must have actually run
+        run: |
+          if [ ! -f .app-smoke-receipt.json ]; then
+            echo "::error::app-smoke left no receipt — the gate skipped the only check that runs the real app"
+            exit 1
+          fi
+          cat .app-smoke-receipt.json
+          node -e "
+            const r = require('./.app-smoke-receipt.json');
+            if (!r.ran) { console.error('::error::app-smoke did not run'); process.exit(1); }
+            if (!(r.passed > 0)) { console.error('::error::app-smoke made no checks'); process.exit(1); }
+            if (r.creditsRefunded) { console.error('::error::a successful generation refunded the credit'); process.exit(1); }
+            if (!(r.previewBytes > 500)) { console.error('::error::the preview rendered nothing'); process.exit(1); }
+            console.log('verified: ' + r.passed + ' real-app checks, site rendered ' + r.previewBytes + ' bytes');
+          "

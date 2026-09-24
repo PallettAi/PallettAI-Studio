@@ -270,7 +270,13 @@ const SMOKES = [
   // exist. The renderer has none of them, so a single unguarded read is invisible
   // to the whole suite and fatal in the app — which is how one debug line made
   // the generator throw on every run and refund the user's credit.
-  ['scripts/renderer-globals-smoke.js', 'Renderer-global safety (no Node-only globals in renderer scripts)']
+  ['scripts/renderer-globals-smoke.js', 'Renderer-global safety (no Node-only globals in renderer scripts)'],
+  // The suite above can see the CLASS of fault statically. This one sees its
+  // EFFECT: it boots the real application, clicks the real Generate button and
+  // checks the user-visible outcome. Static scanning cannot catch a throw from
+  // a source it cannot reason about; this does, in seconds — where the 0.4.14
+  // defect was found by a person, after release.
+  ['scripts/app-smoke.js', 'Real-app smoke (boots Electron, generates a site, checks the credit)']
 ];
 
 function runScript(args, label) {
@@ -280,6 +286,29 @@ function runScript(args, label) {
   } catch (e) {
     fail(label + ' (exit ' + e.status + ')');
   }
+}
+
+/*
+  The receipt is the difference between "the app works" and "nothing ran and
+  the build is green". A suite that can pass by not executing is worse than no
+  suite, so its absence is a failure in its own right.
+*/
+function checkAppSmokeReceipt() {
+  const file = path.join(ROOT, '.app-smoke-receipt.json');
+  if (!fs.existsSync(file)) {
+    fail('the real-app smoke left no receipt — the gate cannot prove it ran');
+    return;
+  }
+  let r;
+  try { r = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {
+    fail('the real-app smoke receipt is not readable: ' + e.message);
+    return;
+  }
+  if (!r.ran) { fail('the real-app smoke reports it did not run'); return; }
+  if (!(r.passed > 0)) { fail('the real-app smoke made no checks at all'); return; }
+  if (r.creditsRefunded) { fail('a successful generation refunded the user\'s credit'); return; }
+  if (!(r.previewBytes > 500)) { fail('the generated site rendered no preview'); return; }
+  pass('real-app receipt: ' + r.passed + ' checks, ' + r.previewBytes + ' bytes rendered, credit kept');
 }
 
 async function runSmokeSuites() {
@@ -519,6 +548,13 @@ function checkBuilder() {
   // Runs before the AI suites deliberately: this is the check that can see a
   // fault the AI suites are structurally unable to.
   runScript(['scripts/renderer-globals-smoke.js'], 'Renderer-global safety');
+  // Runs the actual application, so it is last in the list: everything above it
+  // is fast feedback, and this is the one that must be believed most.
+  runScript(['scripts/app-smoke.js'], 'Real-app smoke');
+  // The suite above writes a receipt. Without this, a smoke that silently
+  // tested nothing would read as a pass — the one outcome a gate must never
+  // produce, and the one that let 0.4.14 ship looking green.
+  checkAppSmokeReceipt();
   runScript(['scripts/release-guard-smoke.js'], 'Release guard smoke');
   runScript(['scripts/review-reward-smoke.js'], 'Review reward smoke');
   runScript(['scripts/ai-studio-upgrade-smoke.js'], 'AI Studio upgrade smoke');

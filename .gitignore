@@ -51,3 +51,9 @@ assets/og-image.*
 # They are session scratch, not source, so they stay out of a release build and
 # out of an ordinary `git add .`.
 .check-*.js
+
+# Scratch written by the real-app smoke (scripts/app-smoke.js): a temporary
+# root-level entry (Electron resolves the app path from the entry's directory,
+# so it cannot live in scripts/) and the receipt it leaves behind.
+.app-smoke-entry.js
+.app-smoke-receipt.json
