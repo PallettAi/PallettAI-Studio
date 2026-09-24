@@ -89,9 +89,21 @@ console.log('\n== Every installer call has an exit behind it ==');
   ok('quitAndInstall is called exactly once in the whole file', calls === 1, String(calls));
   ok('and that one call is inside armUpdateAndQuit', !!armSrc && /\.quitAndInstall\(/.test(armSrc));
   ok('armUpdateAndQuit calls quitForUpdate', !!armSrc && /quitForUpdate\(\)/.test(armSrc));
-  // The two ways an update is installed: the startup gate and Restart now.
-  const callSites = (main.match(/armUpdateAndQuit\(\)/g) || []).length;
-  ok('both entry points go through it', callSites === 3, 'found ' + callSites + ' (1 definition + 2 call sites)');
+  // The two ways an update is installed: the startup gate and a manual
+  // "Restart now". Both must reach the installer through the one helper — a
+  // route that calls it any other way quits the app with nothing behind it,
+  // which is the deadlock above. Counted from the code with comments stripped,
+  // because a sentence that merely names the helper is not a call site (a bare
+  // count flags prose, and then gets raised to silence prose).
+  const stripComments = (src) => String(src)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:'"\\])\/\/.*$/gm, '$1');
+  const callSites = (stripComments(main).match(/armUpdateAndQuit\(\)/g) || []).length;
+  const inGate = (stripComments(bodyOf('runStartupUpdateGate') || '').match(/armUpdateAndQuit\(\)/g) || []).length;
+  const inPrompt = (stripComments(bodyOf('installUpdateFromPrompt') || '').match(/armUpdateAndQuit\(\)/g) || []).length;
+  ok('both entry points go through it, and nothing else calls it',
+    callSites === 3 && inGate === 1 && inPrompt === 1,
+    'total=' + callSites + ' launch gate=' + inGate + ' manual restart=' + inPrompt);
   ok('the startup gate no longer calls the installer directly',
     !/startupUpdateRunning = false;\s*\n\s*updater\.quitAndInstall/.test(main));
   ok('and it reports a restart only when the installer armed',
@@ -304,6 +316,112 @@ const armHelper = (updater, quitForUpdate, wait, skipRequested, askToBeRelaunche
     ok('with no updater at all nothing happens', (await arm()) === false);
     ok('and no wait is started for an installer that will never run', waited === false);
   });
+}
+
+// ---- 3b. the manual restart ----------------------------------------------
+// "Restart now" runs the SAME multi-minute hand-off the launch gate does. With
+// nothing on screen that is not a feature, it is the freeze: a window that will
+// not respond for minutes, on a machine where the expansion really is that
+// slow. So the manual path has to raise the gate's own progress surface, keep
+// Skip live while it waits, and take the surface down again if the install does
+// not complete.
+console.log('\n== The manual restart is not a silent freeze ==');
+{
+  const promptSrc = bodyOf('installUpdateFromPrompt');
+  ok('the manual path is a function of its own, so it can be run here', !!promptSrc);
+
+  ok('it raises a progress surface before arming',
+    !!promptSrc && /createStartupWindow\(\);/.test(promptSrc)
+    && promptSrc.indexOf('createStartupWindow') < promptSrc.indexOf('armUpdateAndQuit'));
+  ok('and names the step it is actually on',
+    !!promptSrc && /Preparing the installer/.test(promptSrc));
+  // Skip is refused unless the gate is running, so these three lines are the
+  // whole escape hatch for a manual install. They are also the easiest thing in
+  // the file to delete without anything failing.
+  ok('Skip stays live, which needs the gate running and unskipped',
+    !!promptSrc && /startupUpdateRunning = true;/.test(promptSrc) && /startupSkipped = false;/.test(promptSrc));
+  ok('and the update is known to be on disk before anyone can skip it',
+    !!promptSrc && /startupUpdateReady = true;/.test(promptSrc));
+  ok('a completed hand-off leaves the splash to the quit that is coming',
+    !!promptSrc && /if \(leaving\) return true;/.test(promptSrc)
+    && promptSrc.indexOf('closeStartupWindow') > promptSrc.indexOf('if (leaving) return true;'));
+  ok('an unfinished one puts the splash away and says where the update went',
+    !!promptSrc && /closeStartupWindow\(\);/.test(promptSrc)
+    && /The update will install when you next quit Studio\./.test(promptSrc));
+
+  // RUN both outcomes. Every declaration the function closes over is passed in,
+  // so the branches can be taken without a real installer behind them.
+  const promptHarness = (armResult) => {
+    const calls = [];
+    const built = new Function(
+      'updater', 'createStartupWindow', 'setStartupStatus', 'armUpdateAndQuit',
+      'closeStartupWindow', 'win', 'dialog',
+      'let startupUpdateRunning = false, startupSkipped = false, startupSkipSignal = null, startupUpdateReady = false;\n'
+      + 'async ' + promptSrc + '\n'
+      + 'return { fn: installUpdateFromPrompt, gate: () => startupUpdateRunning };'
+    )(
+      { quitAndInstall: () => calls.push('install') },
+      () => calls.push('createStartupWindow'),
+      (m) => calls.push('status:' + m),
+      async () => { calls.push('arm'); return armResult; },
+      () => calls.push('closeStartupWindow'),
+      { isDestroyed: () => false, focus: () => calls.push('focus') },
+      { showMessageBoxSync: () => calls.push('dialog') }
+    );
+    return { calls, fn: built.fn, gate: built.gate };
+  };
+
+  pendingArms = pendingArms.then(async () => {
+    const done = promptHarness(true);
+    const result = await done.fn();
+    ok('a manual restart that completes shows its progress and then gets out of the way',
+      result === true && done.calls.indexOf('createStartupWindow') === 0
+      && done.calls.indexOf('closeStartupWindow') === -1, done.calls.join(','));
+    ok('leaving the splash to the quit, with no dialog over a dying app',
+      done.calls.indexOf('dialog') === -1, done.calls.join(','));
+    ok('and the gate is put down behind it, so no wait outlives the app',
+      done.gate() === false);
+  });
+
+  pendingArms = pendingArms.then(async () => {
+    const stuck = promptHarness(false);
+    const result = await stuck.fn();
+    ok('one that does not complete takes the splash away again',
+      result === false && stuck.calls.indexOf('closeStartupWindow') >= 0, stuck.calls.join(','));
+    ok('hands the workspace back to the user', stuck.calls.indexOf('focus') >= 0, stuck.calls.join(','));
+    ok('and says the update is still coming rather than failing silently',
+      stuck.calls.indexOf('dialog') >= 0, stuck.calls.join(','));
+    ok('with the gate down, so nothing is still waiting on a window that is gone',
+      stuck.gate() === false);
+  });
+}
+
+// "Later" is only an honest button if the update really does install on the next
+// quit. The library is told not to install on quit for the whole session (so it
+// cannot race the guarded hand-off), which means the dialog's promise has to be
+// re-armed at the moment the user defers.
+{
+  const later = /if \(r !== 0\) \{([\s\S]*?)\n\s*return;\n\s*\}/.exec(main);
+  ok('the dialog promises an install on the next quit',
+    /or it will install when you quit\./.test(main));
+  ok('and deferring arms the library quit hook that promise depends on',
+    !!later && /autoInstallOnAppQuit = true/.test(later[1]),
+    later ? later[1].trim().slice(0, 60) : 'branch not found');
+  ok('the manual restart is what the promise is delivered by',
+    /installUpdateFromPrompt\(\);/.test(main));
+}
+
+// Skipping means two different things depending on how far the update got, and
+// saying the wrong one is how "Skip" turns into "the update silently vanished".
+{
+  const skipFn = bodyOf('skipStartupUpdate');
+  ok('the skip message branches on whether the download finished',
+    !!skipFn && /startupUpdateReady\s*\?/.test(skipFn)
+    && /will install when you next quit/.test(skipFn) && /offered again next time/.test(skipFn));
+  const dl = main.indexOf('updater.downloadUpdate()');
+  const ready = main.indexOf('startupUpdateReady = true;', dl);
+  ok('and the gate calls it ready only after that download resolves',
+    dl > 0 && ready > dl, 'download@' + dl + ' ready@' + ready);
 }
 
 // ---- 4. the escape hatch --------------------------------------------------

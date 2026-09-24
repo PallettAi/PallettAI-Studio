@@ -4,24 +4,24 @@
 // Bump `version` when you ship. Each entry: version, date, tagline, highlights[].
 // Keep highlights to 3-4 items, written as user-facing wins (not commit logs).
 const RELEASE_NOTES = {
-  version: '0.4.12',
-  date: 'September 23, 2026',
-  tagline: 'Updates that finish, and Studio that comes back when they do',
+  version: '0.4.13',
+  date: 'September 24, 2026',
+  tagline: 'Manual updates now show their work, and keep their promises',
   highlights: [
     {
-      icon: 'download',
-      title: 'The update leaves only when the installer is ready',
-      desc: 'Studio used to quit the moment the download finished — but the installer still had to expand the archive after that, and quitting cut it in half. The update was then discarded without a word, which is why Studio closed and came back on the old version. It now waits until the installer is genuinely ready, and the Skip button stays live for the whole wait.'
-    },
-    {
       icon: 'spark',
-      title: 'Studio reopens after the update',
-      desc: 'The installer was being told not to relaunch the app, so a completed update left you with a closed Studio and nothing to open. That instruction is corrected, and the update now ends where it should — with the new version running.'
+      title: 'Restart now shows what it is doing',
+      desc: 'Checking for updates from the menu and choosing "Restart now" used to hand over to a step that takes minutes on an older machine with no window at all — which looked exactly like a crash. Studio now shows the same progress screen the launch check uses, with Skip still clickable, and gives your window straight back if you change your mind.'
     },
     {
       icon: 'shield',
-      title: 'A slow install can no longer lose your update',
-      desc: 'Expanding a 240 MB build takes minutes on an older machine. If that cannot be confirmed within ten minutes, Studio opens anyway, keeps the downloaded update and installs it the next time you quit — instead of disappearing and leaving you to wonder.'
+      title: 'Choosing "Later" now actually means later',
+      desc: 'The prompt has always said a deferred update would install when you quit, but Studio had deliberately switched that off to stop the installer racing its own safe hand-off. That contradiction is gone: pick Later and the downloaded update is genuinely armed for your next quit.'
+    },
+    {
+      icon: 'download',
+      title: 'Skip tells you the truth about your update',
+      desc: 'Skipping before the download finishes loses the work, and skipping after it keeps it for your next quit. The message under the button now says which of the two is true instead of always claiming the update will be offered again.'
     },
     {
       icon: 'layers',

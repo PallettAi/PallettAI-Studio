@@ -649,13 +649,21 @@ function main() {
   const STARTUP_ESCAPE_AFTER_MS = 4000;
   let startupSkipped = false;
   let startupSkipSignal = null;
+  // Whether the bytes for this update are already on disk. It changes what
+  // skipping means, and the two are not the same promise: before the download
+  // finishes, skipping loses the work; after it, the update installs on the
+  // next deliberate quit. Saying the wrong one is how a skip turns into
+  // "the update silently vanished".
+  let startupUpdateReady = false;
 
   function skipStartupUpdate() {
     // Ignored once the installer is armed: at that point the app is leaving,
     // and a late click cannot un-arm an install that is already handed over.
     if (!startupUpdateRunning || startupSkipped) return false;
     startupSkipped = true;
-    setStartupStatus('Starting current version', 'The update will be offered again next time you open Studio.');
+    setStartupStatus('Starting current version', startupUpdateReady
+      ? 'The update is downloaded and will install when you next quit Studio.'
+      : 'The update will be offered again next time you open Studio.');
     if (startupSkipSignal) startupSkipSignal();
     return true;
   }
@@ -935,6 +943,44 @@ function main() {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  /*
+    The manual restart, given the same honesty as the launch gate.
+
+    "Restart now" leads into the very same hand-off, and on an older machine
+    with a spinning disk the expansion is the longest step of the whole update
+    — minutes in which nothing appears to happen. Run with no surface, that is
+    indistinguishable from the very freeze this updater was fixed for: a window
+    that will not respond, and no way out. So the manual path borrows the gate's
+    own splash — same wording, same progress, same Skip button — and takes it
+    back down if the hand-off does not complete. A user who clicks "Later" keeps
+    their workspace, untouched, either way.
+  */
+  async function installUpdateFromPrompt() {
+    if (!updater) return false;
+    createStartupWindow();
+    // The gate's own flags, so Skip works for the wait rather than being a
+    // button that only pretends to: skipStartupUpdate() refuses to act unless
+    // the gate is running, and armUpdateAndQuit() polls exactly that flag.
+    startupUpdateRunning = true;
+    startupSkipped = false;
+    startupSkipSignal = null;
+    startupUpdateReady = true;
+    setStartupStatus('Preparing the installer…', 'Expanding the update — a few minutes on an older machine. Skip if you would rather keep working.', 100);
+    const leaving = await armUpdateAndQuit();
+    startupUpdateRunning = false;
+    // A completed hand-off closes the splash itself, just before the quit.
+    if (leaving) return true;
+    closeStartupWindow();
+    try { if (win && !win.isDestroyed()) win.focus(); } catch (_) { /* no window to hand back */ }
+    dialog.showMessageBoxSync(win, {
+      type: 'info',
+      title: 'PallettAI Studio',
+      message: 'The update will install when you next quit Studio.',
+      detail: 'Studio stayed open so the download could finish being handed to the installer. Nothing was lost.'
+    });
+    return false;
+  }
+
   function initUpdater() {
     if (!app.isPackaged) return; // dev mode: never check
     try {
@@ -987,19 +1033,15 @@ function main() {
           message: next,
           detail: 'Restart now to install it, or it will install when you quit.'
         });
-        if (r !== 0) return;
-        armUpdateAndQuit().then((leaving) => {
-          // Armed but the hand-off did not complete: the update is on disk and
-          // installs when Studio next quits, so say that rather than restarting
-          // into the same version and leaving the user to wonder.
-          if (leaving) return;
-          dialog.showMessageBoxSync(win, {
-            type: 'info',
-            title: 'PallettAI Studio',
-            message: 'The update will install when you next quit Studio.',
-            detail: 'Studio stayed open so the download could finish being handed to the installer.'
-          });
-        });
+        if (r !== 0) {
+          // The dialog has just promised that the update installs on the next
+          // quit. Make that true rather than leaving the words to do the work:
+          // the download is already on disk, so the library's own quit hook can
+          // finish a hand-off this dialog chose not to start now.
+          try { updater.autoInstallOnAppQuit = true; } catch (_) { /* older library shape */ }
+          return;
+        }
+        installUpdateFromPrompt();
       });
       updater.on('error', (err) => {
         // A missing release, offline connection, or a failed download must not
@@ -1019,6 +1061,7 @@ function main() {
     startupUpdateRunning = true;
     startupSkipped = false;
     startupSkipSignal = null;
+    startupUpdateReady = false;
     setStartupStatus('Checking for updates…', 'Current version ' + app.getVersion() + ' · this usually takes a few seconds.');
     try {
       const result = await raceStartupSkip(withTimeout(
@@ -1044,6 +1087,7 @@ function main() {
       // incomplete hand-off is not installed; a later explicit update check can
       // retry it safely.
       if (startupSkipped) return false;
+      startupUpdateReady = true;
       // "Installing" is a lie while the archive is still being handed to Squirrel
       // — on a slow disk that copy is the longest part of the whole update, and a
       // splash that names the step it is on is the difference between waiting and
