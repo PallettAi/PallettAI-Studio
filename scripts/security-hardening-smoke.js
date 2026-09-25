@@ -246,6 +246,12 @@ console.log('\n== Widget HTML escaping ==');
     assert(/safeStorage/.test(mainSrc) && /encryptString/.test(mainSrc), 'main.js encrypts secrets with safeStorage');
     assert(/secrets-get/.test(mainSrc) && /secrets-set/.test(mainSrc), 'main.js registers secrets IPC');
     assert(/secretsGet:/.test(preloadSrc) && /secretsSet:/.test(preloadSrc), 'preload exposes secretsGet/secretsSet');
+    const decryptSites = (mainSrc.match(/safeStorage\.decryptString\(buf\)/g) || []).length;
+    assert(decryptSites === 2, 'main.js has one decrypt path per encrypted store, not one per getter');
+    assert(/if \(secretsCacheState === 'ready'\)/.test(mainSrc), 'publish secrets are cached after the first successful read');
+    assert(/if \(secretsCacheState === 'error'\)/.test(mainSrc), 'a refused publish-secret read is not retried in a loop');
+    assert(/if \(sessionCacheState === 'ready'\)/.test(mainSrc), 'the Supabase session is cached after the first successful read');
+    assert(/if \(sessionCacheState === 'error'\)/.test(mainSrc), 'a refused session read is not retried in a loop');
 
     // A WebContents is not a frame. Privileged IPC still rejects subframes,
     // while the Designer preview now has an independent defence: an opaque
@@ -258,6 +264,20 @@ console.log('\n== Widget HTML escaping ==');
     assert(frameChecks >= 8, 'every privileged channel goes through it (' + frameChecks + ' sites)');
 
     const appSrc = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+    const onlineSrc = fs.readFileSync(path.join(ROOT, 'data', 'online.js'), 'utf8');
+    assert((onlineSrc.match(/__pallettaiSecretsReady/g) || []).length >= 2, 'online API-key getters wait for the first-paint secret handoff');
+    const migration = appSrc.slice(appSrc.indexOf('function migrateKeysToVault'), appSrc.indexOf('function loadSettings'));
+    assert(/const saved = existing \|\| bridge\.secretsSetSync/.test(migration), 'legacy key migration checks the encrypted write result');
+    assert(/if \(saved\) \{/.test(migration), 'legacy plaintext keys are deleted only after a successful vault write');
+    const loadSettings = appSrc.slice(appSrc.indexOf('function loadSettings'), appSrc.indexOf('function saveSettings'));
+    assert(/function scheduleAfterFirstPaint/.test(appSrc) && /scheduleAfterFirstPaint\(/.test(loadSettings), 'legacy Keychain migration waits until after the first paint');
+    assert(!/const res = migrateKeysToVault\(raw\)/.test(loadSettings), 'loadSettings does not synchronously block startup on a Keychain read');
+    const init = appSrc.slice(appSrc.indexOf('async function init()'));
+    assert(/scheduleCloudSessionRestore\(\)/.test(init), 'cloud session restoration is scheduled away from first paint');
+    const saveSettings = appSrc.slice(appSrc.indexOf('function saveSettings'), appSrc.indexOf('function applyTheme'));
+    assert(/const saved = bridge\.secretsSetSync/.test(saveSettings), 'settings saves do not assume an encrypted write succeeded');
+    assert(/if \(saved \|\| !value\) \{\s*delete settings\.pixabayKey/.test(saveSettings), 'a failed non-empty settings save keeps the legacy value');
+    assert(/JSON\.stringify\(persistable \|\| settings\)/.test(saveSettings) && /delete persistable\.pixabayKey/.test(saveSettings), 'a failed secure save is not written back as plaintext');
     assert(/sandbox="allow-scripts allow-forms allow-modals allow-popups"[^>]*srcdoc=/.test(appSrc), 'the template preview iframe is sandboxed');
     assert(/<iframe id="previewFrame" title="Live site preview" sandbox="allow-scripts allow-forms allow-modals allow-popups"><\/iframe>/.test(appSrc), 'the Designer preview is sandboxed without allow-same-origin');
     assert(!/f\.contentDocument/.test(appSrc), 'the Designer no longer reaches into the preview document');

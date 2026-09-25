@@ -114,8 +114,18 @@ function main() {
 
   // ---------------------------------------------------------------- helpers: atomic writes + safeStorage warnings
   let warnedNoEncryption = false;
+  // safeStorage is backed by the macOS Keychain. A self-signed update can make
+  // the Keychain ask for authorization again, so do not turn every renderer
+  // getter into another decrypt request during one app session. False is not
+  // cached: a locked/unavailable Keychain may become available later, whereas a
+  // true result is stable for this process.
+  let encryptionAvailableCache = null;
   function encryptionAvailable() {
-    try { return safeStorage.isEncryptionAvailable(); } catch (_) { return false; }
+    if (encryptionAvailableCache === true) return true;
+    let available = false;
+    try { available = !!safeStorage.isEncryptionAvailable(); } catch (_) { available = false; }
+    if (available) encryptionAvailableCache = true;
+    return available;
   }
   function warnIfPlaintextStore(where) {
     if (!warnedNoEncryption && !encryptionAvailable()) {
@@ -427,29 +437,65 @@ function main() {
     return path.join(app.getPath('userData'), 'publish-secrets.bin');
   }
 
+  // Keep decrypted values only in the main process, and only for this process
+  // lifetime. The renderer still receives values through the narrow IPC
+  // allowlist, but repeated getters do not repeatedly hit the Keychain. An
+  // unreadable existing store is a sticky error: retrying every getter would
+  // recreate the password-prompt loop, and overwriting it could destroy the
+  // only good copy of a credential.
+  let secretsCacheState = 'unloaded';
+  let secretsCache = null;
+  const copySecretMap = (value) => (
+    value && typeof value === 'object' && !Array.isArray(value) ? Object.assign({}, value) : {}
+  );
+
   function readAllSecrets() {
+    if (secretsCacheState === 'ready') return copySecretMap(secretsCache);
+    if (secretsCacheState === 'error') return {};
+    let buf;
     try {
-      const buf = fs.readFileSync(secretsStorePath());
-      if (encryptionAvailable()) {
-        return JSON.parse(safeStorage.decryptString(buf));
+      buf = fs.readFileSync(secretsStorePath());
+    } catch (error) {
+      if (error && error.code === 'ENOENT') {
+        secretsCache = {};
+        secretsCacheState = 'ready';
+        return {};
       }
-      // Plaintext fallback — warn once so a missing keychain does not silently downgrade security
-      warnIfPlaintextStore('publish-secrets.bin');
-      return JSON.parse(buf.toString('utf8'));
+      secretsCacheState = 'error';
+      return {};
+    }
+    try {
+      const parsed = encryptionAvailable()
+        ? JSON.parse(safeStorage.decryptString(buf))
+        : (warnIfPlaintextStore('publish-secrets.bin'), JSON.parse(buf.toString('utf8')));
+      secretsCache = copySecretMap(parsed);
+      secretsCacheState = 'ready';
+      return copySecretMap(secretsCache);
     } catch (_) {
+      secretsCacheState = 'error';
       return {};
     }
   }
 
   function writeAllSecrets(obj) {
     failClosedIfNoEncryption('publish-secrets.bin');
-    const json = JSON.stringify(obj || {});
+    // A direct writer must not replace an existing store it could not read.
+    // This matters when the user cancels a Keychain prompt: the old encrypted
+    // values remain recoverable instead of being silently overwritten.
+    if (secretsCacheState === 'unloaded' && fs.existsSync(secretsStorePath())) readAllSecrets();
+    if (secretsCacheState === 'error' && fs.existsSync(secretsStorePath())) {
+      throw new Error('publish-secrets.bin could not be read; refusing to overwrite the existing encrypted store.');
+    }
+    const next = copySecretMap(obj);
+    const json = JSON.stringify(next);
     const useEncryption = encryptionAvailable();
     if (!useEncryption) warnIfPlaintextStore('publish-secrets.bin');
     const payload = useEncryption
       ? safeStorage.encryptString(json)
       : Buffer.from(json, 'utf8');
     writeFileAtomic(secretsStorePath(), payload, 0o600);
+    secretsCache = next;
+    secretsCacheState = 'ready';
     return true;
   }
 
@@ -461,32 +507,61 @@ function main() {
   // localStorage is kept as the fallback for the browser / web build.
   const SES_KEY = 'pallettai.supabase.session.v1';
   const sesStorePath = () => path.join(app.getPath('userData'), 'supabase-session.bin');
+  let sessionCacheState = 'unloaded';
+  let sessionCache = null;
 
   function readSes() {
+    if (sessionCacheState === 'ready') return sessionCache;
+    if (sessionCacheState === 'error') return null;
+    let buf;
     try {
-      const buf = fs.readFileSync(sesStorePath());
-      if (encryptionAvailable()) {
-        return safeStorage.decryptString(buf);
+      buf = fs.readFileSync(sesStorePath());
+    } catch (error) {
+      if (error && error.code === 'ENOENT') {
+        sessionCache = null;
+        sessionCacheState = 'ready';
+        return null;
       }
-      warnIfPlaintextStore('supabase-session.bin');
-      return buf.toString('utf8');
+      sessionCacheState = 'error';
+      return null;
+    }
+    try {
+      sessionCache = encryptionAvailable()
+        ? safeStorage.decryptString(buf)
+        : (warnIfPlaintextStore('supabase-session.bin'), buf.toString('utf8'));
+      sessionCacheState = 'ready';
+      return sessionCache;
     } catch (_) {
+      sessionCacheState = 'error';
       return null;
     }
   }
 
   function writeSes(payload) {
     failClosedIfNoEncryption('supabase-session.bin');
+    if (sessionCacheState === 'unloaded' && fs.existsSync(sesStorePath())) readSes();
+    if (sessionCacheState === 'error' && fs.existsSync(sesStorePath())) {
+      throw new Error('supabase-session.bin could not be read; refusing to overwrite the existing encrypted store.');
+    }
+    const next = String(payload == null ? '' : payload);
     const useEncryption = encryptionAvailable();
     if (!useEncryption) warnIfPlaintextStore('supabase-session.bin');
     const buf = useEncryption
-      ? safeStorage.encryptString(payload)
-      : Buffer.from(payload, 'utf8');
+      ? safeStorage.encryptString(next)
+      : Buffer.from(next, 'utf8');
     writeFileAtomic(sesStorePath(), buf, 0o600);
+    sessionCache = next;
+    sessionCacheState = 'ready';
   }
 
   function deleteSes() {
-    try { fs.unlinkSync(sesStorePath()); } catch (_) { /* already gone is fine */ }
+    try {
+      fs.unlinkSync(sesStorePath());
+      sessionCache = null;
+      sessionCacheState = 'ready';
+    } catch (error) {
+      if (!error || error.code !== 'ENOENT') sessionCacheState = 'error';
+    }
   }
 
   function registerSecretIpc() {

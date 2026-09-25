@@ -223,32 +223,52 @@ const App = (() => {
     if (pix) {
       try {
         const existing = String(bridge.secretsGetSync('online.pixabayKey') || '').trim();
-        if (!existing) { bridge.secretsSetSync('online.pixabayKey', pix); changed = true; }
-        else if (existing !== pix) { /* encrypted store already has a key — keep it */ }
-        delete obj.pixabayKey;
-        changed = true;
+        const saved = existing || bridge.secretsSetSync('online.pixabayKey', pix) === true;
+        // Keep the legacy plaintext copy when the encrypted write is refused
+        // (for example, the user cancelled a Keychain prompt). Deleting it
+        // anyway would turn an authorization failure into data loss.
+        if (saved) {
+          delete obj.pixabayKey;
+          changed = true;
+        }
       } catch (e) {}
     }
     if (ch) {
       try {
         const existing = String(bridge.secretsGetSync('online.companiesHouseKey') || '').trim();
-        if (!existing) { bridge.secretsSetSync('online.companiesHouseKey', ch); changed = true; }
-        delete obj.companiesHouseKey;
-        changed = true;
+        const saved = existing || bridge.secretsSetSync('online.companiesHouseKey', ch) === true;
+        if (saved) {
+          delete obj.companiesHouseKey;
+          changed = true;
+        }
       } catch (e) {}
     }
     return { migrated: changed, obj };
   }
+  function scheduleAfterFirstPaint(callback) {
+    // A macOS Keychain authorization can arrive before Electron's first paint.
+    // Let the local workspace become visible before optional credential
+    // maintenance or cloud-session restoration can block the main process.
+    const run = () => {
+      // During the first frame, ONLINE's synchronous getters may use a legacy
+      // settings value already present in this renderer. Only after this flag
+      // is set do they consult the OS-backed store.
+      try {
+        window.__pallettaiSecretsReady = true;
+        // If Database was the saved landing view, refresh its online-source
+        // cards now that the encrypted getters are allowed to run.
+        if (currentView === 'database' && typeof renderDbList === 'function') renderDbList();
+      } catch (_) {}
+      try { callback(); } catch (_) {}
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(run, 0));
+    else setTimeout(run, 0);
+  }
   function loadSettings() {
+    let hasLegacyKeys = false;
     try {
-      let raw = JSON.parse(localStorage.getItem(LS.settings) || '{}');
-      if (raw && typeof raw === 'object' && (raw.pixabayKey || raw.companiesHouseKey)) {
-        const res = migrateKeysToVault(raw);
-        if (res.migrated) {
-          try { localStorage.setItem(LS.settings, JSON.stringify(res.obj)); } catch (e2) {}
-          raw = res.obj;
-        }
-      }
+      const raw = JSON.parse(localStorage.getItem(LS.settings) || '{}');
+      hasLegacyKeys = !!(raw && typeof raw === 'object' && (raw.pixabayKey || raw.companiesHouseKey));
       settings = { ...DB.defaultSettings, ...(raw && typeof raw === 'object' ? raw : {}) };
       // normalize new workspace keys defensively for users upgrading from older builds
       if (!['dashboard','templates','designer','ai','database'].includes(settings.startupView)) settings.startupView = 'dashboard';
@@ -269,16 +289,54 @@ const App = (() => {
       });
     } catch (e) { settings = { ...DB.defaultSettings }; }
     applyTheme();
+    if (hasLegacyKeys) {
+      scheduleAfterFirstPaint(() => {
+        const res = migrateKeysToVault(settings);
+        if (res.migrated) {
+          try { localStorage.setItem(LS.settings, JSON.stringify(settings)); } catch (_) {}
+        }
+      });
+    }
   }
   function saveSettings() {
     const bridge = (typeof window !== 'undefined' && window.pallettai && typeof window.pallettai.secretsSetSync === 'function') ? window.pallettai : null;
+    let persistable = null;
     if (bridge) {
       try {
-        if ('pixabayKey' in settings) { bridge.secretsSetSync('online.pixabayKey', String(settings.pixabayKey || '').trim()); delete settings.pixabayKey; }
-        if ('companiesHouseKey' in settings) { bridge.secretsSetSync('online.companiesHouseKey', String(settings.companiesHouseKey || '').trim()); delete settings.companiesHouseKey; }
-      } catch (e) {}
+        if ('pixabayKey' in settings) {
+          const value = String(settings.pixabayKey || '').trim();
+          const saved = bridge.secretsSetSync('online.pixabayKey', value) === true;
+          // An empty value is safe to forget even if the store is unavailable;
+          // a non-empty credential stays in memory for this session when the
+          // encrypted write fails, but is never written back to localStorage.
+          if (saved || !value) {
+            delete settings.pixabayKey;
+            if (persistable) delete persistable.pixabayKey;
+          } else {
+            persistable = Object.assign({}, persistable || settings);
+            delete persistable.pixabayKey;
+          }
+        }
+        if ('companiesHouseKey' in settings) {
+          const value = String(settings.companiesHouseKey || '').trim();
+          const saved = bridge.secretsSetSync('online.companiesHouseKey', value) === true;
+          if (saved || !value) {
+            delete settings.companiesHouseKey;
+            if (persistable) delete persistable.companiesHouseKey;
+          } else {
+            persistable = Object.assign({}, persistable || settings);
+            delete persistable.companiesHouseKey;
+          }
+        }
+      } catch (e) {
+        // Never turn an IPC/Keychain exception into a new plaintext settings
+        // write. The in-memory value can be retried, but the disk copy stays clean.
+        persistable = Object.assign({}, settings);
+        delete persistable.pixabayKey;
+        delete persistable.companiesHouseKey;
+      }
     }
-    try { localStorage.setItem(LS.settings, JSON.stringify(settings)); }
+    try { localStorage.setItem(LS.settings, JSON.stringify(persistable || settings)); }
     catch (e) { try { toast('⚠ Settings could not be saved on this device.', false); } catch (e2) {} }
     applyTheme();
   }
@@ -13602,6 +13660,38 @@ const App = (() => {
   }
 
   // ---------------- boot ----------------
+  function scheduleCloudSessionRestore() {
+    scheduleAfterFirstPaint(() => {
+      // Electron-only: move the Supabase session (refresh token) out of
+      // localStorage and into the OS keystore via safeStorage. The browser build
+      // has no preload, so window.pallettai is absent and the module keeps using
+      // localStorage (no behavior change there).
+      try {
+        if (window.pallettai && typeof window.pallettai.sessionStore === 'function') {
+          const store = window.pallettai.sessionStore();
+          if (store) SUPABASE.initSessionStore(store);
+        }
+      } catch (e) { /* browser build, or preload not ready — keep localStorage */ }
+      // Restore a persisted cloud session (if configured) and sync account
+      // state (stable code + server-granted trial + streak) in the background.
+      SUPABASE.restoreSession().then((ok) => {
+        if (ok) {
+          if (vaultReady() && settings.cloudVaultEnabled !== false) {
+            setTimeout(() => { syncVault({ queue: true }).catch((e) => console.warn('Vault sync failed:', e)); }, 1500);
+          }
+          return syncCloud();
+        }
+        renderStreakWidget();
+        return null;
+      }).catch((e) => {
+        // Cloud restore is background work; a registry outage must never reject
+        // the boot promise or prevent the local studio from remaining usable.
+        console.warn('Cloud session restore failed:', e);
+        renderStreakWidget();
+      });
+    });
+  }
+
   async function init() {
     if (initialized) return;
     initialized = true;
@@ -13750,34 +13840,9 @@ const App = (() => {
       if (whatsNewPending(RELEASE_NOTES.version) && !firstEver) setTimeout(() => openWhatsNew(true), 900);
     } catch (e) {}
     SUPABASE.ensureOfficial();
-    // Cloud project vault: after the account session restores, converge the
-    // local project list with the account's vault (restore here, push there).
-    // Background + best-effort — never blocks the studio from being usable.
-    if (vaultReady() && settings.cloudVaultEnabled !== false) {
-      setTimeout(() => { syncVault({ queue: true }).catch((e) => console.warn('Vault sync failed:', e)); }, 1500);
-    }
-    // Electron-only: move the Supabase session (refresh token) out of
-    // localStorage and into the OS keystore via safeStorage. The browser build
-    // has no preload, so window.pallettai is absent and the module keeps using
-    // localStorage (no behavior change there).
-    try {
-      if (window.pallettai && typeof window.pallettai.sessionStore === 'function') {
-        const store = window.pallettai.sessionStore();
-        if (store) SUPABASE.initSessionStore(store);
-      }
-    } catch (e) { /* browser build, or preload not ready — keep localStorage */ }
-    // restore a persisted cloud session (if configured) and sync account
-    // state (stable code + server-granted trial + streak) in the background
-    SUPABASE.restoreSession().then((ok) => {
-      if (ok) return syncCloud();
-      renderStreakWidget();
-      return null;
-    }).catch((e) => {
-      // Cloud restore is background work; a registry outage must never reject
-      // the boot promise or prevent the local studio from remaining usable.
-      console.warn('Cloud session restore failed:', e);
-      renderStreakWidget();
-    });
+    // Restore the Electron-only session after first paint. This keeps the
+    // workspace usable even if macOS is asking for Keychain authorization.
+    scheduleCloudSessionRestore();
     console.log('%cP/ PallettAI Studio', 'color:#7cc0f8;font-weight:bold;font-size:14px');
     // Best-effort flush of debounced IndexedDB writes when the window closes.
     window.addEventListener('pagehide', () => { try { AppStore.flush().catch(() => {}); } catch (e) {} });

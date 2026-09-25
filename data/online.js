@@ -218,7 +218,7 @@ const ONLINE = {
   get pixabayKey() {
     try {
       const bridge = (typeof window !== 'undefined' && window.pallettai) ? window.pallettai : null;
-      if (bridge && typeof bridge.secretsGetSync === 'function') {
+      if (typeof window !== 'undefined' && window.__pallettaiSecretsReady && bridge && typeof bridge.secretsGetSync === 'function') {
         const v = String(bridge.secretsGetSync('online.pixabayKey') || '').trim();
         if (v) return v;
       }
@@ -234,7 +234,7 @@ const ONLINE = {
   get companiesHouseKey() {
     try {
       const bridge = (typeof window !== 'undefined' && window.pallettai) ? window.pallettai : null;
-      if (bridge && typeof bridge.secretsGetSync === 'function') {
+      if (typeof window !== 'undefined' && window.__pallettaiSecretsReady && bridge && typeof bridge.secretsGetSync === 'function') {
         const v = String(bridge.secretsGetSync('online.companiesHouseKey') || '').trim();
         if (v) return v;
       }
